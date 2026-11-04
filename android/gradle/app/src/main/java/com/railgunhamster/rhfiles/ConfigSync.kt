@@ -27,6 +27,18 @@ class ConfigSync(private val context:Context,private val remotes:RemoteStorage,p
       if(state.contains("rhvideoObserved")&&SharedConfig.canonical(raw)==state.getString("rhvideoObserved",null))return state.getString("base",null)?.let{JSONObject(it).optJSONObject("rhvideo")}
       return raw
     }
+    internal fun deviceAliases(context:Context):JSONObject =
+      runCatching{JSONObject(context.getSharedPreferences(PREFS,Context.MODE_PRIVATE).getString("deviceAliases","{}")!!)}.getOrElse{JSONObject()}
+    internal fun saveDeviceAlias(context:Context,peerId:String,alias:String?):JSONObject {
+      require(peerId.length==64&&peerId.all{it in '0'..'9'||it in 'a'..'f'}){"设备 ID 无效"}
+      val cleaned=alias?.trim()?.takeIf{it.isNotEmpty()}
+      if(cleaned!=null)require(cleaned.length<=120&&cleaned.none{it.isISOControl()}){"设备自定义名称需要 1–120 个字符且不含控制字符"}
+      val map=deviceAliases(context)
+      if(cleaned!=null)map.put(peerId,cleaned) else map.remove(peerId)
+      if(map.length()>0)SharedConfig.validateDeviceAliases(map)
+      check(context.getSharedPreferences(PREFS,Context.MODE_PRIVATE).edit().putString("deviceAliases",map.toString()).commit()){"设备自定义名称保存失败"}
+      return map
+    }
     fun rawConfig(context:Context,remotes:RemoteStorage):JSONObject=context.getSharedPreferences(PREFS,Context.MODE_PRIVATE).getString("config",null)?.let(remotes::unsealLocal)?:JSONObject().put("enabled",false).put("url","").put("username","").put("password","").put("insecure",false)
     internal fun validateConfig(value:JSONObject,allowEmpty:Boolean=false){
       require(value.toString().length<=16384&&value.opt("enabled") is Boolean&&value.opt("insecure") is Boolean){"同步选项无效"}
@@ -99,7 +111,7 @@ class ConfigSync(private val context:Context,private val remotes:RemoteStorage,p
     val bytes=body.byteStream().use{it.readBytesBounded(SharedConfig.LIMIT)}
     return try{SharedConfig.parse(String(bytes,Charsets.UTF_8)).also{SharedConfig.validate(SharedConfig.withoutRhFiles(it),remotes::validate)}}catch(e:Exception){throw IllegalArgumentException("WebDAV 同步文件无效，未更改本机配置：${e.message}")}
   }
-  private fun local(web:JSONObject):JSONObject {SettingsBackup.validateWeb(web);val f=JSONArray(web.optString("rhfiles.favorites","[]"));return SharedConfig.media(SharedConfig.snapshot(remotes.backupProfiles(),f),rhvideoPrefill(context)).also{SharedConfig.validate(it,remotes::validate)}}
+  private fun local(web:JSONObject):JSONObject {SettingsBackup.validateWeb(web);val f=JSONArray(web.optString("rhfiles.favorites","[]"));return SharedConfig.media(SharedConfig.snapshot(remotes.backupProfiles(),f),rhvideoPrefill(context),deviceAliases(context).takeIf{it.length()>0}).also{SharedConfig.validate(it,remotes::validate)}}
   fun run(web:JSONObject,manual:Boolean,token:String="",choice:String=""):JSONObject {
     val c:JSONObject;val local:JSONObject;val base:JSONObject;val resolution:JSONObject?
     synchronized(settingsLock){
@@ -159,7 +171,7 @@ class ConfigSync(private val context:Context,private val remotes:RemoteStorage,p
   }
   fun acknowledge(id:String):JSONObject=synchronized(settingsLock){
     val p=proposal?:error("同步结果已过期");require(p.getString("id")==id&&journal.baseFile.exists()){"同步事务无效"}
-    synchronized(rhvideoLock){require(SharedConfig.same(p.optJSONObject("rhvideoObserved"),rawRhvideo(context))){"同步期间 RHVideo 连接已改变，未覆盖本机更改"};check(prefs.edit().putString("base",p.getJSONObject("document").toString()).putString("rhvideoObserved",SharedConfig.canonical(p.optJSONObject("rhvideoObserved"))).putLong("lastSuccess",System.currentTimeMillis()).commit()){"同步记录保存失败"}}
+    synchronized(rhvideoLock){require(SharedConfig.same(p.optJSONObject("rhvideoObserved"),rawRhvideo(context))){"同步期间 RHVideo 连接已改变，未覆盖本机更改"};val doc=p.getJSONObject("document");val aliases=doc.optJSONObject("deviceAliases")?:JSONObject();check(prefs.edit().putString("base",doc.toString()).putString("deviceAliases",aliases.toString()).putString("rhvideoObserved",SharedConfig.canonical(p.optJSONObject("rhvideoObserved"))).putLong("lastSuccess",System.currentTimeMillis()).commit()){"同步记录保存失败"}}
     journal.delete();require(!journal.baseFile.exists()){"无法确认同步，请重试"};busy=false;proposal=null;phase="success";message="已同步网络位置、网络收藏和 RHVideo 地址/用户名（不包含密码、令牌）";status()
   }
   fun recover():JSONObject?=synchronized(settingsLock){

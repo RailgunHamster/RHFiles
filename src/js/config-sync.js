@@ -11,7 +11,7 @@ const desktopConfigSync=(()=>{
     $('config-sync-state').classList.toggle('media-convert-error',status.state==='failed'||conflicts.length>0);
     for(const control of root.querySelectorAll('input,button'))control.disabled=busy||status.busy;
     $('config-sync-local').hidden=$('config-sync-remote').hidden=!conflicts.length;
-    $('config-sync-conflicts').textContent=conflicts.map(item=>item.kind==='rhvideo'?text('RHVideo 地址及用户名：','RHVideo server and username: ')+(item.local?.server||item.remote?.server||''):item.kind==='favoriteOrder'?text('收藏排列顺序','Favorite order'):(item.local?.label||item.remote?.label||item.local?.name||item.remote?.name||item.local?.config?.name||item.remote?.config?.name||item.id)).join('\n');
+    $('config-sync-conflicts').textContent=conflicts.map(item=>item.kind==='rhvideo'?text('RHVideo 地址及用户名：','RHVideo server and username: ')+(item.local?.server||item.remote?.server||''):item.kind==='deviceAliases'?text('设备自定义名称：','Device custom name: ')+(item.local||item.remote||item.id):item.kind==='favoriteOrder'?text('收藏排列顺序','Favorite order'):(item.local?.label||item.remote?.label||item.local?.name||item.remote?.name||item.local?.config?.name||item.remote?.config?.name||item.id)).join('\n');
     const list=$('config-sync-profiles');list.replaceChildren();
     for(const item of status.profiles||[]){const c=item.config,row=document.createElement('div');row.className='settings-row';const label=document.createElement('span');label.textContent=c.name+' · '+String(c.type||'').toUpperCase();row.append(label);
       const button=document.createElement('button');button.type='button';button.className='dialog-btn';button.textContent=text('打开','Open');button.disabled=busy;
@@ -33,7 +33,7 @@ const desktopConfigSync=(()=>{
       if(!preview?.token)throw Error(text('同步预览已过期，请重新同步','The sync preview expired; sync again'));
       const merged=RHFilesSharedConfig.merge(preview.base,preview.local,preview.remote,choice);
       if(merged.conflicts.length&&!choice){conflicts=merged.conflicts;return {state:'conflict',conflicts};}
-      applying=true;await call('config_sync_commit',{token:preview.token,document:merged.document});preview=null;conflicts=[];await loadPinnedFolders();await refresh();return {state:'success'};
+      applying=true;await call('config_sync_commit',{token:preview.token,document:merged.document});preview=null;conflicts=[];await loadPinnedFolders();if(typeof deviceBrowser!=='undefined'&&deviceBrowser?.refresh)await deviceBrowser.refresh().catch(()=>{});await refresh();return {state:'success'};
     }catch(error){lastFailure=Date.now();preview=null;conflicts=[];status={...status,state:'failed',message:String(error)};throw error;
     }finally{applying=false;busy=false;paint();}
   }
@@ -50,6 +50,6 @@ const desktopConfigSync=(()=>{
     for(const [id,handler]of [['now',()=>run(true)],['local',()=>resolve('local')],['remote',()=>resolve('remote')]])RHFilesUI.listen($('config-sync-'+id),'click',()=>Promise.resolve().then(handler).catch(()=>{}),undefined,'desktop.config-sync.'+id);
     refresh().then(fill).catch(error=>{$('config-sync-state').textContent=String(error);});
   }
-  function init(){if(initialized||IS_MAC)return;initialized=true;refresh().then(()=>changed(1000)).catch(()=>{});RHFilesUI.listen(window,'focus',()=>changed(200),undefined,'desktop.config-sync.resume');const listen=window.__TAURI_INTERNALS__?.event?.listen||window.__TAURI__?.event?.listen;if(listen){listen('config-sync-changed',()=>{loadPinnedFolders().catch(()=>{});refresh().catch(()=>{});});listen('rhvideo-config-changed',()=>changed());}setInterval(()=>{if(!document.hidden)changed(100);},300000);}
+  function init(){if(initialized||IS_MAC)return;initialized=true;refresh().then(()=>changed(1000)).catch(()=>{});RHFilesUI.listen(window,'focus',()=>changed(200),undefined,'desktop.config-sync.resume');const listen=window.__TAURI_INTERNALS__?.event?.listen||window.__TAURI__?.event?.listen;if(listen){listen('config-sync-changed',()=>{loadPinnedFolders().catch(()=>{});if(typeof deviceBrowser!=='undefined'&&deviceBrowser?.refresh)deviceBrowser.refresh().catch(()=>{});refresh().catch(()=>{});});listen('rhvideo-config-changed',()=>changed());}setInterval(()=>{if(!document.hidden)changed(100);},300000);}
   return {init,mount,changed,refresh,save,run,resolve};
 })();

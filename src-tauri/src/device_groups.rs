@@ -102,7 +102,7 @@ pub async fn device_groups(
     }
     let changed = matches!(
         command.as_str(),
-        "create" | "join" | "remove" | "restore" | "forget" | "configure"
+        "create" | "join" | "remove" | "restore" | "forget" | "configure" | "setAlias"
     );
     let result = tauri::async_runtime::spawn_blocking(move || run(&command, &args))
         .await
@@ -199,7 +199,14 @@ fn run(command: &str, args: &Value) -> Result<Value, String> {
             "state" => {
                 let mut state = groups.state()?;
                 state["defaultDeviceName"] = Value::String(default_device_name());
+                state["deviceAliases"] = crate::config_sync::device_aliases();
                 state
+            }
+            "setAlias" => {
+                let peer = field(args, "peer").map_err(err)?;
+                let alias = args.get("alias").and_then(Value::as_str);
+                let aliases = crate::config_sync::save_device_alias(peer, alias).map_err(err)?;
+                json!({"deviceAliases": aliases})
             }
             "create" => json!(groups.create(
                 field(args, "name").map_err(err)?,

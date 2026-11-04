@@ -14,7 +14,20 @@ internal object SharedConfig {
   // Group membership/session credentials deliberately remain device-local.
   val fields=setOf("name","type","host","port","share","domain","url","username","insecure","fingerprint")
   fun empty()=JSONObject().put("schemaVersion",1).put("profiles",JSONArray()).put("favorites",JSONArray())
-  fun media(out:JSONObject,value:JSONObject?):JSONObject {if(value!=null){out.put("rhvideo",value);out.put("schemaVersion",2)}else{out.remove("rhvideo");out.put("schemaVersion",1)};return out}
+  fun media(out:JSONObject,value:JSONObject?,aliases:JSONObject?=out.optJSONObject("deviceAliases")):JSONObject {
+    if(value!=null)out.put("rhvideo",value) else out.remove("rhvideo")
+    if(aliases!=null&&aliases.length()>0)out.put("deviceAliases",aliases) else out.remove("deviceAliases")
+    out.put("schemaVersion",if(out.has("rhvideo")||out.has("deviceAliases"))2 else 1)
+    return out
+  }
+  fun validateDeviceAliases(value:JSONObject){
+    require(value.length() in 1..256){"设备自定义名称数量无效"}
+    for(peerId in value.keys()){
+      require(peerId.length==64&&peerId.all{it in '0'..'9'||it in 'a'..'f'}){"设备自定义名称的设备 ID 无效"}
+      val text=value.opt(peerId)
+      require(text is String&&text.trim().isNotEmpty()&&text.length<=120&&text.none{it.isISOControl()}){"设备自定义名称需要 1–120 个字符且不含控制字符"}
+    }
+  }
   fun validateMedia(value:JSONObject){
     require(value.keys().asSequence().toSet()==setOf("server","username")){"RHVideo 同步只允许地址和用户名，不能包含密码或令牌"}
     require(value.opt("server") is String&&value.getString("server").toByteArray(Charsets.UTF_8).size<=4096&&!value.getString("server").any{it.isISOControl()}&&value.opt("username") is String&&value.getString("username").toByteArray(Charsets.UTF_8).size<=256&&!value.getString("username").any{it.isISOControl()}){"RHVideo 连接信息无效"}
@@ -47,9 +60,11 @@ internal object SharedConfig {
   }
   fun favorite(f:JSONObject):JSONObject=JSONObject().also{out->for(key in listOf("name","path","isDir","label","parentPath"))if(f.has(key)&&!f.isNull(key))out.put(key,f.get(key))}
   fun validate(doc:JSONObject,validateProfile:(JSONObject)->Unit){
-    val keys=setOf("schemaVersion","profiles","favorites")+if(doc.has("rhvideo"))setOf("rhvideo")else emptySet()
-    require(doc.toString().toByteArray().size<=LIMIT&&doc.opt("schemaVersion") is Int&&doc.getInt("schemaVersion")== (if(doc.has("rhvideo"))2 else 1)&&doc.keys().asSequence().toSet()==keys){"不是支持的 RHFiles 同步配置：当前支持格式 v1/v2；含 RHVideo 时必须使用 v2。请更新 Windows 和 Android 两端；未更改本机设置或云端文件"}
+    val keys=setOf("schemaVersion","profiles","favorites")+if(doc.has("rhvideo"))setOf("rhvideo")else emptySet()+if(doc.has("deviceAliases"))setOf("deviceAliases")else emptySet()
+    val hasV2=doc.has("rhvideo")||doc.has("deviceAliases")
+    require(doc.toString().toByteArray().size<=LIMIT&&doc.opt("schemaVersion") is Int&&doc.getInt("schemaVersion")==(if(hasV2)2 else 1)&&doc.keys().asSequence().toSet()==keys){"不是支持的 RHFiles 同步配置：当前支持格式 v1/v2；含 RHVideo 或设备自定义名称时必须使用 v2。请更新 Windows 和 Android 两端；未更改本机设置或云端文件"}
     if(doc.has("rhvideo"))validateMedia(doc.getJSONObject("rhvideo"))
+    if(doc.has("deviceAliases"))validateDeviceAliases(doc.getJSONObject("deviceAliases"))
     val profiles=doc.getJSONArray("profiles");require(profiles.length()<=200){"同步网络位置超过上限"};val ids=mutableSetOf<String>()
     for(i in 0 until profiles.length()){
       val p=profiles.getJSONObject(i);require(p.keys().asSequence().toSet()==setOf("id","config")){"同步网络位置字段无效"};val id=p.getString("id")
@@ -110,7 +125,14 @@ internal object SharedConfig {
     }
     val bv=base.optJSONObject("rhvideo");val lv=local.optJSONObject("rhvideo");val rv=remote.optJSONObject("rhvideo")
     val selected=when{same(lv,rv)->lv;same(lv,bv)->rv;same(rv,bv)->lv;else->{conflicts.put(JSONObject().put("kind","rhvideo").put("id","rhvideo").put("local",lv?:JSONObject.NULL).put("remote",rv?:JSONObject.NULL));if(choice=="remote")rv else lv}}
-    media(out,selected)
+    val ba=base.optJSONObject("deviceAliases")?:JSONObject();val la=local.optJSONObject("deviceAliases")?:JSONObject();val ra=remote.optJSONObject("deviceAliases")?:JSONObject()
+    val aliases=JSONObject()
+    for(k in (ba.keys().asSequence()+la.keys().asSequence()+ra.keys().asSequence()).toSet().sorted()){
+      val bVal=ba.optString(k,"").takeIf{it.isNotEmpty()};val lVal=la.optString(k,"").takeIf{it.isNotEmpty()};val rVal=ra.optString(k,"").takeIf{it.isNotEmpty()}
+      val chosen=when{same(lVal,rVal)->lVal;same(lVal,bVal)->rVal;same(rVal,bVal)->lVal;else->{conflicts.put(JSONObject().put("kind","deviceAliases").put("id",k).put("local",lVal?:JSONObject.NULL).put("remote",rVal?:JSONObject.NULL));if(choice=="remote")rVal else lVal}}
+      if(!chosen.isNullOrBlank())aliases.put(k,chosen.trim())
+    }
+    media(out,selected,aliases.takeIf{it.length()>0})
     val ids=records(out,"profiles","id").keys.toMutableSet()
     // A concurrently added bookmark must not silently resurrect a removed server.
     val favorites=out.getJSONArray("favorites");val kept=JSONArray()
@@ -144,7 +166,13 @@ internal object SharedConfig {
       order.forEach{out.getJSONArray(key).put(b.getValue(it))}
     }
     val before=base.optJSONObject("rhvideo");val current=local.optJSONObject("rhvideo");val after=merged.optJSONObject("rhvideo")
-    media(out,if(!same(current,before)&&same(after,current))current else before)
+    val ba=base.optJSONObject("deviceAliases")?:JSONObject();val la=local.optJSONObject("deviceAliases")?:JSONObject();val ma=merged.optJSONObject("deviceAliases")?:JSONObject()
+    val aliases=JSONObject(ba.toString())
+    for(k in (ba.keys().asSequence()+la.keys().asSequence()).toSet()){
+      val bVal=ba.optString(k,"").takeIf{it.isNotEmpty()};val lVal=la.optString(k,"").takeIf{it.isNotEmpty()};val mVal=ma.optString(k,"").takeIf{it.isNotEmpty()}
+      if(!same(lVal,bVal)&&same(mVal,lVal)){if(lVal==null)aliases.remove(k)else aliases.put(k,lVal)}
+    }
+    media(out,if(!same(current,before)&&same(after,current))current else before,aliases.takeIf{it.length()>0})
     return out
   }
 }

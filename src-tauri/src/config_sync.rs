@@ -299,14 +299,35 @@ fn portable_url(value: &str, ids: &HashSet<String>) -> Result<Url, String> {
     segments(&url)?;
     Ok(url)
 }
+fn validate_device_aliases(value: &Value) -> Result<(), String> {
+    let map = value.as_object().ok_or("设备自定义名称格式无效")?;
+    if map.is_empty() || map.len() > 256 {
+        return Err("设备自定义名称数量无效".into());
+    }
+    for (peer_id, alias) in map {
+        if peer_id.len() != 64 || !peer_id.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()) {
+            return Err("设备自定义名称的设备 ID 无效".into());
+        }
+        let Some(text) = alias.as_str() else {
+            return Err("设备自定义名称必须是字符串".into());
+        };
+        if text.trim().is_empty() || text.chars().count() > 120 || text.chars().any(char::is_control) {
+            return Err("设备自定义名称需要 1–120 个字符且不含控制字符".into());
+        }
+    }
+    Ok(())
+}
 fn validate(doc: &Value) -> Result<(), String> {
+    let has_v2 = doc.get("rhvideo").is_some() || doc.get("deviceAliases").is_some();
+    let expected_keys = 3 + usize::from(doc.get("rhvideo").is_some()) + usize::from(doc.get("deviceAliases").is_some());
     if doc.to_string().len() > LIMIT
-        || !doc.as_object().is_some_and(|v|v.keys().all(|k|["schemaVersion","profiles","favorites","rhvideo"].contains(&k.as_str()))&&v.len()==if doc.get("rhvideo").is_some(){4}else{3})
-        || doc["schemaVersion"] != if doc.get("rhvideo").is_some(){2}else{1}
+        || !doc.as_object().is_some_and(|v|v.keys().all(|k|["schemaVersion","profiles","favorites","rhvideo","deviceAliases"].contains(&k.as_str()))&&v.len()==expected_keys)
+        || doc["schemaVersion"] != if has_v2 {2}else{1}
     {
-        return Err("不是支持的 RHFiles 同步配置：当前支持格式 v1/v2；含 RHVideo 时必须使用 v2。请更新 Windows 和 Android 两端；未更改本机设置或云端文件".into());
+        return Err("不是支持的 RHFiles 同步配置：当前支持格式 v1/v2；含 RHVideo 或设备自定义名称时必须使用 v2。请更新 Windows 和 Android 两端；未更改本机设置或云端文件".into());
     }
     if let Some(value)=doc.get("rhvideo"){validate_rhvideo(value)?;}
+    if let Some(value)=doc.get("deviceAliases"){validate_device_aliases(value)?;}
     let profiles = doc["profiles"]
         .as_array()
         .filter(|v| v.len() <= 200)
@@ -589,6 +610,7 @@ fn snapshot(conn: &Connection) -> Result<Value, String> {
     favorites.extend(next);
     let mut doc = json!({"schemaVersion":1,"profiles":profiles,"favorites":favorites});
     if let Some(media)=selected_rhvideo(conn,raw_rhvideo()?)?{doc["schemaVersion"]=json!(2);doc["rhvideo"]=media;}
+    if let Some(aliases)=prior.get("deviceAliases").and_then(Value::as_object).filter(|m|!m.is_empty()){doc["schemaVersion"]=json!(2);doc["deviceAliases"]=Value::Object(aliases.clone());}
     validate(&doc)?;
     Ok(doc)
 }
@@ -596,6 +618,49 @@ fn snapshot(conn: &Connection) -> Result<Value, String> {
 // the connection identity, so a sync cannot redirect a saved password elsewhere.
 pub(crate) fn network_profiles()->Result<Vec<Value>,String> {
     let conn=db()?;Ok(snapshot(&conn)?["profiles"].as_array().cloned().unwrap_or_default())
+}
+pub(crate) fn device_aliases()->Value {
+    db().ok()
+        .and_then(|conn| state(&conn, "document").ok().flatten())
+        .and_then(|doc| doc.get("deviceAliases").and_then(Value::as_object).cloned())
+        .map(Value::Object)
+        .unwrap_or_else(|| json!({}))
+}
+pub(crate) fn save_device_alias(peer_id: &str, alias: Option<&str>) -> Result<Value, String> {
+    if peer_id.len() != 64 || !peer_id.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()) {
+        return Err("设备 ID 无效".into());
+    }
+    let cleaned = alias.map(str::trim).filter(|s| !s.is_empty());
+    if let Some(text) = cleaned {
+        if text.chars().count() > 120 || text.chars().any(char::is_control) {
+            return Err("设备自定义名称需要 1–120 个字符且不含控制字符".into());
+        }
+    }
+    let mut runtime = runtime().lock().map_err(error)?;
+    if runtime.busy {
+        return Err("[busy] 请等待配置同步完成 / Wait for settings synchronization".into());
+    }
+    let conn = db()?;
+    let mut doc = snapshot(&conn)?;
+    let mut map = doc.get("deviceAliases").and_then(Value::as_object).cloned().unwrap_or_default();
+    if let Some(text) = cleaned {
+        map.insert(peer_id.to_string(), Value::String(text.to_string()));
+    } else {
+        map.remove(peer_id);
+    }
+    if let Some(obj) = doc.as_object_mut() {
+        if map.is_empty() {
+            obj.remove("deviceAliases");
+            obj.insert("schemaVersion".into(), json!(if obj.contains_key("rhvideo") { 2 } else { 1 }));
+        } else {
+            obj.insert("deviceAliases".into(), Value::Object(map.clone()));
+            obj.insert("schemaVersion".into(), json!(2));
+        }
+    }
+    validate(&doc)?;
+    store(&conn, "document", &doc)?;
+    runtime.preview = None;
+    Ok(Value::Object(map))
 }
 pub(crate) fn validate_network_config(config:&Value)->Result<(),String>{validate(&json!({"schemaVersion":1,"profiles":[{"id":"00000000-0000-4000-8000-000000000000","config":config}],"favorites":[]}))}
 pub(crate) fn save_network_profile(profile:Value,remove:bool)->Result<(),String> {
@@ -1280,5 +1345,24 @@ mod tests {
         std::fs::create_dir_all(b.parent().unwrap()).unwrap();
         std::fs::copy(a, &b).unwrap();
         assert!(read_config_at(&b).is_err());
+    }
+    #[test]
+    fn device_aliases_roundtrip_in_v2_and_reject_invalid_peer_ids_or_names() {
+        let c = connection();
+        let peer = "a".repeat(64);
+        let mut doc = empty();
+        doc["schemaVersion"] = json!(2);
+        doc["deviceAliases"] = json!({ peer.clone(): "客厅服务器" });
+        validate(&doc).unwrap();
+        apply(&c, &doc).unwrap();
+        assert_eq!(snapshot(&c).unwrap(), doc);
+
+        let mut bad_peer = doc.clone();
+        bad_peer["deviceAliases"] = json!({ "not-a-peer": "客厅服务器" });
+        assert!(validate(&bad_peer).is_err());
+
+        let mut bad_name = doc.clone();
+        bad_name["deviceAliases"] = json!({ peer: "bad\nname" });
+        assert!(validate(&bad_name).is_err());
     }
 }

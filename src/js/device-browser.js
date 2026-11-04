@@ -58,16 +58,79 @@ const deviceBrowser=(()=>{
     const raw=String(query||'').trim().toLowerCase();
     return list().filter(p=>p.address.startsWith('rh://')&&p.address.toLowerCase().startsWith(raw)).slice(0,12).map(p=>({path:p.address,kind:'device'}));
   }
+  async function setAlias(peerId,alias){
+    const cleaned=typeof alias==='string'?alias.trim():'';
+    await call('device_groups',{command:'setAlias',args:{peer:peerId,alias:cleaned}});
+    await refresh();
+    if(typeof desktopConfigSync!=='undefined'&&desktopConfigSync?.changed)desktopConfigSync.changed(300);
+    return {peer:peerId,alias:cleaned};
+  }
+  function promptAlias(peer){
+    if(typeof document?.createElement!=='function'||!document.body)return;
+    document.getElementById('device-alias-dialog')?.remove();
+    const rawName=peer.rawName||peer.name||'';
+    const currentAlias=peer.alias||'';
+    const overlay=document.createElement('div');overlay.id='device-alias-dialog';overlay.className='overlay app-confirm-overlay';overlay.tabIndex=-1;
+    const backdrop=document.createElement('div');backdrop.className='dialog-backdrop';
+    const box=document.createElement('div');box.className='dialog-box app-confirm-box';box.setAttribute('role','dialog');box.setAttribute('aria-modal','true');
+    const title=document.createElement('div');title.className='dialog-title';title.textContent=text('设置设备自定义名称','Set custom device name');
+    const desc=document.createElement('p');desc.className='settings-card-description';desc.style.margin='6px 0 10px';
+    desc.textContent=text('原机器名称：','Original machine name: ')+rawName+' · '+text('仅作显示描述，会随 WebDAV 配置同步到所有设备。留空恢复原机器名。','Display alias only; syncs across devices via WebDAV. Leave blank to restore original name.');
+    const input=document.createElement('input');input.type='text';input.className='rename-input';input.maxLength=120;
+    input.value=currentAlias;input.placeholder=rawName;input.style.cssText='width:100%;box-sizing:border-box;padding:7px 10px;margin-bottom:8px';
+    const errEl=document.createElement('p');errEl.className='settings-card-description media-convert-error';errEl.style.margin='0 0 8px';errEl.hidden=true;
+    const actions=document.createElement('div');actions.className='dialog-actions';
+    const cancel=document.createElement('button');cancel.type='button';cancel.className='dialog-btn';cancel.textContent=typeof t==='function'?t('btn.cancel'):text('取消','Cancel');
+    const clearBtn=document.createElement('button');clearBtn.type='button';clearBtn.className='dialog-btn';clearBtn.textContent=text('恢复原名','Restore original');clearBtn.hidden=!currentAlias;
+    const save=document.createElement('button');save.type='button';save.className='dialog-btn primary';save.textContent=text('保存','Save');
+    actions.append(cancel,clearBtn,save);
+    box.append(title,desc,input,errEl,actions);overlay.append(backdrop,box);
+    const close=()=>overlay.remove();
+    const submit=async val=>{
+      save.disabled=clearBtn.disabled=cancel.disabled=true;errEl.hidden=true;
+      try{await setAlias(peer.peer||peer.id,val);close();}
+      catch(e){errEl.textContent=String(e.message||e);errEl.hidden=false;save.disabled=clearBtn.disabled=cancel.disabled=false;}
+    };
+    RHFilesUI.listen(cancel,'click',close,undefined,'devices.alias.cancel');
+    RHFilesUI.listen(backdrop,'click',close,undefined,'devices.alias.backdrop');
+    RHFilesUI.listen(clearBtn,'click',()=>submit(''),undefined,'devices.alias.clear');
+    RHFilesUI.listen(save,'click',()=>submit(input.value),undefined,'devices.alias.save');
+    RHFilesUI.listen(input,'keydown',e=>{if(e.key==='Enter'){e.preventDefault();submit(input.value);}else if(e.key==='Escape'){e.preventDefault();close();}},undefined,'devices.alias.keydown');
+    document.body.appendChild(overlay);
+    requestAnimationFrame(()=>{input.focus();input.select();});
+  }
+  function showPeerContextMenu(e,peer){
+    e.preventDefault();e.stopPropagation();
+    if(typeof removeContextMenu!=='function'||typeof renderMenuItems!=='function'){promptAlias(peer);return;}
+    removeContextMenu();
+    const menu=document.createElement('div');menu.className='context-menu';menu.style.cssText='left:'+e.clientX+'px;top:'+e.clientY+'px;';
+    const items=[
+      {label:typeof t==='function'?t('sidebar.open'):text('打开','Open'),icon:'open',action:()=>window.RHFilesAPI.invoke('devices.open',{group:peer.group,peer:peer.peer}).catch(err=>showNotice(String(err)))},
+      {label:typeof t==='function'?t('ctx.newTab'):text('在新标签页打开','Open in new tab'),icon:'tab',action:()=>window.RHFilesAPI.invoke('devices.open',{group:peer.group,peer:peer.peer,newTab:true}).catch(err=>showNotice(String(err)))},
+      {label:'-',action:null},
+      {label:text('设置自定义名称…','Set custom name…'),icon:'rename',action:()=>promptAlias(peer)},
+    ];
+    if(peer.alias){
+      items.push({label:text('恢复原机器名（'+peer.rawName+'）','Restore original name ('+peer.rawName+')'),icon:'refresh',action:()=>setAlias(peer.peer,'').catch(err=>showNotice(String(err)))});
+    }
+    renderMenuItems(menu,items,e.clientX,e.clientY);
+    document.body.appendChild(menu);
+    if(typeof _ctxShow==='function')_ctxShow(menu);
+    if(typeof clampMenuPosition==='function')requestAnimationFrame(()=>clampMenuPosition(menu,e.clientX,e.clientY));
+  }
   function paint(){
     const host=document.getElementById('device-group-locations');if(!host)return;
     host.replaceChildren();
     for(const peer of peers){
-      const button=document.createElement('button');button.type='button';button.className='sidebar-item';button.dataset.path=peer.path;button.dataset.apiAction='devices.open';button.title=peer.groupName+' · '+peer.name+'\n'+address(peer.path);
+      const button=document.createElement('button');button.type='button';button.className='sidebar-item';button.dataset.path=peer.path;button.dataset.apiAction='devices.open';
+      const titleName=peer.alias?peer.name+' ('+peer.rawName+')':peer.name;
+      button.title=peer.groupName+' · '+titleName+'\n'+address(peer.path);
       button.style.cssText='width:100%;border:0;background:transparent;font:inherit;text-align:left;color:inherit;cursor:pointer';
       button.innerHTML='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="3" y="3" width="14" height="11" rx="2"/><path d="M10 14v5M6 19h8"/><rect x="17" y="9" width="5" height="12" rx="1.5"/></svg>';
       const label=document.createElement('span');label.textContent=peer.name;button.append(label);
       RHFilesUI.listen(button,'click',event=>window.RHFilesAPI.invoke('devices.open',{group:peer.group,peer:peer.peer,newTab:event.ctrlKey||event.metaKey}).catch(e=>showNotice(String(e))),undefined,'devices.open.'+peer.group+'.'+peer.peer);
       RHFilesUI.listen(button,'auxclick',event=>{if(event.button===1){event.preventDefault();window.RHFilesAPI.invoke('devices.open',{group:peer.group,peer:peer.peer,newTab:true}).catch(e=>showNotice(String(e)));}},undefined,'devices.open.newTab.'+peer.group+'.'+peer.peer);
+      RHFilesUI.listen(button,'contextmenu',event=>showPeerContextMenu(event,peer),undefined,'devices.contextmenu.'+peer.group+'.'+peer.peer);
       host.append(button);
     }
     if(!peers.length){const help=document.createElement('p');help.className='settings-card-description';help.style.cssText='padding:0 12px;font-size:11px';help.textContent=text('加入设备组后，已开启共享的设备会显示在这里。','Join a group to see devices offering file sharing.');host.append(help);}
@@ -79,8 +142,14 @@ const deviceBrowser=(()=>{
   }
   async function refresh(){
     const ticket=++readTicket,state=await call('device_groups',{command:'state',args:{}});if(ticket!==readTicket)return {stale:true};
+    const aliases=state.deviceAliases&&typeof state.deviceAliases==='object'?state.deviceAliases:{};
     const next=[];
-    for(const group of state.groups||[])for(const peer of group.members||[])if(!peer.self&&!peer.blocked&&peer.server)next.push({group:group.id,groupName:group.name,peer:peer.id,name:peer.name,path:P.make(group.id,peer.id)});
+    for(const group of state.groups||[])for(const peer of group.members||[])if(!peer.self&&!peer.blocked&&peer.server){
+      const alias=typeof aliases[peer.id]==='string'?aliases[peer.id].trim():'';
+      const entry={group:group.id,groupName:group.name,peer:peer.id,name:alias||peer.name,path:P.make(group.id,peer.id)};
+      if(alias){entry.alias=alias;entry.rawName=peer.name;}
+      next.push(entry);
+    }
     peers=next;revision++;media.clear();paint();
     if(typeof G!=='undefined')for(const tab of [...(G.tabs||[]),...(G.rpTabs||[])])if(P.is(tab.path)){
       const location=P.parse(tab.path);if(!peers.some(p=>p.group===location.group&&p.peer===location.peer)){
@@ -113,6 +182,7 @@ const deviceBrowser=(()=>{
   function register(api){
     const string={type:'string',minLength:1,maxLength:27000},id={type:'string',pattern:'^[a-fA-F0-9]{64}$'},object=(properties={},required=[])=>({type:'object',properties,required,additionalProperties:false});
     api.register('devices.list',()=>({devices:list()}),{params:object(),risk:'read',description:'Locally known group file services and readable rh:// addresses; does not probe the network'});
+    api.register('devices.setAlias',p=>setAlias(p.peer.toLowerCase(),p.alias||''),{params:object({peer:id,alias:{type:'string',maxLength:120}},['peer']),risk:'settings',description:'Set or clear a synced custom display alias for a peer device'});
     api.register('devices.refresh',refresh,{params:object(),risk:'read',description:'Reload locally accepted device-group services, without discovery traffic'});
     api.register('devices.discover',discover,{params:object(),risk:'external',description:'Explicit signed service-record exchange with known trusted group members; at most 30 seconds / 32 members, no polling or permission changes'});
     api.register('devices.resolve',p=>resolve(p.address),{params:object({address:string},['address']),risk:'read',description:'Resolve rh://[group@]device/share/path from local trust, rejecting ambiguous names without network probes'});
@@ -181,7 +251,7 @@ const deviceBrowser=(()=>{
       }
     };try{await paint();}catch(e){list.textContent=String(e);}return {opened:true};
   }
-  return {register,refresh,refreshForCopy,paint,display,name,address,copyAddress,resolve,suggest,source,cachedSource:path=>media.get(P.parse(path).uri)?.url||'',fs};
+  return {register,refresh,refreshForCopy,paint,display,name,address,copyAddress,resolve,suggest,source,cachedSource:path=>media.get(P.parse(path).uri)?.url||'',fs,setAlias,promptAlias,showPeerContextMenu};
 })();
 deviceBrowser.register(window.RHFilesAPI);
 async function routeDeviceCommand(cmd,args){

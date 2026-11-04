@@ -108,8 +108,17 @@ internal object DeviceGroups {
       GroupConnections.invalidate()
       removeOrphanLocations(remote)
     }
+    if(command=="setAlias"){
+      val ctx=owner?:error("设备组尚未初始化")
+      val aliases=ConfigSync.saveDeviceAlias(ctx,args.getString("peer"),args.optString("alias",""))
+      importLocations(remote)
+      return JSONObject().put("deviceAliases",aliases)
+    }
     val result=g.run(command,args)
-    if(command=="state")(result as JSONObject).put("defaultDeviceName",DeviceNames.current(owner?:error("设备组尚未初始化")))
+    if(command=="state"){
+      val ctx=owner?:error("设备组尚未初始化")
+      (result as JSONObject).put("defaultDeviceName",DeviceNames.current(ctx)).put("deviceAliases",ConfigSync.deviceAliases(ctx))
+    }
     if(command in listOf("remove","restore","configure","join")){synchronized(this){sessions.clear()};GroupConnections.invalidate()}
     if(command=="join")importLocations(remote)
     if(command=="remove")removeLocation(remote,args.getString("id"),args.getString("peer"))
@@ -143,7 +152,10 @@ internal object DeviceGroups {
       }}finally{refreshDeadline.remove();refreshActive.set(false);publicationActive.set(false)}
     },"RHFiles-service-records").apply{isDaemon=true;start()}
   }
-  private fun profile(group:String,peer:String,member:JSONObject,url:String)=JSONObject().put("type","rhfiles").put("name",member.getString("name")).put("url",url).put("fingerprint",member.getJSONObject("server").getString("fingerprint")).put("groupId",group).put("groupPeerId",peer)
+  private fun profile(group:String,peer:String,member:JSONObject,url:String):JSONObject {
+    val alias=owner?.let{ConfigSync.deviceAliases(it).optString(peer,"").trim().takeIf{s->s.isNotEmpty()}}
+    return JSONObject().put("type","rhfiles").put("name",alias?:member.getString("name")).put("url",url).put("fingerprint",member.getJSONObject("server").getString("fingerprint")).put("groupId",group).put("groupPeerId",peer)
+  }
   private fun profiles(remote:RemoteStorage):List<JSONObject>{val a=remote.backupProfiles(true);return (0 until a.length()).map{val item=a.getJSONObject(it);JSONObject(item.getJSONObject("config").toString()).put("id",item.getString("id"))}}
   @Synchronized private fun importLocations(remote:RemoteStorage):Int {
     var count=0;for((group,peer,member) in servers()){

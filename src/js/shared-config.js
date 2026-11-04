@@ -40,6 +40,15 @@
     if(same(lv,rv))media=lv;else if(same(lv,bv))media=rv;else if(same(rv,bv))media=lv;
     else{conflicts.push({kind:'rhvideo',id:'rhvideo',local:lv,remote:rv});media=choice==='remote'?rv:lv;}
     if(media!=null){document.schemaVersion=2;document.rhvideo=media;}
+    const [ba,la,ra]=[base,local,remote].map(doc=>doc.deviceAliases&&typeof doc.deviceAliases==='object'?doc.deviceAliases:{});
+    const aliases={};
+    for(const k of [...new Set([...Object.keys(ba),...Object.keys(la),...Object.keys(ra)])].sort()){
+      const [bVal,lVal,rVal]=[ba[k],la[k],ra[k]];let selected;
+      if(same(lVal,rVal))selected=lVal;else if(same(lVal,bVal))selected=rVal;else if(same(rVal,bVal))selected=lVal;
+      else{conflicts.push({kind:'deviceAliases',id:k,local:lVal??null,remote:rVal??null});selected=choice==='remote'?rVal:lVal;}
+      if(typeof selected==='string'&&selected.trim())aliases[k]=selected.trim();
+    }
+    if(Object.keys(aliases).length){document.schemaVersion=2;document.deviceAliases=aliases;}
     const ids=new Set(document.profiles.map(p=>p.id)),kept=[];
     for(const f of document.favorites){
       const id=new URL(f.path).host;

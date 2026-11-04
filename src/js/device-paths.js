@@ -54,7 +54,9 @@
     return {device:names.at(-1),group:names.length===2?names[0]:null,path};
   }
   function resolveAddress(value,peers){
-    const parsed=parseAddress(value),matches=peers.filter(p=>fold(p.name)===fold(parsed.device)&&(parsed.group===null||fold(p.groupName)===fold(parsed.group)));
+    const parsed=parseAddress(value);
+    let matches=peers.filter(p=>fold(p.name)===fold(parsed.device)&&(parsed.group===null||fold(p.groupName)===fold(parsed.group)));
+    if(!matches.length)matches=peers.filter(p=>p.rawName&&fold(p.rawName)===fold(parsed.device)&&(parsed.group===null||fold(p.groupName)===fold(parsed.group)));
     const unique=[...new Map(matches.map(p=>[p.group+'/'+p.peer,p])).values()];
     if(unique.length!==1){
       const error=Error(unique.length?'[ambiguous_device] Device name is not unique':'[device_not_found] No accepted file service with this name');

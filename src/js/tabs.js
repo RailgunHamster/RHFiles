@@ -1891,6 +1891,9 @@ function _createHomePeerCard(peer, subtitle) {
   RHFilesUI.listen(card, "click", event => {
     window.RHFilesAPI.invoke("devices.open", { group: peer.group, peer: peer.peer, newTab: event.ctrlKey || event.metaKey }).catch(e => showNotice(String(e)));
   }, undefined, "src.js.tabs.renderHomeDevices.peerCard");
+  if (typeof deviceBrowser !== "undefined" && deviceBrowser?.showPeerContextMenu) {
+    RHFilesUI.listen(card, "contextmenu", event => deviceBrowser.showPeerContextMenu(event, peer), undefined, "src.js.tabs.renderHomeDevices.peerCardCtx");
+  }
   return card;
 }
 function _createHomeShareCard(peer, entry) {
@@ -1899,7 +1902,7 @@ function _createHomeShareCard(peer, entry) {
   card.dataset.path = entry.path;
   const isDriveLetter = /^[A-Za-z]:?$/.test(entry.name);
   const letterText = isDriveLetter ? (entry.name.endsWith(":") ? entry.name.toUpperCase() : entry.name.toUpperCase() + ":") : entry.name;
-  const labelText = `${peer.name} (${peer.groupName})`;
+  const labelText = peer.alias ? `${peer.name} (${peer.rawName} · ${peer.groupName})` : `${peer.name} (${peer.groupName})`;
   const total = Number(entry.total_bytes) || 0;
   const free = Number(entry.free_bytes) || 0;
   let barHtml = "";
@@ -1921,7 +1924,40 @@ function _createHomeShareCard(peer, entry) {
   RHFilesUI.listen(card, "click", event => {
     window.RHFilesAPI.invoke("devices.open", { group: peer.group, peer: peer.peer, path: "/" + entry.name, newTab: event.ctrlKey || event.metaKey }).catch(e => showNotice(String(e)));
   }, undefined, "src.js.tabs.renderHomeDevices.shareCard");
+  if (typeof deviceBrowser !== "undefined" && deviceBrowser?.showPeerContextMenu) {
+    RHFilesUI.listen(card, "contextmenu", event => deviceBrowser.showPeerContextMenu(event, peer), undefined, "src.js.tabs.renderHomeDevices.shareCardCtx");
+  }
   return card;
+}
+function _createHomeDeviceGroupHeader(peer, zh) {
+  const header = document.createElement("div");
+  header.className = "home-device-machine-head";
+  const info = document.createElement("div");
+  info.className = "home-device-machine-title";
+  info.title = (peer.alias ? `${peer.name} (${peer.rawName})` : peer.name) + " · " + peer.groupName + "\n" + (peer.address || "");
+  const rawBadge = peer.alias ? `<span class="home-device-machine-raw">${esc(peer.rawName)}</span>` : "";
+  info.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="3" width="14" height="11" rx="2"/><path d="M10 14v5M6 19h8"/><rect x="17" y="9" width="5" height="12" rx="1.5"/></svg><span class="home-device-machine-name">${esc(peer.name)}</span>${rawBadge}<span class="home-device-machine-meta">${esc(peer.groupName)}</span>`;
+  RHFilesUI.listen(info, "click", event => {
+    window.RHFilesAPI.invoke("devices.open", { group: peer.group, peer: peer.peer, newTab: event.ctrlKey || event.metaKey }).catch(e => showNotice(String(e)));
+  }, undefined, "src.js.tabs.renderHomeDevices.machineHeadOpen");
+  header.appendChild(info);
+  if (typeof deviceBrowser !== "undefined" && deviceBrowser?.promptAlias) {
+    const renameBtn = document.createElement("button");
+    renameBtn.type = "button";
+    renameBtn.className = "home-device-rename-btn";
+    renameBtn.title = zh ? "设置自定义设备名称（随 WebDAV 配置同步）" : "Set custom device name (synced via WebDAV)";
+    renameBtn.setAttribute("aria-label", renameBtn.title);
+    renameBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><path d="M11.5 2.5l2 2-8 8H3.5v-2l8-8z"/></svg>`;
+    RHFilesUI.listen(renameBtn, "click", event => {
+      event.stopPropagation();
+      deviceBrowser.promptAlias(peer);
+    }, undefined, "src.js.tabs.renderHomeDevices.machineHeadRename");
+    header.appendChild(renameBtn);
+  }
+  if (typeof deviceBrowser !== "undefined" && deviceBrowser?.showPeerContextMenu) {
+    RHFilesUI.listen(header, "contextmenu", event => deviceBrowser.showPeerContextMenu(event, peer), undefined, "src.js.tabs.renderHomeDevices.machineHeadCtx");
+  }
+  return header;
 }
 async function renderHomeDevices() {
   const section = document.getElementById("home-devices-section");
@@ -1941,19 +1977,25 @@ async function renderHomeDevices() {
       return;
     }
     section.hidden = false;
+    container.className = "home-devices-groups";
     container.replaceChildren();
     for (const peer of devices) {
-      const slot = document.createElement("div");
-      slot.style.display = "contents";
-      slot.appendChild(_createHomePeerCard(peer));
-      container.appendChild(slot);
+      const groupEl = document.createElement("div");
+      groupEl.className = "home-device-machine-group";
+      groupEl.dataset.peer = peer.peer;
+      groupEl.appendChild(_createHomeDeviceGroupHeader(peer, zh));
+      const grid = document.createElement("div");
+      grid.className = "home-grid";
+      grid.appendChild(_createHomePeerCard(peer));
+      groupEl.appendChild(grid);
+      container.appendChild(groupEl);
       window.RHFilesAPI.invoke("devices.entries", { path: peer.path }).then(entries => {
-        if (token !== _homeDevicesToken || !slot.isConnected) return;
+        if (token !== _homeDevicesToken || !grid.isConnected) return;
         const shares = (entries || []).filter(e => e && e.is_dir);
         if (!shares.length) return;
-        slot.replaceChildren();
+        grid.replaceChildren();
         for (const share of shares) {
-          slot.appendChild(_createHomeShareCard(peer, share));
+          grid.appendChild(_createHomeShareCard(peer, share));
         }
       }).catch(() => {});
     }
