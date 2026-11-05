@@ -72,7 +72,7 @@
     const rhMatch=/^rh:\/\/[^/\\?#]+[/\\]+(.*)$/i.exec(text);
     if(rhMatch)text=rhMatch[1].trim();
     if((text.startsWith('"')&&text.endsWith('"'))||(text.startsWith("'")&&text.endsWith("'")))text=text.slice(1,-1).trim();
-    const match=/^([A-Za-z]):(?:[\\/](.*))?$/.exec(text);
+    const match=/^([A-Za-z]):?(?:[\\/](.*))?$/.exec(text);
     if(!match)throw Error('请输入盘符开头的电脑路径，如 C:\\Users\\40608\\Documents');
     const drive=match[1].toUpperCase();
     const rawTail=(match[2]||'').replace(/\\/g,'/').replace(/\/+$/,'');

@@ -158,7 +158,7 @@ const deviceBrowser=(()=>{
         if(active&&typeof renderNavigationError==='function'){renderNavigationError(tab.path,'[authorization_revoked] '+text('设备已移除或未开放文件服务','Device removed or file sharing unavailable'),right);if(typeof updatePreviewForSelection==='function')updatePreviewForSelection(right);}
       }
     }
-    if(typeof renderTabs==='function')renderTabs();return {devices:list()};
+    if(typeof renderTabs==='function')renderTabs();if(typeof renderPinnedFolders==='function')renderPinnedFolders();return {devices:list()};
   }
   function discover(){
     if(discoverPromise)return discoverPromise;

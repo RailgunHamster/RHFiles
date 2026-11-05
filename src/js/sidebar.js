@@ -307,7 +307,7 @@ async function loadRecentList() {
         ? '<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M1 4h5l2 2h7v7H1z" stroke="currentColor" stroke-width=".8" fill="none"/></svg>'
         : '<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><rect x="3" y="1" width="10" height="14" rx="1" stroke="currentColor" stroke-width=".8" fill="none"/><path d="M6 5h4M6 7h4M6 9h3" stroke="currentColor" stroke-width=".6"/></svg>';
       div.innerHTML = folderIcon + ' ' + esc(item.name);
-      div.title = item.path + "\n" + formatTimeAgo(item.last_accessed) + (item.access_count > 1 ? " \u00b7 " + item.access_count + "x" : "");
+      div.title = ((typeof isDevicePath === 'function' && isDevicePath(item.path)) ? deviceBrowser.address(item.path) : displayPath(item.path)) + "\n" + formatTimeAgo(item.last_accessed) + (item.access_count > 1 ? " \u00b7 " + item.access_count + "x" : "");
       RHFilesUI.listen(div,"click", () => {
         if (item.is_dir) {
           navigateTo(item.path);
@@ -406,6 +406,14 @@ function isFavoriteFolder(path) {
 
 function favoriteDisplayName(path, name) {
   if (name) return name;
+  if (typeof isDevicePath === 'function' && isDevicePath(path)) {
+    const parsed = RHFilesDevicePaths.parse(path);
+    return parsed.parts.at(-1) || deviceBrowser.name(parsed.group, parsed.peer);
+  }
+  if (typeof networkLocations !== 'undefined' && /^remote:\/\//i.test(String(path))) {
+    const disp = networkLocations.display(path);
+    return disp.replace(/\/+$/, '').split('/').filter(Boolean).pop() || disp;
+  }
   const clean = String(path || '').replace(/[\\/]+$/, '');
   return clean.split(/[\\/]/).filter(Boolean).pop() || path;
 }
@@ -541,7 +549,7 @@ function renderPinnedFolders() {
     const div = document.createElement("div");
     div.className = "sidebar-item pinned-item";
     div.dataset.path = p.path;
-    div.title = p.path;
+    div.title = (typeof isDevicePath === 'function' && isDevicePath(p.path)) ? deviceBrowser.address(p.path) : displayPath(p.path);
     div.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M8 1l2 4.5H15l-3.8 3 1.4 4.7L8 10.5 3.4 13.2l1.4-4.7L1 5.5h5z" fill="#e8b130" stroke="#c99820" stroke-width=".5"/></svg><span class="sidebar-item-label">' + esc(p.name) + '</span>';
     RHFilesUI.listen(div,"click", () => navigateTo(p.path),undefined,"src.js.sidebar.renderPinnedFolders.fada4b9e6db8");
     RHFilesUI.listen(div,"auxclick", e => { if (e.button === 1) { e.preventDefault(); addTab(p.path); } },undefined,"src.js.sidebar.renderPinnedFolders.b8eb397530e3");

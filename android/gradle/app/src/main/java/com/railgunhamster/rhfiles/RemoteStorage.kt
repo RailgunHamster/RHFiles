@@ -215,8 +215,8 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
     val cipher = Cipher.getInstance("AES/GCM/NoPadding"); cipher.init(Cipher.DECRYPT_MODE,key(),GCMParameterSpec(128,encrypted.copyOfRange(0,12)))
     return JSONObject(String(cipher.doFinal(encrypted.copyOfRange(12,encrypted.size)),Charsets.UTF_8))
   }
-  fun connections(): JSONArray = JSONArray().also { result -> purgeIndependentConnections();preferences.all.keys.sorted().forEach { id ->
-    try { val c = config(id); result.put(JSONObject().put("id",id).put("name",c.getString("name")).put("type",c.getString("type")).put("host",c.optString("host")).put("port",c.optInt("port",445)).put("share",c.optString("share")).put("needsPassword",c.optBoolean("needsPassword")).put("authorization",if(c.optString("groupId").isNotEmpty())"device-group"else"independent").put("path","remote://$id/")) }
+  fun connections(): JSONArray = JSONArray().also { result -> purgeIndependentConnections();val aliases=ConfigSync.deviceAliases(context);preferences.all.keys.sorted().forEach { id ->
+    try { val c = config(id); val peerId = c.optString("groupPeerId"); val name = if(c.optString("type")=="rhfiles"&&peerId.isNotEmpty()) aliases.optString(peerId,"").trim().takeIf{it.isNotEmpty()}?:c.getString("name") else c.getString("name"); result.put(JSONObject().put("id",id).put("name",name).put("rawName",c.getString("name")).put("type",c.getString("type")).put("host",c.optString("host")).put("port",c.optInt("port",445)).put("share",c.optString("share")).put("needsPassword",c.optBoolean("needsPassword")).put("authorization",if(c.optString("groupId").isNotEmpty())"device-group"else"independent").put("path","remote://$id/")) }
     catch (_: Exception) { result.put(JSONObject().put("id",id).put("name","密钥失效，请删除并重新添加").put("type","unavailable")) }
   } }
   private data class Location(val id: String, val relative: String, val c: JSONObject,val serverRoot:Boolean=false)

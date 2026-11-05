@@ -1264,7 +1264,7 @@ function showSelectionProperties(entries) {
   const content = document.getElementById("props-content");
   if (!dlg || !content) return;
 
-  const location = summary.parentPath || t('properties.multipleLocations');
+  const location = summary.parentPath ? ((typeof isDevicePath === 'function' && isDevicePath(summary.parentPath)) ? deviceBrowser.address(summary.parentPath) : displayPath(summary.parentPath)) : t('properties.multipleLocations');
   let html = `
     <div class="props-row"><span class="props-label">${t('properties.name')}</span><span class="props-value">${esc(t('properties.itemsSelected', {count: summary.count}))}</span></div>
     <div class="props-row"><span class="props-label">${t('properties.path')}</span><span class="props-value">${esc(location)}</span></div>
@@ -1307,7 +1307,7 @@ function showCustomProperties(info) {
 
   let html = `
     <div class="props-row"><span class="props-label">${t('properties.name')}</span><span class="props-value">${esc(info.name)}</span></div>
-    <div class="props-row"><span class="props-label">${t('properties.path')}</span><span class="props-value">${esc(info.path)}</span></div>
+    <div class="props-row"><span class="props-label">${t('properties.path')}</span><span class="props-value">${esc((typeof isDevicePath === 'function' && isDevicePath(info.path)) ? deviceBrowser.address(info.path) : displayPath(info.path))}</span></div>
     <div class="props-row"><span class="props-label">${t('properties.type')}</span><span class="props-value">${esc(isDir ? t('properties.fileFolder') : ext.toUpperCase() + ' ' + t('properties.file'))}</span></div>
     <div class="props-row"><span class="props-label">${t('properties.size')}</span><span class="props-value">${esc(info.size_display)}</span></div>`;
 

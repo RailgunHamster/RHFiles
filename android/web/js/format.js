@@ -64,9 +64,12 @@
 
   function parentOf(path) {
     const trimmed = String(path).replace(/\/+$/, '');
+    if (/^(?:remote|content|file):\/\/[^/]+$/i.test(trimmed)) return trimmed + '/';
     const index = trimmed.lastIndexOf('/');
     if (index <= 0) return '/';
-    return trimmed.slice(0, index);
+    const parent = trimmed.slice(0, index);
+    if (/^(?:remote|content|file):\/\/[^/]+$/i.test(parent)) return parent + '/';
+    return parent;
   }
 
   function baseName(path) {

@@ -368,3 +368,44 @@ test('Desktop rh://Device/C:\\... and Android resolveWindowsDrivePath jump to sh
     /未共享 C 盘/
   );
 });
+
+test('Android and Desktop favorites, properties, breadcrumbs and copy-path display rh:// short addresses instead of remote:// or rhfiles-device:// IDs', () => {
+  const fmtCtx = context({});
+  load(fmtCtx, '../../android/web/js/format.js');
+  const fmt = fmtCtx.fmt;
+
+  // 1. fmt.parentOf never slices remote://<uuid>/ into remote:/
+  const devUuid = '550e8400-e29b-41d4-a716-446655440000';
+  const rootUri = 'remote://' + devUuid + '/';
+  assert.equal(fmt.parentOf(rootUri), rootUri);
+  assert.equal(fmt.parentOf(rootUri + 'C'), rootUri);
+  assert.equal(fmt.parentOf(rootUri + 'C/Users'), rootUri + 'C');
+
+  // 2. Android app.js pathLabel / copyablePath / favoriteLabel / breadcrumbs format rhfiles roots as rh://
+  const appSource = fs.readFileSync(path.join(root, 'android/web/js/app.js'), 'utf8');
+  assert.ok(appSource.includes("return 'rh://' + root.label + (tail || '/');"), 'app.js must format rhfiles device paths as rh://');
+  assert.ok(appSource.includes("const locationInfo = state.route.screen === 'favorites' ? pathLabel(entry.path)"), 'favorites screen must display pathLabel(entry.path)');
+  assert.ok(appSource.includes("],pathLabel(entry.path));"), 'favoriteMenu must display pathLabel(entry.path) instead of raw entry.path');
+
+  // 3. Desktop sidebar.js favoriteDisplayName and renderPinnedFolders use readable rh:// address
+  const P = JSON.parse(JSON.stringify({}));
+  const dpCtx = context({});
+  load(dpCtx, 'device-paths.js');
+  const Paths = dpCtx.RHFilesDevicePaths;
+  const group = 'a'.repeat(64);
+  const peer = 'b'.repeat(64);
+  const devPath = Paths.make(group, peer, '/C/Users/40608/Documents');
+  const sbCtx = context({
+    IS_MAC: false,
+    RHFilesDevicePaths: Paths,
+    isDevicePath: Paths.is,
+    deviceBrowser: {
+      name: () => 'WINSERVER',
+      address: p => Paths.addressFor(p, [{ group, groupName: 'Office', peer, name: 'WINSERVER' }]),
+    },
+    displayPath: p => p,
+  });
+  load(sbCtx, 'sidebar.js', ['favoriteDisplayName']);
+  assert.equal(sbCtx.favoriteDisplayName(Paths.make(group, peer, '/')), 'WINSERVER');
+  assert.equal(sbCtx.favoriteDisplayName(devPath), 'Documents');
+});

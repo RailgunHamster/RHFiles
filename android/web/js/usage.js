@@ -119,7 +119,7 @@ const androidUsage=(()=>{
   function rowActions(entry){ui.openSheet(entry.name,[
     ...(entry.isDir?[app.action('查看文件夹分析','chart',()=>drill(entry.id))]:[]),
     app.action(entry.isDir?'打开此文件夹':'打开所在文件夹','folder',()=>app.go({screen:'folder',path:entry.isDir?entry.path:entry.parentPath||fmt.parentOf(entry.path)})),
-    app.action('复制路径','copy',()=>ui.copyText(entry.path)),
+    app.action('复制路径','copy',async()=>{await ui.copyText(app.copyablePath?app.copyablePath(entry.path):app.pathLabel(entry.path));ui.toast('路径已复制');}),
   ],entry.issue||decode(entry.path));}
   function back(){if(!mounted||app.state.route.tool!=='usage'||breadcrumbs.length<2)return false;drill(breadcrumbs.at(-2).id);return true;}
   return {init(context){app=context;},enter,leave,back};
