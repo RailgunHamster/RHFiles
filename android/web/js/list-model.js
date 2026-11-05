@@ -56,5 +56,48 @@
     if(typeof path!=='string'||/[?#]/.test(path))return null;
     return /^remote:\/\/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})(?:\/|$)/i.exec(path)?.[1].toLowerCase()||null;
   }
-  return {range,directoryFor,categoryFiles,capturePosition,restorePosition,albums,reconcile,thumbnailLoader,layout,remoteId};
+  function sharedDriveLetters(rootEntries){
+    if(!Array.isArray(rootEntries))return [];
+    const seen=new Set(),out=[];
+    for(const e of rootEntries){
+      if(!e||!e.isDir)continue;
+      const m=/^([A-Za-z]):?$/.exec(String(e.name||'').trim());
+      if(m){const d=m[1].toUpperCase();if(!seen.has(d)){seen.add(d);out.push(d);}}
+    }
+    return out;
+  }
+  function resolveWindowsDrivePath(input,rootPath,rootEntries){
+    let text=String(input||'').trim();
+    if((text.startsWith('"')&&text.endsWith('"'))||(text.startsWith("'")&&text.endsWith("'")))text=text.slice(1,-1).trim();
+    const rhMatch=/^rh:\/\/[^/\\?#]+[/\\]+(.*)$/i.exec(text);
+    if(rhMatch)text=rhMatch[1].trim();
+    if((text.startsWith('"')&&text.endsWith('"'))||(text.startsWith("'")&&text.endsWith("'")))text=text.slice(1,-1).trim();
+    const match=/^([A-Za-z]):(?:[\\/](.*))?$/.exec(text);
+    if(!match)throw Error('请输入盘符开头的电脑路径，如 C:\\Users\\40608\\Documents');
+    const drive=match[1].toUpperCase();
+    const rawTail=(match[2]||'').replace(/\\/g,'/').replace(/\/+$/,'');
+    if(rawTail.includes('//'))throw Error('电脑路径包含空目录段');
+    const segments=rawTail?rawTail.split('/'):[];
+    for(const seg of segments){
+      if(!seg||seg==='.'||seg==='..'||seg.length>240||/[\\/:*?"<>|\u0000-\u001f\u007f]/.test(seg)||/[. ]$/.test(seg))throw Error('电脑路径包含无效文件名：'+seg);
+    }
+    const shares=Array.isArray(rootEntries)?rootEntries:[];
+    const driveEntry=shares.find(e=>e&&e.isDir&&/^[A-Za-z]:?$/.test(String(e.name||''))&&String(e.name).replace(/:$/,'').toUpperCase()===drive);
+    if(!driveEntry){
+      const available=sharedDriveLetters(shares);
+      throw Error('该设备未共享 '+drive+' 盘'+(available.length?'（当前已共享 '+available.map(d=>d+':').join('、')+'）':'（仅当电脑共享了 '+drive+' 盘而非普通文件夹时可用）'));
+    }
+    const baseRoot=String(rootPath||'').replace(/\/+$/,'')+'/';
+    const sharePath=(driveEntry.path||(baseRoot+encodeURIComponent(driveEntry.name))).replace(/\/+$/,'');
+    const chain=[{path:sharePath,parentPath:baseRoot,label:drive+':'}];
+    let current=sharePath;
+    for(const seg of segments){
+      const next=current+'/'+encodeURIComponent(seg);
+      chain.push({path:next,parentPath:current,label:seg});
+      current=next;
+    }
+    const target=chain.at(-1);
+    return {drive,shareName:driveEntry.name,segments,path:target.path,parentPath:target.parentPath,label:target.label,chain};
+  }
+  return {range,directoryFor,categoryFiles,capturePosition,restorePosition,albums,reconcile,thumbnailLoader,layout,remoteId,sharedDriveLetters,resolveWindowsDrivePath};
 });

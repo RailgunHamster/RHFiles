@@ -171,7 +171,7 @@ class ConfigSync(private val context:Context,private val remotes:RemoteStorage,p
   }
   fun acknowledge(id:String):JSONObject=synchronized(settingsLock){
     val p=proposal?:error("同步结果已过期");require(p.getString("id")==id&&journal.baseFile.exists()){"同步事务无效"}
-    synchronized(rhvideoLock){require(SharedConfig.same(p.optJSONObject("rhvideoObserved"),rawRhvideo(context))){"同步期间 RHVideo 连接已改变，未覆盖本机更改"};val doc=p.getJSONObject("document");val aliases=doc.optJSONObject("deviceAliases")?:JSONObject();check(prefs.edit().putString("base",doc.toString()).putString("deviceAliases",aliases.toString()).putString("rhvideoObserved",SharedConfig.canonical(p.optJSONObject("rhvideoObserved"))).putLong("lastSuccess",System.currentTimeMillis()).commit()){"同步记录保存失败"}}
+    synchronized(rhvideoLock){require(SharedConfig.same(p.optJSONObject("rhvideoObserved"),rawRhvideo(context))){"同步期间 RHVideo 连接已改变，未覆盖本机更改"};val doc=p.getJSONObject("document");val aliases=doc.optJSONObject("deviceAliases")?:JSONObject();check(prefs.edit().putString("base",doc.toString()).putString("deviceAliases",aliases.toString()).putString("rhvideoObserved",SharedConfig.canonical(p.optJSONObject("rhvideoObserved"))).putLong("lastSuccess",System.currentTimeMillis()).commit()){"同步记录保存失败"};runCatching{DeviceGroups.importLocations(remotes)}}
     journal.delete();require(!journal.baseFile.exists()){"无法确认同步，请重试"};busy=false;proposal=null;phase="success";message="已同步网络位置、网络收藏和 RHVideo 地址/用户名（不包含密码、令牌）";status()
   }
   fun recover():JSONObject?=synchronized(settingsLock){

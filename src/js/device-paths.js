@@ -43,15 +43,26 @@
     const raw=String(value||'').trim();if(raw.length>27000)invalidAddress();
     const match=/^rh:\/\/([^/\\?#]+)((?:[/\\][^?#]*)?)$/i.exec(raw);if(!match)invalidAddress();
     const labels=match[1].split('@');if(labels.length>2)invalidAddress();
-    let names,parts;
+    let names,parts,windowsDrive=null;
     try{
       names=labels.map(v=>label(decodeURIComponent(v)));
-      const tail=(match[2]||'/').replace(/\\/g,'/');
+      let tail=(match[2]||'/').replace(/\\/g,'/');
+      const unquoted=/^\/"([A-Za-z]:[^"]*)"$/.exec(tail);
+      if(unquoted)tail='/'+unquoted[1];
+      const driveMatch=/^\/([A-Za-z]):(?=\/|$)(.*)$/.exec(tail);
+      if(driveMatch){
+        windowsDrive=driveMatch[1].toUpperCase();
+        tail='/'+windowsDrive+(driveMatch[2]||'');
+      }
       if(tail.includes('//'))invalidAddress();
-      parts=tail.replace(/\/$/,'').slice(1).split('/').filter((v,i,a)=>!(a.length===1&&v==='')).map(v=>name(decodeURIComponent(v)));
+      parts=tail.replace(/\/$/,'').slice(1).split('/').filter((v,i,a)=>!(a.length===1&&v==='')).map(v=>{
+        let decoded;
+        try{decoded=decodeURIComponent(v);}catch(e){if(!windowsDrive)throw e;decoded=v;}
+        return name(decoded);
+      });
     }catch{invalidAddress();}
     const path='/'+parts.join('/');if(path.length>8192)invalidAddress();
-    return {device:names.at(-1),group:names.length===2?names[0]:null,path};
+    return {device:names.at(-1),group:names.length===2?names[0]:null,path,...(windowsDrive?{windowsDrive}:{})};
   }
   function resolveAddress(value,peers){
     const parsed=parseAddress(value);
@@ -61,9 +72,9 @@
     if(unique.length!==1){
       const error=Error(unique.length?'[ambiguous_device] Device name is not unique':'[device_not_found] No accepted file service with this name');
       error.code=unique.length?'ambiguous_device':'device_not_found';
-      error.candidates=unique.map(p=>({group:p.group,peer:p.peer,name:p.name,groupName:p.groupName}));throw error;
+      error.candidates=unique.map(p=>({group:p.group,peer:p.peer,name:p.name,nameRaw:p.rawName,groupName:p.groupName}));throw error;
     }
-    const peer=unique[0];return {path:make(peer.group,peer.peer,parsed.path),group:peer.group,peer:peer.peer};
+    const peer=unique[0];return {path:make(peer.group,peer.peer,parsed.path),group:peer.group,peer:peer.peer,...(parsed.windowsDrive?{windowsDrive:parsed.windowsDrive}:{})};
   }
   function addressFor(value,peers,{strict=false}={}){
     const parsed=parse(value),peer=peers.find(p=>p.group===parsed.group&&p.peer===parsed.peer);

@@ -60,7 +60,7 @@ internal object SharedConfig {
   }
   fun favorite(f:JSONObject):JSONObject=JSONObject().also{out->for(key in listOf("name","path","isDir","label","parentPath"))if(f.has(key)&&!f.isNull(key))out.put(key,f.get(key))}
   fun validate(doc:JSONObject,validateProfile:(JSONObject)->Unit){
-    val keys=setOf("schemaVersion","profiles","favorites")+if(doc.has("rhvideo"))setOf("rhvideo")else emptySet()+if(doc.has("deviceAliases"))setOf("deviceAliases")else emptySet()
+    val keys=setOf("schemaVersion","profiles","favorites")+(if(doc.has("rhvideo"))setOf("rhvideo")else emptySet<String>())+(if(doc.has("deviceAliases"))setOf("deviceAliases")else emptySet<String>())
     val hasV2=doc.has("rhvideo")||doc.has("deviceAliases")
     require(doc.toString().toByteArray().size<=LIMIT&&doc.opt("schemaVersion") is Int&&doc.getInt("schemaVersion")==(if(hasV2)2 else 1)&&doc.keys().asSequence().toSet()==keys){"不是支持的 RHFiles 同步配置：当前支持格式 v1/v2；含 RHVideo 或设备自定义名称时必须使用 v2。请更新 Windows 和 Android 两端；未更改本机设置或云端文件"}
     if(doc.has("rhvideo"))validateMedia(doc.getJSONObject("rhvideo"))

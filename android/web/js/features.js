@@ -127,6 +127,7 @@ const androidFeatures = (() => {
         const symbol=ui.el('span');symbol.innerHTML=ui.icon('network');const name=ui.el('span','network-name',c.name),type=ui.el('small',c.needsPassword?'credential-badge':'',c.needsPassword?'待补填密码':connectionType);open.replaceChildren(symbol,name,type);row.append(open);
         const actions=[];
         if(c.path){
+          if(c.type==='rhfiles'&&typeof app.promptDeviceWindowsPath==='function')actions.push(app.action('跳转电脑路径','computer',()=>app.promptDeviceWindowsPath(c.path)));
           actions.push(app.action('编辑连接','rename',async()=>{const value=await api.native('connection.get',{id:c.id});if(valid())addRemote(value);}));
           const saved=app.state.favorites.some(entry=>entry.path===c.path);
           actions.push(app.action(saved?'取消常用':'添加为常用项','star',()=>{app.favorite({name:c.name,path:c.path,isDir:true});return renderTool(tool);}));

@@ -157,7 +157,7 @@ internal object DeviceGroups {
     return JSONObject().put("type","rhfiles").put("name",alias?:member.getString("name")).put("url",url).put("fingerprint",member.getJSONObject("server").getString("fingerprint")).put("groupId",group).put("groupPeerId",peer)
   }
   private fun profiles(remote:RemoteStorage):List<JSONObject>{val a=remote.backupProfiles(true);return (0 until a.length()).map{val item=a.getJSONObject(it);JSONObject(item.getJSONObject("config").toString()).put("id",item.getString("id"))}}
-  @Synchronized private fun importLocations(remote:RemoteStorage):Int {
+  @Synchronized internal fun importLocations(remote:RemoteStorage):Int {
     var count=0;for((group,peer,member) in servers()){
       groups().requirePeer(group,peer);val old=profiles(remote).firstOrNull{it.optString("groupId")==group&&it.optString("groupPeerId")==peer}
       val candidates=endpoints(member.getJSONObject("server"));val url=old?.optString("url")?.takeIf{it in candidates}?:candidates.first();val c=profile(group,peer,member,url);old?.let{c.put("id",it.getString("id"))};remote.save(c);count++

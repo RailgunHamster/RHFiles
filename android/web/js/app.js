@@ -38,6 +38,8 @@
     try{const value=JSON.parse(saved(navigationKey,'null'));return value?.version===1&&['home','folder','library','favorites','search','tool'].includes(value.route?.screen)?value:null;}catch{return null;}
   }
   const folderParents = new Map();
+  const deviceRootEntries = new Map();
+  const deviceRootPending = new Set();
   let homeSnapshot='';
   const sameRoute = (a, b) => JSON.stringify([a.screen,a.path,a.category,a.folder,a.tool,a.boundary]) === JSON.stringify([b.screen,b.path,b.category,b.folder,b.tool,b.boundary]);
   const rootFor = (path) => state.roots.filter((root) => path.replace(/\/+$/,'') === root.path.replace(/\/+$/,'') || path.startsWith(root.path.replace(/\/+$/,'') + '/')).sort((a,b) => b.path.length - a.path.length)[0];
@@ -103,6 +105,28 @@
     $('pathbar').hidden = route.screen !== 'folder'&&route.screen!=='library';
     $('btn-up').setAttribute('aria-label',route.screen==='library'?(route.folder?'返回'+labels[route.category]+'分类':'返回首页'):'上一级');
     $('searchbar').hidden = route.screen !== 'search';
+    const currentRoot = route.screen === 'folder' && route.path ? rootFor(route.path) : null;
+    const remoteRootPath = route.screen === 'folder' && route.path?.startsWith('remote://')
+      ? (currentRoot?.path || (mobileList.remoteId(route.path) ? 'remote://' + mobileList.remoteId(route.path) + '/' : ''))
+      : '';
+    if (remoteRootPath && currentRoot?.protocol === 'rhfiles' && !deviceRootEntries.has(remoteRootPath) && !deviceRootPending.has(remoteRootPath)) {
+      deviceRootPending.add(remoteRootPath);
+      api.listDir({ path: remoteRootPath }).then(res => {
+        deviceRootEntries.set(remoteRootPath, res.entries || []);
+        renderShell();
+      }).catch(() => {}).finally(() => deviceRootPending.delete(remoteRootPath));
+    }
+    const sharedDrives = remoteRootPath ? mobileList.sharedDriveLetters(deviceRootEntries.get(remoteRootPath)) : [];
+    const showDevicePathBar = route.screen === 'folder' && count === 0 && !pending && (currentRoot?.protocol === 'rhfiles' || sharedDrives.length > 0);
+    if ($('device-path-bar')) {
+      $('device-path-bar').hidden = !showDevicePathBar;
+      const winInput = $('device-win-path-input');
+      if (winInput && showDevicePathBar) {
+        winInput.placeholder = sharedDrives.length
+          ? '输入电脑路径（已共享 ' + sharedDrives.map(d => d + ':').join('、') + '），如 ' + sharedDrives[0] + ':\\Users\\40608\\Documents'
+          : '输入电脑路径跳转，如 C:\\Users\\40608\\Documents';
+      }
+    }
     $('paste-bar').hidden = !pending || !!count || blocked();
     if (pending) {
       $('paste-label').textContent = (pending.mode === 'cut' ? '待移动 ' : '待复制 ') + pending.paths.length + ' 项';
@@ -282,6 +306,13 @@
         if (id !== navigationId) return;
         state.route.path = listing.path; state.listing = listing; state.entries = listing.entries || [];
         const root = rootFor(listing.path); if (root && !api.isVirtual(root.path)) state.root = root.path;
+        if (listing.path?.startsWith('remote://')) {
+          const rId = mobileList.remoteId(listing.path);
+          const baseRoot = root?.path || (rId ? 'remote://' + rId + '/' : '');
+          if (baseRoot && listing.path.replace(/\/+$/, '') === baseRoot.replace(/\/+$/, '')) {
+            deviceRootEntries.set(baseRoot, state.entries);
+          }
+        }
         showList(route.scroll,position);
       } else if (route.screen === 'favorites') {
         state.entries = state.favorites.map(item => ({ ...item, kind: item.isDir ? 'folder' : kindOf(item.name) }));
@@ -666,11 +697,56 @@
   function viewMenu() {
     ui.openSheet('显示方式', [['list','列表'],['grid','网格']].map(([key,label])=> action((state.view===key?'✓ ':'')+label,'grid',()=>{ state.view=key; cache('rhfiles.view',key); renderList(); })));
   }
+  async function jumpToDeviceWindowsPath(rawInput, explicitRootPath) {
+    const currentPath = explicitRootPath || currentDirectory() || '';
+    const root = rootFor(currentPath) || (explicitRootPath ? { path: explicitRootPath } : null);
+    const rId = mobileList.remoteId(currentPath);
+    const baseRoot = root?.path || (rId ? 'remote://' + rId + '/' : '');
+    if (!baseRoot) throw Error('请先打开一台 RHFiles 电脑设备');
+    let rootEntries = deviceRootEntries.get(baseRoot);
+    if (!rootEntries) {
+      const listing = await api.listDir({ path: baseRoot });
+      rootEntries = listing.entries || [];
+      deviceRootEntries.set(baseRoot, rootEntries);
+    }
+    const resolved = mobileList.resolveWindowsDrivePath(rawInput, baseRoot, rootEntries);
+    for (const step of resolved.chain) {
+      folderParents.set(step.path, step.parentPath);
+    }
+    await go(folderRoute(resolved.path, resolved.label, resolved.parentPath));
+    if (state.navigationError && resolved.segments.length > 0) {
+      try {
+        const parentListing = await api.listDir({ path: resolved.parentPath });
+        const leafLower = resolved.label.toLowerCase();
+        const fileEntry = (parentListing.entries || []).find(e => !e.isDir && String(e.name || '').toLowerCase() === leafLower);
+        if (fileEntry) {
+          const parentStep = resolved.chain.at(-2);
+          await go(folderRoute(resolved.parentPath, parentStep?.label || (resolved.drive + ':'), parentStep?.parentPath || baseRoot), { replace: true });
+          state.selected.add(fileEntry.path);
+          paintSelection();
+          return { path: fileEntry.path, parentPath: resolved.parentPath, drive: resolved.drive, selected: true };
+        }
+      } catch {}
+    }
+    if ($('device-win-path-input')) $('device-win-path-input').value = '';
+    return { path: resolved.path, drive: resolved.drive };
+  }
+  async function promptDeviceWindowsPath(explicitRootPath) {
+    const currentPath = explicitRootPath || currentDirectory() || '';
+    const root = rootFor(currentPath) || (explicitRootPath ? { path: explicitRootPath } : null);
+    const rId = mobileList.remoteId(currentPath);
+    const baseRoot = root?.path || (rId ? 'remote://' + rId + '/' : '');
+    const drives = baseRoot ? mobileList.sharedDriveLetters(deviceRootEntries.get(baseRoot)) : [];
+    const hint = drives.length ? '（已共享 ' + drives.map(d => d + ':').join('、') + '）' : '';
+    const value = await ui.prompt('跳转电脑路径' + hint, (drives[0] || 'C') + ':\\Users\\', '跳转');
+    if (!value) return null;
+    return jumpToDeviceWindowsPath(value, baseRoot);
+  }
   function moreMenu() {
     const options = [action('扫码','scan',()=>api.native('qr.scan')),action('设置','settings',()=>go({screen:'tool',tool:'settings'}))];
     if(paneHost())options.unshift({...action('分屏布局','layoutColumns',()=>paneHost().openLayout(window)),id:'pane-layout'});
     if (isList()) options.unshift(action('显示方式','grid',viewMenu), action('排序','sort',sortMenu), ...((state.route.screen==='library'&&!state.route.folder&&state.route.category!=='recent')?[]:[action('全选','copy',()=>{ state.selected = new Set(currentEntries().map(e=>e.path)); paintSelection(); })]));
-    if (currentDirectory()) {const path=currentDirectory();options.unshift(action('分析当前文件夹','chart',()=>go({screen:'tool',tool:'usage',path})),action(state.favorites.some(e=>e.path===path)?'取消收藏此文件夹':'收藏此文件夹','star',()=>favorite({path,name:state.route.label||fmt.baseName(path),isDir:true})));if(state.route.screen==='library')options.unshift(action('打开实际文件夹','folder',()=>go(folderRoute(path))));}
+    if (currentDirectory()) {const path=currentDirectory();const root=rootFor(path);options.unshift(action('分析当前文件夹','chart',()=>go({screen:'tool',tool:'usage',path})),action(state.favorites.some(e=>e.path===path)?'取消收藏此文件夹':'收藏此文件夹','star',()=>favorite({path,name:state.route.label||fmt.baseName(path),isDir:true})));if(root?.protocol==='rhfiles'||(path.startsWith('remote://')&&mobileList.sharedDriveLetters(deviceRootEntries.get(root?.path||'')).length))options.unshift(action('跳转电脑路径','computer',()=>promptDeviceWindowsPath(root?.path)));if(state.route.screen==='library')options.unshift(action('打开实际文件夹','folder',()=>go(folderRoute(path))));}
     ui.openSheet('更多选项', options);
   }
   async function runSearch(query) {
@@ -815,12 +891,12 @@
     if(await workbench.boot())return;
     configBackup.init(error);
     configSync.init({error,go});
-    androidFeatures.init({state,go,task,setClipboard,refresh:refreshCurrent,refreshLocations,removeFavoritePrefix,button,action,error,favorite});
+    androidFeatures.init({state,go,task,setClipboard,refresh:refreshCurrent,refreshLocations,removeFavoritePrefix,button,action,error,favorite,promptDeviceWindowsPath});
     androidUsage.init({state,go,button,action,error,pathLabel});
     androidUpdates.init({go,error});
     window.rhfilesHandleBack = () => state.permissions ? back() : true;
     window.rhfilesPane={snapshot:()=>({route:{...state.route},busy:state.busy,ready:bootReady}),refresh:()=>refreshCurrent().catch(error)};
-    androidAutomation.install({state,go,back,ready:()=>bootReady,refresh:refreshCurrent,refreshLocations,refreshGroupDevices,paintSelection,activate,setClipboard,paste,remove,rename,currentDirectory,search:runSearch,setSort,refreshServer,startServer,stopServer,chooseServerRoots});
+    androidAutomation.install({state,go,back,ready:()=>bootReady,refresh:refreshCurrent,refreshLocations,refreshGroupDevices,paintSelection,activate,setClipboard,paste,remove,rename,currentDirectory,search:runSearch,setSort,refreshServer,startServer,stopServer,chooseServerRoots,jumpToDeviceWindowsPath});
     window.addEventListener('rhfiles-panes-changed',renderShell);
     window.addEventListener('rhfiles-clipboard',event=>{state.clipboard=event.detail;renderList();renderShell();});
     window.addEventListener('rhfiles-pane-task',event=>{peerTask=event.detail;renderShell();});
@@ -866,6 +942,15 @@
     on('btn-up',()=>state.route.screen==='library'?libraryUp():back());
     on('btn-search',()=>go({screen:'search',path:currentDirectory()||state.root,global:!currentDirectory(),boundary:state.route.boundary,boundaryLabel:state.route.boundaryLabel}));
     on('btn-search-close',()=>back());
+    if ($('btn-device-win-path-go') && $('device-win-path-input')) {
+      on('btn-device-win-path-go', () => jumpToDeviceWindowsPath($('device-win-path-input').value));
+      RHFilesUI.listen($('device-win-path-input'), 'keydown', e => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          jumpToDeviceWindowsPath($('device-win-path-input').value).catch(error);
+        }
+      }, undefined, 'android.web.js.app.boot.deviceWinPathEnter');
+    }
     on('search-scope',()=>{ state.route.global=!state.route.global; $('search-scope').textContent=state.route.global?'全部文件':'当前文件夹'; return runSearch($('search-input').value); });
     RHFilesUI.listen($('search-input'),'input',()=>{clearTimeout(searchTimer);++searchId;searchTimer=setTimeout(()=>runSearch($('search-input').value),160);},undefined,"android.web.js.app.boot.fab6fc9b1d2f");
     on('btn-overflow',moreMenu); on('btn-view',viewMenu); on('btn-sort',sortMenu); on('btn-new',newMenu);

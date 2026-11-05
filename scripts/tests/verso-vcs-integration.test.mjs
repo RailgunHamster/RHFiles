@@ -279,3 +279,92 @@ test('Per-folder layout remembers normalized folder paths, inherits from parent 
   assert.equal(ctx.loadFolderLayout('D:\\Photos\\2026\\Summer'), 'thumbnails');
   assert.equal(ctx.loadFolderLayout('D:\\OtherFolder'), null);
 });
+
+test('Desktop rh://Device/C:\\... and Android resolveWindowsDrivePath jump to shared Windows drives and reject unshared drives', async () => {
+  const P = JSON.parse(JSON.stringify({}));
+  const dpCtx = context({});
+  load(dpCtx, 'device-paths.js');
+  const Paths = dpCtx.RHFilesDevicePaths;
+  const group = 'a'.repeat(64);
+  const peer = 'b'.repeat(64);
+  const peers = [{ group, groupName: 'Office', peer, name: 'Winserver' }];
+
+  // 1. Desktop parseAddress / resolveAddress supports backslash and slash Windows drive paths
+  const r1 = Paths.resolveAddress('rh://Winserver/C:\\Users\\40608\\Documents\\A\\B\\C', peers);
+  assert.equal(r1.windowsDrive, 'C');
+  assert.equal(r1.path, Paths.make(group, peer, '/C/Users/40608/Documents/A/B/C'));
+
+  const r2 = Paths.resolveAddress('rh://Winserver/c:/Users/40608/Documents/A/B/C', peers);
+  assert.equal(r2.windowsDrive, 'C');
+  assert.equal(r2.path, Paths.make(group, peer, '/C/Users/40608/Documents/A/B/C'));
+
+  // 2. Desktop navigateAddressInput checks whether the drive is actually shared on that device
+  const notices = [];
+  const navigated = [];
+  let sharedRoots = [{ name: 'C', is_dir: true, path: Paths.make(group, peer, '/C') }];
+  const navCtx = context({
+    _lang: 'zh-CN',
+    IS_MAC: false,
+    RHFilesDevicePaths: Paths,
+    window: {
+      RHFilesAPI: {
+        invoke: async (id, args) => {
+          if (id === 'devices.resolve') return Paths.resolveAddress(args.address, peers);
+          throw Error('Unexpected API ' + id);
+        },
+      },
+    },
+    normalizeWindowsPathInput: v => v,
+    listPathEntries: async () => sharedRoots,
+    call: async (cmd) => {
+      if (cmd === 'get_file_info') return { is_dir: true };
+      return null;
+    },
+    showNotice: msg => notices.push(msg),
+    navigateTo: async p => { navigated.push(p); return true; },
+    rpNavigateTo: async p => { navigated.push(p); return true; },
+  });
+  load(navCtx, 'tabs.js', ['navigateAddressInput']);
+
+  const ok = await navCtx.navigateAddressInput('rh://Winserver/C:\\Users\\40608\\Documents\\A\\B\\C', false);
+  assert.equal(ok, true);
+  assert.equal(navigated.at(-1), Paths.make(group, peer, '/C/Users/40608/Documents/A/B/C'));
+
+  // When only a normal folder 'Documents' is shared (not C drive), jumping via C:\... is rejected
+  sharedRoots = [{ name: 'Documents', is_dir: true, path: Paths.make(group, peer, '/Documents') }];
+  const rejected = await navCtx.navigateAddressInput('rh://Winserver/C:\\Users\\40608\\Documents\\A\\B\\C', false);
+  assert.equal(rejected, false);
+  assert.match(notices.at(-1), /未共享 C 盘/);
+
+  // 3. Android mobileList.resolveWindowsDrivePath
+  const androidListMod = fs.readFileSync(path.join(root, 'android/web/js/list-model.js'), 'utf8');
+  const andCtx = context({});
+  load(andCtx, '../../android/web/js/list-model.js');
+  const mobileList = andCtx.mobileList;
+  const remoteRoot = 'remote://11111111-1111-4111-8111-111111111111/';
+  const androidShares = [
+    { name: 'C', path: remoteRoot + 'C', isDir: true },
+    { name: 'D', path: remoteRoot + 'D', isDir: true },
+    { name: 'Movies', path: remoteRoot + 'Movies', isDir: true },
+  ];
+  assert.deepEqual(plain(mobileList.sharedDriveLetters(androidShares)), ['C', 'D']);
+
+  const jump1 = mobileList.resolveWindowsDrivePath('C:\\Users\\40608\\Documents\\A\\B\\C', remoteRoot, androidShares);
+  assert.equal(jump1.drive, 'C');
+  assert.equal(jump1.path, remoteRoot + 'C/Users/40608/Documents/A/B/C');
+  assert.equal(jump1.parentPath, remoteRoot + 'C/Users/40608/Documents/A/B');
+  assert.equal(jump1.chain.length, 7);
+
+  const jump2 = mobileList.resolveWindowsDrivePath('d:/Projects/Verso', remoteRoot, androidShares);
+  assert.equal(jump2.drive, 'D');
+  assert.equal(jump2.path, remoteRoot + 'D/Projects/Verso');
+
+  assert.throws(
+    () => mobileList.resolveWindowsDrivePath('E:\\Backup\\Data', remoteRoot, androidShares),
+    /未共享 E 盘/
+  );
+  assert.throws(
+    () => mobileList.resolveWindowsDrivePath('C:\\Users\\40608', remoteRoot, [{ name: 'Movies', path: remoteRoot + 'Movies', isDir: true }]),
+    /未共享 C 盘/
+  );
+});

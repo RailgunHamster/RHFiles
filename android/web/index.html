@@ -28,6 +28,11 @@
     <div class="crumbs" id="crumbs"></div>
     <button class="icon-btn" id="btn-up" aria-label="上一级" data-icon="up"></button>
   </nav>
+  <div class="device-path-bar" id="device-path-bar" hidden>
+    <span class="device-path-icon" data-icon="computer" aria-hidden="true"></span>
+    <input id="device-win-path-input" type="text" placeholder="输入电脑路径跳转，如 C:\Users\40608\Documents" autocomplete="off" spellcheck="false" aria-label="输入电脑路径跳转">
+    <button id="btn-device-win-path-go" class="text-btn" type="button">跳转</button>
+  </div>
   <div class="searchbar" id="searchbar" hidden>
     <input id="search-input" type="search" placeholder="搜索文件名" autocomplete="off" spellcheck="false" aria-label="搜索文件名">
     <button id="search-scope" class="text-btn">当前文件夹</button>

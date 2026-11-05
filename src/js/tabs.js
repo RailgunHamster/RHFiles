@@ -1479,13 +1479,41 @@ function selectNavigatedPath(path, isRight) {
 }
 
 async function navigateAddressInput(value, isRight) {
-  let path;
+  let path, resolvedDevice = null;
   try{
-    path=typeof RHFilesDevicePaths!=='undefined'&&RHFilesDevicePaths.isAddress(value)
-      ? (await window.RHFilesAPI.invoke('devices.resolve',{address:String(value).trim()})).path
-      : normalizeWindowsPathInput(value);
+    if (typeof RHFilesDevicePaths!=='undefined'&&RHFilesDevicePaths.isAddress(value)) {
+      resolvedDevice = await window.RHFilesAPI.invoke('devices.resolve',{address:String(value).trim()});
+      path = resolvedDevice.path;
+    } else {
+      path = normalizeWindowsPathInput(value);
+    }
   }catch(error){showNotice(String(error));return false;}
   if (!path) return false;
+  if (resolvedDevice?.windowsDrive) {
+    try {
+      const rootPath = RHFilesDevicePaths.make(resolvedDevice.group, resolvedDevice.peer, '/');
+      const rootEntries = typeof listPathEntries === 'function'
+        ? await listPathEntries(rootPath, '')
+        : await call('list_dir', { path: rootPath, filter: '' });
+      const driveUpper = String(resolvedDevice.windowsDrive).toUpperCase();
+      const driveShare = (rootEntries || []).find(e => e && e.is_dir && /^[A-Za-z]:?$/.test(String(e.name || '')) && String(e.name).replace(/:$/, '').toUpperCase() === driveUpper);
+      if (!driveShare) {
+        const zh = String(typeof _lang === 'string' ? _lang : '').startsWith('zh');
+        showNotice(zh
+          ? `该设备未共享 ${driveUpper} 盘（仅当该设备共享了 ${driveUpper} 盘而非普通文件夹时，才支持通过 ${driveUpper}:\\ 路径跳转）`
+          : `Drive ${driveUpper}: is not shared on this device`);
+        return false;
+      }
+      const parsed = RHFilesDevicePaths.parse(path);
+      if (parsed.parts.length > 0 && parsed.parts[0] !== driveShare.name) {
+        parsed.parts[0] = driveShare.name;
+        path = RHFilesDevicePaths.make(resolvedDevice.group, resolvedDevice.peer, '/' + parsed.parts.join('/'));
+      }
+    } catch (error) {
+      showNotice(String(error));
+      return false;
+    }
+  }
   const navigate = isRight ? rpNavigateTo : navigateTo;
   if(typeof isRecyclePath==='function'&&isRecyclePath(path))return navigate(path);
   if (IS_MAC && /^smb:\/\//i.test(path)) {
