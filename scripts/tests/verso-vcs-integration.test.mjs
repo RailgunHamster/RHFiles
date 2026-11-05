@@ -164,3 +164,118 @@ test('Custom device aliases sync via SharedConfig merge and Home page groups dri
   });
   assert.ok(shareCard.innerHTML.includes('客厅服务器 (WINSERVER · Office)'));
 });
+
+test('integration-picker.html loads automation-core.js before integration-picker.js and renders open locations', async () => {
+  const html = fs.readFileSync(path.join(root, 'src/integration-picker.html'), 'utf8');
+  const coreIdx = html.indexOf('js/automation-core.js');
+  const pickerIdx = html.indexOf('js/integration-picker.js');
+  assert.ok(coreIdx >= 0 && coreIdx < pickerIdx, 'integration-picker.html must load js/automation-core.js before js/integration-picker.js');
+
+  const elements = new Map();
+  const makeEl = (id = '') => ({
+    id,
+    className: '',
+    textContent: '',
+    title: '',
+    hidden: false,
+    disabled: false,
+    children: [],
+    classList: { toggle() {} },
+    setAttribute() {},
+    append(...nodes) { this.children.push(...nodes); },
+    replaceChildren(...nodes) { this.children = nodes; },
+  });
+  for (const id of [
+    'picker-title', 'picker-subtitle', 'picker-hint', 'picker-target',
+    'picker-compact', 'picker-disable', 'picker-close',
+    'picker-open-rhfiles', 'picker-open-rhfiles-compact', 'picker-open-rhfiles-label',
+    'picker-choose-rhfiles', 'picker-choose-rhfiles-label',
+    'picker-list', 'picker-preview', 'picker-preview-visual',
+    'picker-preview-name', 'picker-preview-meta', 'picker-preview-path',
+  ]) {
+    elements.set(id, makeEl(id));
+  }
+  const sampleState = {
+    locale: 'zh',
+    compact: false,
+    targetKind: 'windowsFileDialog',
+    targetPath: 'D:\\git\\Verso',
+    choiceAvailable: true,
+    choiceActive: false,
+    choiceAllowMultiple: true,
+    choiceExtensions: ['png'],
+    locations: [
+      { id: 'main:left:1', windowLabel: 'main', pane: 'left', path: 'D:\\git\\Verso', active: true },
+      { id: 'main:left:2', windowLabel: 'main', pane: 'left', path: 'C:\\Users\\Administrator\\Downloads', active: false },
+    ],
+  };
+  const ctx = context({
+    crypto: globalThis.crypto,
+    localStorage: { getItem: () => 'false', setItem: () => {} },
+    document: {
+      documentElement: { lang: 'zh-CN', classList: { toggle() {} } },
+      getElementById: id => elements.get(id) || makeEl(id),
+      createElement: tag => makeEl(tag),
+      addEventListener: () => {},
+    },
+    window: {
+      __TAURI_INTERNALS__: {
+        invoke: async cmd => {
+          if (cmd === 'set_file_dialog_picker_compact' || cmd === 'get_file_dialog_picker_state') return sampleState;
+          return null;
+        },
+        event: { listen: async () => () => {} },
+      },
+    },
+  });
+  ctx.window.window = ctx.window;
+  ctx.window.document = ctx.document;
+  load(ctx, 'automation-core.js');
+  load(ctx, 'integration-picker.js');
+  await new Promise(r => setTimeout(r, 20));
+  assert.equal(elements.get('picker-target').textContent, 'Windows 打开 / 保存窗口');
+  assert.equal(elements.get('picker-choose-rhfiles').hidden, false);
+  assert.equal(elements.get('picker-list').children.length, 1);
+  assert.equal(elements.get('picker-list').children[0].children.length, 2);
+});
+
+test('Per-folder layout remembers normalized folder paths, inherits from parent folders, and never switches image folders from thumbnails to cards', () => {
+  const store = new Map();
+  const ctx = context({
+    G: { layout: 'details', settings: { adaptiveLayout: true, defaultLayout: 'details' } },
+    localStorage: {
+      getItem: k => store.get(k) ?? null,
+      setItem: (k, v) => store.set(k, String(v)),
+    },
+    normalizeLayout: l => ['details', 'cards', 'thumbnails', 'columns'].includes(l) ? l : 'details',
+    normalizeWindowsPathInput: p => String(p || '').replace(/\//g, '\\'),
+    document: { querySelectorAll: () => [] },
+  });
+  load(ctx, 'tabs.js', ['folderLayoutKey', 'saveFolderLayout', 'loadFolderLayout', 'detectAdaptiveLayout', 'applyFolderLayout']);
+
+  // 1. Adaptive layout for image-heavy folders uses 'thumbnails', never 'cards'
+  const imgEntries = [
+    { name: '1.png', extension: 'png', is_dir: false },
+    { name: '2.jpg', extension: 'jpg', is_dir: false },
+    { name: '3.webp', extension: 'webp', is_dir: false },
+    { name: '4.png', extension: 'png', is_dir: false },
+    { name: 'sub', extension: '', is_dir: true },
+  ];
+  assert.equal(ctx.detectAdaptiveLayout(imgEntries), 'thumbnails');
+  ctx.applyFolderLayout('D:\\Gallery\\Unsaved', imgEntries);
+  assert.equal(ctx.G.layout, 'thumbnails');
+
+  // 2. Navigating to a normal code folder without saved layout resets to defaultLayout ('details')
+  const codeEntries = [
+    { name: 'Cargo.toml', extension: 'toml', is_dir: false },
+    { name: 'main.rs', extension: 'rs', is_dir: false },
+  ];
+  ctx.applyFolderLayout('D:\\git\\Verso', codeEntries);
+  assert.equal(ctx.G.layout, 'details');
+
+  // 3. Explicit folder layout is normalized, inherited by subfolders, and does not leak to unrelated folders
+  ctx.saveFolderLayout('D:\\Photos\\', 'thumbnails');
+  assert.equal(ctx.loadFolderLayout('d:/photos'), 'thumbnails');
+  assert.equal(ctx.loadFolderLayout('D:\\Photos\\2026\\Summer'), 'thumbnails');
+  assert.equal(ctx.loadFolderLayout('D:\\OtherFolder'), null);
+});

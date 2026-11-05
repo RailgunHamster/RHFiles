@@ -131,7 +131,6 @@ function renderFileDialogIntegrationStatus() {
 
 async function syncFileDialogIntegration(force = false) {
   if (IS_MAC) return;
-  if (!force && !document.hasFocus()) return G._fileDialogIntegrationStatus || null;
   const token = ++_fileDialogIntegrationRequestToken;
   try {
     const targets = currentIntegrationTargets();
@@ -157,7 +156,6 @@ async function syncFileDialogIntegration(force = false) {
 }
 
 function scheduleFileDialogIntegrationSync(force = false) {
-  if (!force && !document.hasFocus()) return;
   clearTimeout(_fileDialogIntegrationSyncTimer);
   _fileDialogIntegrationSyncTimer = setTimeout(() => {
     syncFileDialogIntegration(force).catch(() => {});

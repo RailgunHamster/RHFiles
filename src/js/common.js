@@ -1162,6 +1162,7 @@ function loadSettings() {
     imagePreviewMode: 'contain',
     dualPaneOrientation: 'vertical',
     iconMode: 'mixed',
+    defaultLayout: 'details',
     autoUpdateEnabled: true,
     proxyEnabled: false,
     proxyUrl: '',

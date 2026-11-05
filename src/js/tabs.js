@@ -30,24 +30,75 @@ function revealTabLabelTails(root) {
   });
 }
 
+function folderLayoutKey(path) {
+  const raw = String(path || '').trim();
+  if (!raw || raw === 'home://' || (typeof isRecyclePath === 'function' && isRecyclePath(raw))) return '';
+  if (/^rhfiles-device:\/\//i.test(raw) || /^remote:\/\//i.test(raw)) {
+    return raw.replace(/\/+$/, '');
+  }
+  const norm = typeof normalizeWindowsPathInput === 'function' ? normalizeWindowsPathInput(raw) : raw.replace(/\//g, '\\');
+  if (/^[A-Za-z]:\\?$/.test(norm)) return norm.slice(0, 2).toLowerCase() + '\\';
+  return norm.replace(/\\+$/, '').toLowerCase();
+}
+
 function saveFolderLayout(path, layout) {
   try {
+    const key = folderLayoutKey(path);
+    if (!key) return;
+    const normalized = normalizeLayout(layout);
     const data = JSON.parse(localStorage.getItem('rhfiles-folder-layouts') || '{}');
-    data[path] = normalizeLayout(layout);
+    data[key] = normalized;
+    if (path && path !== key && Object.prototype.hasOwnProperty.call(data, path)) {
+      delete data[path];
+    }
     localStorage.setItem('rhfiles-folder-layouts', JSON.stringify(data));
   } catch (e) {}
 }
 
 function loadFolderLayout(path) {
   try {
+    const key = folderLayoutKey(path);
+    if (!key) return null;
     const data = JSON.parse(localStorage.getItem('rhfiles-folder-layouts') || '{}');
-    const stored = data[path] || null;
+    let stored = data[key] || data[path] || null;
+    if (!stored && /^[a-z]:\\/i.test(key) && !/^[a-z]:\\$/i.test(key)) {
+      let cur = key;
+      while (true) {
+        const lastSep = cur.lastIndexOf('\\');
+        if (lastSep <= 2) break;
+        cur = cur.slice(0, lastSep);
+        if (data[cur]) {
+          stored = data[cur];
+          break;
+        }
+      }
+    }
     if (stored === 'icons') {
-      data[path] = 'cards';
+      stored = 'cards';
+      data[key] = 'cards';
       localStorage.setItem('rhfiles-folder-layouts', JSON.stringify(data));
     }
     return stored ? normalizeLayout(stored) : null;
   } catch (e) { return null; }
+}
+
+function applyFolderLayout(path, entries) {
+  const key = folderLayoutKey(path);
+  if (!key) return;
+  let targetLayout = loadFolderLayout(path);
+  if (!targetLayout) {
+    if (G.settings?.adaptiveLayout !== false && Array.isArray(entries) && entries.length > 0) {
+      targetLayout = detectAdaptiveLayout(entries);
+    }
+    if (!targetLayout) {
+      targetLayout = normalizeLayout(G.settings?.defaultLayout || 'details');
+    }
+  }
+  if (targetLayout && targetLayout !== G.layout) {
+    G.layout = targetLayout;
+    localStorage.setItem('rhfiles-layout', targetLayout);
+    document.querySelectorAll('.layout-btn').forEach(b => b.classList.toggle('active', b.dataset.layout === targetLayout));
+  }
 }
 
 function tabPinIndicator() {
@@ -155,6 +206,7 @@ function _renderTabContent(tab) {
   showFileContent();
   const filterEl = document.getElementById("filter-input");
   if (filterEl) filterEl.value = "";
+  applyFolderLayout(tab.path, tab.entries);
   renderBreadcrumb(tab.path);
   document.getElementById("path-input").value = tab.path;
   _applySavedSelection(tab);
@@ -1185,14 +1237,14 @@ function exitEditMode(isRight) {
 }
 
 function detectAdaptiveLayout(entries) {
-    if (entries.length === 0) return null;
+    if (!Array.isArray(entries) || entries.length === 0) return null;
     let images = 0, dirs = 0;
     for (const e of entries) {
         if (e.is_dir) dirs++;
-        else if (['png','jpg','jpeg','gif','bmp','webp','svg','ico','tiff'].includes((e.extension||'').toLowerCase())) images++;
+        else if (['png','jpg','jpeg','gif','bmp','webp','svg','ico','tiff','avif','heic'].includes((e.extension||'').toLowerCase())) images++;
     }
     const total = entries.length;
-    if (images / total > 0.8) return 'cards';
+    if (images / total >= 0.8) return 'thumbnails';
     return null;
 }
 
@@ -1373,21 +1425,7 @@ async function navigateTo(path, pushHistory) {
     // thumbnails and cards on every reload, and the explicit folder layout was
     // ignored whenever it already matched the current one.
     if (!isSamePathReload) {
-      const savedLayout = loadFolderLayout(path);
-      if (savedLayout) {
-        if (savedLayout !== G.layout) {
-          G.layout = savedLayout;
-          localStorage.setItem('rhfiles-layout', savedLayout);
-          document.querySelectorAll('.layout-btn').forEach(b => b.classList.toggle('active', b.dataset.layout === savedLayout));
-        }
-      } else if (G.settings.adaptiveLayout !== false) {
-        const detected = detectAdaptiveLayout(entries);
-        if (detected && detected !== G.layout) {
-          G.layout = detected;
-          localStorage.setItem('rhfiles-layout', detected);
-          document.querySelectorAll('.layout-btn').forEach(b => b.classList.toggle('active', b.dataset.layout === detected));
-        }
-      }
+      applyFolderLayout(path, entries);
     }
     tab.sel.clear();
     tab.lastIdx = -1;
@@ -2099,6 +2137,15 @@ async function refresh() {
   }
   const tab = getTab();
   await navigateTo(tab.path, false);
+}
+
+function setDefaultLayout(layout) {
+  layout = normalizeLayout(layout);
+  if (G.settings) {
+    G.settings.defaultLayout = layout;
+    if (typeof saveSettings === 'function') saveSettings();
+  }
+  setLayout(layout);
 }
 
 function setLayout(layout) {
