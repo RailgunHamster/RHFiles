@@ -319,6 +319,16 @@ impl Storage {
         }
         Ok(())
     }
+    pub fn recycle_checked(&self, path: &str, revision: &str, check: impl Fn() -> Result<()> + Send + Sync + 'static) -> Result<()> {
+        let _guard = self.mutation.lock().unwrap();
+        let node = self.node(path)?;
+        node.require_child()?;
+        check()?;
+        if node.stat()?.revision != revision {
+            return Err(Error::new("conflict", "源文件已变化，未移入回收站"));
+        }
+        crate::recycle::put(node, revision.to_owned(), check)
+    }
     pub fn rename(&self, from: &str, to: &str) -> Result<()> {
         let from = self.node(from)?;
         let to = self.node(to)?;

@@ -106,10 +106,9 @@ async function deleteSelected(isRight) {
   const message = sel.length === 1
     ? t('confirm.deleteItem', {name: sel[0].name})
     : t('confirm.deleteItems', {count: sel.length});
-  // Network locations have no Recycle Bin, so the listing hint must not
-  // promise a recoverable delete there.
-  const onNetwork = sel.some(file => /^\\\\/.test(String(file.path || '')) || isFtpPath(file.path) || (typeof isDevicePath==='function'&&isDevicePath(file.path)));
-  const detail = onNetwork ? t('confirm.networkDeleteHint') : t('confirm.recycleBinHint');
+  const onNetwork = sel.some(file => /^\\\\/.test(String(file.path || '')) || isFtpPath(file.path));
+  const onDevice = sel.some(file => typeof isDevicePath==='function'&&isDevicePath(file.path));
+  const detail = onNetwork ? t('confirm.networkDeleteHint') : t(onDevice ? 'confirm.deviceRecycleBinHint' : 'confirm.recycleBinHint');
   let confirmed = true;
   if (G.settings.confirmRecycleDelete !== false) {
     try {

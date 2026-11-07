@@ -38,6 +38,22 @@ fn identity_uris_preserve_case_unicode_and_literal_percent_without_normalizing_t
 }
 
 #[tokio::test]
+async fn recycle_requests_keep_a_recreated_file_and_validate_the_selected_revision() {
+    let f=fixture();
+    let source=f.files.join("recycle-identity.txt");
+    std::fs::write(&source,b"selected").unwrap();
+    let entry=f.connector.file_request(&f.group,&f.peer,FileRequest::Stat{path:"/Files/recycle-identity.txt".into()}).await.unwrap().json(65536).await.unwrap();
+    std::fs::rename(&source,f.files.join("original.txt")).unwrap();
+    std::fs::write(&source,b"new occupant").unwrap();
+    let result=f.connector.file_request(&f.group,&f.peer,FileRequest::Recycle{path:"/Files/recycle-identity.txt".into(),revision:entry["revision"].as_str().unwrap().into()}).await;
+    assert!(result.err().unwrap().starts_with("[conflict]"));
+    assert_eq!(std::fs::read(&source).unwrap(),b"new occupant");
+    assert_eq!(std::fs::read(f.files.join("original.txt")).unwrap(),b"selected");
+    let result=f.connector.file_request(&f.group,&f.peer,FileRequest::Recycle{path:"/Files/recycle-identity.txt".into(),revision:String::new()}).await;
+    assert!(result.err().unwrap().starts_with("[invalid_request]"));
+}
+
+#[tokio::test]
 async fn checked_mutations_replace_only_the_confirmed_file_and_never_delete_a_recreated_source(){
     let f=fixture();
     let stat=|name:&str|FileRequest::Stat{path:format!("/Files/{name}")};

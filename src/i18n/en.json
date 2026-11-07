@@ -431,6 +431,7 @@
   "confirm.deleteItems": "Delete {count} items?",
   "confirm.deleteTitle": "Move to Recycle Bin",
   "confirm.recycleBinHint": "You can restore these items from the Recycle Bin.",
+  "confirm.deviceRecycleBinHint": "RHFiles device items go to the Recycle Bin on the computer hosting them. Restore them on that computer.",
   "confirm.networkDeleteHint": "Network locations have no Recycle Bin: these items will be deleted permanently.",
   "confirm.permanentDeleteTitle": "Permanently delete",
   "confirm.permanentDeleteItem": "Permanently delete \"{name}\"?",

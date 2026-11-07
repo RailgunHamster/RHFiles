@@ -13,6 +13,77 @@ struct Fixture {
     user: String,
     password: String,
 }
+
+#[tokio::test]
+async fn recycle_checks_permissions_revision_and_share_boundaries_before_touching_files() {
+    for permitted in [false, true] {
+        let f=Fixture::new(false,permitted).await;
+        let file=f.share.join("recycle-keep.txt");std::fs::write(&file,b"preserve").unwrap();
+        let caps:Value=f.request("GET","/api/v1/capabilities").send().await.unwrap().json().await.unwrap();
+        assert_eq!(caps["recycleBin"],cfg!(windows));
+        let response=f.request("POST","/api/v1/recycle-checked").json(&json!({"path":"/Files/recycle-keep.txt","revision":"stale"})).send().await.unwrap();
+        assert_eq!(response.status(),if permitted{409}else{403});
+        assert_eq!(std::fs::read(&file).unwrap(),b"preserve");
+        for path in ["/Files", "/Files/../outside", "/Files/.rhfiles-service-staging/entry"] {
+            let response=f.request("POST","/api/v1/recycle-checked").json(&json!({"path":path,"revision":"stale"})).send().await.unwrap();
+            assert!(!response.status().is_success());
+        }
+        let response=f.request("POST","/api/v1/recycle-checked").json(&json!({"path":"/Files/recycle-keep.txt","revision":""})).send().await.unwrap();
+        assert_eq!(response.status(),400);assert!(file.exists());
+    }
+}
+
+#[cfg(windows)]
+fn owned_recycle_entry(original: &std::path::Path, restore: bool) -> usize {
+    // Only enumerate/restore the generated fixture, never empty the user's bin.
+    let script = r#"
+$ErrorActionPreference='Stop'
+$shell=New-Object -ComObject Shell.Application
+$bin=$shell.Namespace(10)
+$owned=@($bin.Items() | Where-Object {
+    $folder=[string]$_.ExtendedProperty('System.Recycle.DeletedFrom')
+    $name=[string]$_.ExtendedProperty('System.FileName')
+    $folder -and $name -and [IO.Path]::Combine($folder,$name) -eq $env:RHFILES_RECYCLE_QA_PATH
+})
+if ($env:RHFILES_RECYCLE_QA_RESTORE -eq '1') {
+    foreach ($item in $owned) { $item.InvokeVerb('undelete') }
+    $deadline=[DateTime]::UtcNow.AddSeconds(10)
+    while ($owned.Count -gt 0 -and -not [IO.File]::Exists($env:RHFILES_RECYCLE_QA_PATH) -and -not [IO.Directory]::Exists($env:RHFILES_RECYCLE_QA_PATH)) {
+        if ([DateTime]::UtcNow -gt $deadline) { throw 'Owned fixture restore timed out' }
+        Start-Sleep -Milliseconds 50
+    }
+}
+[Console]::Write($owned.Count)
+"#;
+    let path=original.to_str().unwrap().trim_start_matches("\\\\?\\");
+    let result=std::process::Command::new("powershell.exe").args(["-NoLogo","-NoProfile","-NonInteractive","-Command",script])
+        .env("RHFILES_RECYCLE_QA_PATH",path).env("RHFILES_RECYCLE_QA_RESTORE",if restore{"1"}else{"0"}).output().unwrap();
+    assert!(result.status.success(),"{}",String::from_utf8_lossy(&result.stderr));
+    String::from_utf8(result.stdout).unwrap().trim().parse().unwrap()
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn recycle_keeps_original_names_and_nonempty_folders_restorable_while_permanent_delete_bypasses_bin() {
+    let f=Fixture::new(false,true).await;
+    let file=f.share.join("回收 % #.txt");
+    let folder=f.share.join("完整文件夹");
+    std::fs::write(&file,b"recover file").unwrap();std::fs::create_dir(&folder).unwrap();
+    std::fs::create_dir(folder.join("nested")).unwrap();std::fs::write(folder.join("nested/keep.txt"),b"recover nested content").unwrap();
+    for (original,path) in [(&file,"/Files/回收 % #.txt"),(&folder,"/Files/完整文件夹")] {
+        let entry:Value=f.request("GET","/api/v1/stat").query(&[("path",path)]).send().await.unwrap().json().await.unwrap();
+        let response=f.request("POST","/api/v1/recycle-checked").json(&json!({"path":path,"revision":entry["revision"]})).send().await.unwrap();
+        let status=response.status();let body=response.text().await.unwrap();
+        // Restore even when an assertion fails, preserving a clean test bin.
+        let removed=!original.exists();let recycled=owned_recycle_entry(original,true);
+        assert_eq!(status,204,"{body}");assert!(removed);assert_eq!(recycled,1);assert!(original.exists());
+    }
+    assert_eq!(std::fs::read(&file).unwrap(),b"recover file");
+    assert_eq!(std::fs::read(folder.join("nested/keep.txt")).unwrap(),b"recover nested content");
+    let entry:Value=f.request("GET","/api/v1/stat").query(&[("path","/Files/回收 % #.txt")]).send().await.unwrap().json().await.unwrap();
+    let response=f.request("POST","/api/v1/delete-checked").json(&json!({"path":"/Files/回收 % #.txt","revision":entry["revision"]})).send().await.unwrap();
+    assert_eq!(response.status(),204);assert!(!file.exists());assert_eq!(owned_recycle_entry(&file,false),0);
+}
 #[tokio::test]
 async fn upload_commit_proof_identifies_the_published_file_not_a_later_same_named_file(){
     let f=Fixture::new(true,true).await;let location=f.upload("/Files/proof.bin",3).await;

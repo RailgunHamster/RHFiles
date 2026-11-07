@@ -1,6 +1,7 @@
 //! Explicitly enabled HTTPS file service; JSON API and WebDAV share one core.
 //! Windows SMB/WebClient redirectors are never used for local shared roots.
 mod auth;
+mod recycle;
 mod content;
 pub mod connection;
 mod dav;

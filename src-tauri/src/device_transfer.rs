@@ -288,6 +288,16 @@ async fn require_checked(path: &DevicePath, write: bool, delete: bool) -> Result
     }
     Ok(())
 }
+async fn require_recycle(path: &DevicePath) -> Result<(), String> {
+    let cap = request(path, FileRequest::Capabilities).await?.json(65536).await?;
+    if cap["permissions"]["delete"] != true {
+        return Err("[forbidden] 设备组未授予删除权限".into());
+    }
+    if cap["recycleBin"] != true {
+        return Err("[recycle_unavailable] 对方文件服务尚不支持回收站，请更新目标电脑的 RHFiles。文件已保留".into());
+    }
+    Ok(())
+}
 struct Progress<'a> {
     app: &'a tauri::AppHandle,
     cancel: &'a CancelFlag,
@@ -1231,6 +1241,10 @@ async fn mutations(
         }
         "delete" => {
             progress.operation = "delete".into();
+            let permanent = match args.get("permanent") {
+                None => false,
+                Some(value) => value.as_bool().ok_or("[invalid_request] permanent 必须是布尔值")?,
+            };
             let paths = args["paths"]
                 .as_array()
                 .ok_or("[invalid_request] 缺少 paths")?;
@@ -1242,8 +1256,13 @@ async fn mutations(
                 let path = Location::parse(raw.as_str().ok_or("Invalid path")?)?;
                 let remote = remote_child(&path)?;
                 hold(&path, progress)?;
-                require_checked(remote, false, true).await?;
-                let plan = scan(path.clone(), progress).await?;
+                let plan = if permanent {
+                    require_checked(remote, false, true).await?;
+                    scan(path.clone(), progress).await?
+                } else {
+                    require_recycle(remote).await?;
+                    vec![(path.clone(), snapshot(&path).await?)]
+                };
                 expected(&plan[0].1, args["revisions"][path.text()].as_str())?;
                 plans.push((path, plan));
             }
@@ -1254,6 +1273,13 @@ async fn mutations(
                 let result = async {
                     for (path, stamp) in plan.iter().rev() {
                         progress.check()?;
+                        if !permanent {
+                            let remote = remote_child(path)?;
+                            request(remote, FileRequest::Recycle { path:remote.path.clone(), revision:stamp.revision.clone() }).await?;
+                            progress.done += 1;
+                            progress.emit("running", path, false);
+                            continue;
+                        }
                         let fresh;
                         let stamp = if stamp.directory {
                             fresh = snapshot(path).await?;

@@ -12,6 +12,7 @@ function fixture({answers=[true,true],outcome,selection,confirm=true}={}) {
     failOperationTask:()=>states.push('failed'),alert:()=>{},
     call:async(cmd,args)=>{calls.push([cmd,plain(args)]);return outcome||{deleted:selected.map(s=>s.path),errors:[]};},
   });
+  ctx.isDevicePath=path=>String(path).startsWith('rhfiles-device://');
   load(ctx,'remote.js',['isFtpPath']);
   load(ctx,'ops.js',['_deleteRequestActive','archiveSelectionIsReadOnly','deleteSelected','deleteSelectedPermanently']);
   return {ctx,prompts,calls,undo,states,refreshes:()=>refreshes};
@@ -49,4 +50,11 @@ test('cancelled delete batch keeps undo for completed files and reports cancella
 for(const path of ['ftp://host/remote.txt','\\\\server\\share\\remote.txt'])test(`remote deletion warns about permanent loss and does not promise recycle-bin undo: ${path}`,async()=>{
   const h=fixture({selection:[{name:'remote.txt',path}]});await h.ctx.deleteSelected();
   assert.equal(h.prompts[0].detail,'confirm.networkDeleteHint');assert.equal(h.undo.length,0);
+});
+
+test('RHFiles device deletion describes the target computer Recycle Bin without adding a local undo entry',async()=>{
+  const path='rhfiles-device://'+'a'.repeat(64)+'/'+'b'.repeat(64)+'/Files/remote.txt';
+  const h=fixture({selection:[{name:'remote.txt',path}]});await h.ctx.deleteSelected();
+  assert.equal(h.prompts[0].detail,'confirm.deviceRecycleBinHint');
+  assert.equal(h.calls[0][0],'delete_files');assert.equal(h.undo.length,0);
 });

@@ -431,6 +431,7 @@
   "confirm.deleteItems": "\u5220\u9664 {count} \u4e2a\u9879\u76ee\uff1f",
   "confirm.deleteTitle": "移到回收站",
   "confirm.recycleBinHint": "这些项目之后仍可从回收站还原。",
+  "confirm.deviceRecycleBinHint": "RHFiles 设备上的项目将移入目标电脑的回收站，可在目标电脑上还原。",
   "confirm.networkDeleteHint": "网络位置没有回收站：这些项目将被永久删除，无法还原。",
   "confirm.permanentDeleteTitle": "永久删除",
   "confirm.permanentDeleteItem": "永久删除“{name}”？",

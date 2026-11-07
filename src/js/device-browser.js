@@ -216,7 +216,7 @@ const deviceBrowser=(()=>{
       ['inspectRename','inspect_rename',{path:string,newName:string},['path','newName'],'read'],
       ['newFolder','new_folder',{parent:string},['parent'],'write'],
       ['create','create',{parent:string,name:string,template:{type:'string',maxLength:64}},['parent','name'],'write'],
-      ['delete','delete',{paths:{type:'array',items:string,minItems:1,maxItems:10000},operationId:string,revisions:{type:'object',additionalProperties:string}},['paths'],'destructive'],
+      ['delete','delete',{paths:{type:'array',items:string,minItems:1,maxItems:10000},permanent:{type:'boolean'},operationId:string,revisions:{type:'object',additionalProperties:string}},['paths'],'destructive'],
       ['size','size',{path:string,operationId:string},['path'],'read'],
       ['hash','hash',{path:string,algo:{type:'string',enum:['md5','sha256']},operationId:string},['path','algo'],'read'],
       ['batchRename','batch_rename',{renames:{type:'array',minItems:1,maxItems:10000,items:{type:'array',items:string,minItems:2,maxItems:2}},revisions:{type:'object',additionalProperties:string},operationId:string},['renames'],'write'],
@@ -278,7 +278,7 @@ async function routeDeviceCommand(cmd,args){
     case 'ensure_merge_folder':value=await call('device_transfer',{action:'ensure_folder',args:{parent:RHFilesDevicePaths.parent(args.path),name:RHFilesDevicePaths.parse(args.path).parts.at(-1)}});break;
     case 'delete_file':case 'delete_files':case 'delete_files_permanently':{
       const selected=cmd==='delete_file'?[args.path]:args.paths,remote=selected.filter(isDevicePath),local=selected.filter(p=>!isDevicePath(p));
-      value=await call('device_transfer',{action:'delete',args:{...args,paths:remote}});
+      value=await call('device_transfer',{action:'delete',args:{...args,paths:remote,permanent:cmd==='delete_files_permanently'}});
       if(local.length&&!value.cancelled){const other=await call(cmd==='delete_file'?'delete_files':cmd,{...args,paths:local});value={deleted:[...(value.deleted||[]),...(other.deleted||[])],errors:[...(value.errors||[]),...(other.errors||[])],cancelled:!!other.cancelled};}
       break;
     }
@@ -312,7 +312,7 @@ async function routeDeviceCommand(cmd,args){
     case 'set_windows_file_clipboard':{
       if(typeof IS_MAC!=='undefined'&&!IS_MAC){
         try{const mapped=[];for(const path of args.paths||[])mapped.push(isDevicePath(path)?(await call('device_transfer',{action:'windows_path',args:{path}})).path:path);value=await call(cmd,{...args,paths:mapped});break;}
-        catch(error){if(typeof showNotice==='function')showNotice((String(_lang).startsWith('zh')?'已复制 RHFiles 文件引用；Windows 程序接入未成功：':'Copied RHFiles file references; Windows access failed: ')+String(error));}
+        catch(error){console.warn('Windows clipboard compatibility unavailable; using RHFiles file references',error);}
       }
       const text=(args.paths||[]).join('\r\n');if(!await writeTextClipboard(text))await call('copy_file_path',{path:text});value=Number((await call('get_windows_file_clipboard_info',{}))?.sequence)||0;break;
     }

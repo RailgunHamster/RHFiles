@@ -153,6 +153,7 @@ pub enum FileRequest {
     Delete {
         path: String,
     },
+    Recycle { path: String, revision: String },
     CheckedMutation { path:String, destination:Option<String>, revision:String, target_revision:Option<String> },
     UploadCreate {
         path: String,
@@ -174,6 +175,11 @@ impl FileRequest {
     fn validate(&self) -> Result<(), String> {
         match self {
             Self::Capabilities | Self::WindowsAccessCredential => Ok(()),
+            Self::Recycle { path, revision } => {
+                validate_path(path)?;
+                if revision.is_empty() || revision.len() > 256 {return Err("[invalid_request] 文件版本无效".into());}
+                Ok(())
+            }
             Self::CheckedMutation { path,destination,revision,target_revision } => {
                 validate_path(path)?;
                 if let Some(to)=destination {validate_path(to)?;}
@@ -266,6 +272,7 @@ impl FileRequest {
             Self::Rename { .. } => "rename",
             Self::Copy { .. } => "copy",
             Self::Delete { .. } => "delete",
+            Self::Recycle { .. } => "recycle",
             Self::CheckedMutation {destination,..} => if destination.is_some(){"rename.checked"}else{"delete.checked"},
             Self::UploadCreate { .. } => "upload.create",
             Self::UploadStatus { .. } => "upload.status",
@@ -297,6 +304,7 @@ impl FileRequest {
             Self::Rename { .. } => (Method::POST, "rename".into()),
             Self::Copy { .. } => (Method::POST, "copy".into()),
             Self::Delete { .. } => (Method::POST, "delete".into()),
+            Self::Recycle { .. } => (Method::POST, "recycle-checked".into()),
             Self::CheckedMutation {destination,..} => (Method::POST,if destination.is_some(){"rename-checked"}else{"delete-checked"}.into()),
             Self::UploadCreate { .. } => (Method::POST, "uploads".into()),
             Self::UploadStatus { id }
@@ -332,6 +340,9 @@ impl FileRequest {
                 },
             ));
         match self {
+            Self::Recycle { path, revision } => {
+                request = request.json(&json!({"path":path,"revision":revision}));
+            }
             Self::List {
                 path,
                 offset,

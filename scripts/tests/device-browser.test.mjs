@@ -92,6 +92,41 @@ test('missing Windows WebClient still permits in-app copy and records a real cli
   f.ctx.call=async(cmd,args)=>{f.calls.push({cmd,args});if(cmd==='device_transfer')throw Error('[windows_component_missing] component absent');if(cmd==='get_windows_file_clipboard_info')return {sequence:57};throw Error('Unexpected operation '+cmd);};
   const result=await f.route('set_windows_file_clipboard',{paths:[path],cut:true});assert.equal(result.value,57);assert(f.calls.some(v=>v.clipboard===path));
 });
+
+for(const code of ['compatibility_unavailable','compatibility_permission_required','windows_component_missing','connection_failed'])for(const cut of [false,true])test(`${cut?'cut':'copy'} uses RHFiles references without an error notice when Windows compatibility is unavailable: ${code}`,async()=>{
+  const f=fixture(),notices=[],warnings=[];f.ctx.IS_MAC=false;
+  f.ctx.showNotice=value=>notices.push(value);f.ctx.console={warn:(...values)=>warnings.push(values)};
+  f.ctx.call=async(cmd,args)=>{
+    f.calls.push({cmd,args});
+    if(cmd==='device_transfer')throw Error('['+code+'] optional Windows bridge failed');
+    if(cmd==='get_windows_file_clipboard_info')return {sequence:57};
+    throw Error('Unexpected operation '+cmd);
+  };
+  const local='C:\\fixture\\local.txt',paths=[local,path];
+  assert.equal((await f.route('set_windows_file_clipboard',{paths,cut})).value,57);
+  assert.deepEqual(f.calls.filter(value=>value.clipboard).map(value=>value.clipboard),[paths.join('\r\n')]);
+  assert.equal(notices.length,0);assert.equal(warnings.length,1);
+  assert(!f.calls.some(value=>value.cmd==='set_windows_file_clipboard'));
+});
+
+test('ordinary and permanent remote deletion retain distinct semantics, including mixed local selections',async()=>{
+  const f=fixture(),local='C:\\fixture\\local.txt';
+  for(const cmd of ['delete_file','delete_files','delete_files_permanently']){
+    f.calls.length=0;
+    f.ctx.call=async(command,args)=>{f.calls.push({cmd:command,args});return {deleted:command==='device_transfer'?[path]:[local],errors:[]};};
+    const revisions={[path]:'selected-generation'},args=cmd==='delete_file'?{path}:{paths:[path,local],revisions};
+    const result=await f.route(cmd,args),remote=f.calls[0];
+    assert.equal(remote.cmd,'device_transfer');assert.equal(remote.args.action,'delete');
+    assert.deepEqual(Array.from(remote.args.args.paths),[path]);
+    assert.equal(remote.args.args.permanent,cmd==='delete_files_permanently');
+    if(cmd!=='delete_file'){
+      assert.equal(remote.args.args.revisions[path],'selected-generation');
+      assert.equal(f.calls[1].cmd,cmd);assert.deepEqual(Array.from(f.calls[1].args.paths),[local]);
+      assert.deepEqual(Array.from(result.value.deleted),[path,local]);
+    }
+  }
+  assert.equal(f.actions.get('devices.delete').schema.params.properties.permanent.type,'boolean');
+});
 test('media URLs are opaque loopback capabilities, bounded in memory and invalidated with device metadata',async()=>{
   const f=fixture();await f.run('devices.resource',{path});await f.run('devices.resource',{path});assert.equal(f.calls.filter(v=>v.cmd==='device_fs').length,1);
   await f.run('devices.refresh');await f.run('devices.resource',{path});assert.equal(f.calls.filter(v=>v.cmd==='device_fs').length,2);

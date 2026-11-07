@@ -208,6 +208,7 @@ Object.assign(_builtinEn, {
   'ctx.openPowerShell': 'Open in PowerShell',
   'confirm.deleteTitle': 'Move to Recycle Bin',
   'confirm.recycleBinHint': 'You can restore these items from the Recycle Bin.',
+  'confirm.deviceRecycleBinHint': 'RHFiles device items go to the Recycle Bin on the computer hosting them. Restore them on that computer.',
   'confirm.permanentDeleteTitle': 'Permanently delete',
   'confirm.permanentDeleteItem': 'Permanently delete "{name}"?',
   'confirm.permanentDeleteItems': 'Permanently delete {count} items?',

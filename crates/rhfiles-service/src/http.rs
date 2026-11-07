@@ -586,7 +586,7 @@ async fn handle(s: Arc<State>, mut r: Request) -> Result<Response> {
         return Ok(response.map(Body::new));
     }
     match (method.as_str(),path.as_str()) {
-        ("GET","/api/v1/capabilities")=>Ok(Json(serde_json::json!({"protocol":1,"name":"RHFiles","permissions":a.permissions,"features":["list","stat","range","versioned-ranges-sha256","mkdir","rename","delete","tus","webdav","image-thumbnails","checked-mutations","webdav-client-grant"],"windowsCompatibility":s.compatibility.lock().unwrap().clone(),"overwrite":false,"webdav":"/dav/","uploads":"/api/v1/uploads","maxUpload":MAX_UPLOAD})).into_response()),
+        ("GET","/api/v1/capabilities")=>Ok(Json(serde_json::json!({"protocol":1,"name":"RHFiles","permissions":a.permissions,"features":["list","stat","range","versioned-ranges-sha256","mkdir","rename","delete","tus","webdav","image-thumbnails","checked-mutations","webdav-client-grant"],"recycleBin":cfg!(windows),"windowsCompatibility":s.compatibility.lock().unwrap().clone(),"overwrite":false,"webdav":"/dav/","uploads":"/api/v1/uploads","maxUpload":MAX_UPLOAD})).into_response()),
         ("GET","/api/v1/list")=>{
             let q:ListQuery=query(&r)?;if q.limit==0||q.limit>2000{return Err(bad("limit 必须在 1–2000 之间"));}
             let cached=s.cache.lock().unwrap().get(&q.path).filter(|c|header(&r,"Cache-Control")!=Some("no-cache")&&c.0.elapsed()<Duration::from_secs(2)).cloned();
@@ -632,6 +632,14 @@ async fn handle(s: Arc<State>, mut r: Request) -> Result<Response> {
                 let mut output=std::io::Cursor::new(Vec::new());image.write_to(&mut output,image::ImageFormat::Png).map_err(|_|Error::new("internal","缩略图生成失败"))?;Ok(output.into_inner())
             }).await.map_err(|_|Error::new("internal","缩略图生成失败"))??;
             a.check(false,false)?;Ok(([("Content-Type","image/png")],bytes).into_response())
+        },
+        ("POST","/api/v1/recycle-checked")=>{
+            let m:CheckedMutation=json(r).await?;
+            if m.revision.is_empty() || m.revision.len()>256 || m.destination.is_some() || m.target_revision.is_some() {return Err(bad("回收站操作参数无效"));}
+            a.check(false,true)?;s.unlocked(&m.path,&a).await?;
+            let storage=s.storage.clone();
+            let result=tokio::task::spawn_blocking(move||storage.recycle_checked(&m.path,&m.revision,move||a.check(false,true))).await.map_err(|_|Error::new("internal","移入回收站失败"))?;
+            s.invalidate();result?;Ok(StatusCode::NO_CONTENT.into_response())
         },
         ("POST","/api/v1/rename-checked"|"/api/v1/delete-checked")=>{
             let m:CheckedMutation=json(r).await?;
