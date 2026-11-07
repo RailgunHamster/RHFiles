@@ -139,7 +139,7 @@ async function deleteSelected(isRight) {
       ...(sel.some(f=>f.remote_revision)?{revisions:Object.fromEntries(sel.filter(f=>f.remote_revision).map(f=>[f.path,f.remote_revision]))}:{})});
     const actuallyDeleted = Array.isArray(outcome?.deleted) ? outcome.deleted : deletedPaths;
     const recyclable = actuallyDeleted.filter(path => !isFtpPath(path) && !String(path).startsWith('\\\\') && !(typeof isDevicePath==='function'&&isDevicePath(path)));
-    if (recyclable.length) trackDelete(recyclable);
+    if (recyclable.length || outcome?.historyId) trackDelete(recyclable, outcome?.historyId, actuallyDeleted.length);
     await refresh();
     if (outcome?.cancelled) {
       cancelOperationTask(taskId, t('tasks.deleteCancelledDetail', {

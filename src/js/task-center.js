@@ -303,6 +303,7 @@ function completeOperationTask(taskId, options) {
   task.error = options.error ? String(options.error) : '';
   task.updatedAt = Date.now();
   renderOperationCenter();
+  if(typeof resumeAutomaticUpdate==='function')queueMicrotask(resumeAutomaticUpdate);
 }
 
 function failOperationTask(taskId, errors) {

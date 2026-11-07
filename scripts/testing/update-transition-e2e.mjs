@@ -12,6 +12,7 @@ import {root} from './source.mjs';
 import {listenBrowserLoopback} from './browser-loopback.mjs';
 if(process.platform!=='win32'||process.argv.length!==4)throw Error('Usage: node scripts/testing/update-transition-e2e.mjs OLDER-PORTABLE.zip NEW-RELEASE-DIRECTORY');
 const previous=path.resolve(process.argv[2]),release=path.resolve(process.argv[3]);
+const automatic=process.env.RHFILES_QA_AUTO_UPDATE==='1';
 const directory=fs.mkdtempSync(path.join(root,'test-artifacts','update transition [验证] 测试-'));
 const installation=path.join(directory,'installation'),exe=path.join(installation,'current','RHFiles.exe');
 const hash=file=>createHash('sha256').update(fs.readFileSync(file)).digest('hex');
@@ -52,6 +53,11 @@ try{
   receipt.startVersion=status.currentVersion;
   const targetAsset=feed.Assets.find(a=>a.Type==='Full');fs.mkdirSync(path.join(installation,'packages'),{recursive:true});
   fs.writeFileSync(path.join(installation,'packages',targetAsset.FileName),'synthetic corrupt same-name cache');
+  if(automatic){
+    await app.evaluate("RHFilesAPI.invoke('settings.open',{section:'updates'})");
+    await app.evaluate("getUpdateSource=()=>"+JSON.stringify(source)+";G.settings.autoUpdateEnabled=true;setAutoInstallUpdates(true);true");
+    receipt.automaticRequested=true;
+  }else{
   await app.evaluate("RHFilesAPI.invoke('settings.open',{section:'updates'}).then(()=>{window.__download={};call('download_update',{source:"+JSON.stringify(source)+",appearance:updateTransitionAppearance()}).then(value=>window.__download={done:true,value},error=>window.__download={error:String(error)});});true");
   await until(()=>app.evaluate("G._updateProgress?.phase==='downloading'&&G._updateProgress.percentage>0&&G._updateProgress.percentage<99"),'live download progress while settings are open',15000);
   const progress=await app.evaluate("({settingsOpen:!!document.getElementById('settings-check-update'),text:document.getElementById('settings-update-status').textContent,state:G._updateProgress,tasks:_operationTasks.size})");
@@ -88,11 +94,12 @@ try{
   }finally{fs.writeFileSync(updaterFile,savedUpdater);}
   // Do not await a promise on the WebView that is intentionally being destroyed.
   await app.evaluate("window.__applyReceipt={requested:true};call('apply_update',{source:"+JSON.stringify(source)+",appearance:updateTransitionAppearance()}).catch(e=>window.__applyReceipt.error=String(e));true");
+  }
   const splashBase=path.join(profile,'local','RHFiles','update-splash');
   const session=await until(()=>{
     if(!fs.existsSync(splashBase))return false;
     return fs.readdirSync(splashBase).map(p=>path.join(splashBase,p)).find(p=>fs.existsSync(path.join(p,'ready')));
-  },'actual embedded helper ready',10000);
+  },'actual embedded helper ready',automatic?90000:10000);
   receipt.ready=true;
   receipt.helperSHA256=hash(path.join(session,'RHFiles.UpdateSplash.exe'));
   await Promise.race([app.closed,sleep(60000).then(()=>{throw Error('Original isolated application did not exit for update');})]);

@@ -61,6 +61,22 @@ test('partially failed delete redo restores only items actually deleted',async()
   assert.deepEqual(calls.at(-1),['restore_recycled_files',{paths:['C:\\a']}]);
   assert.deepEqual(plain(stacks()),[0,1]);assert.match(alerts[0],/locked/);
 });
+
+test('remote recycle Ctrl+Z and Ctrl+Y use the native receipt history, never the local bin',async()=>{
+  const f=history();f.ctx.trackDelete([],'remote-receipts',2);
+  await f.ctx.undo();await f.ctx.redo();await f.ctx.undo();
+  assert.deepEqual(f.calls,[['device_transfer',{action:'undo_transfer',args:{id:'remote-receipts'}}],['device_transfer',{action:'redo_transfer',args:{id:'remote-receipts'}}],['device_transfer',{action:'undo_transfer',args:{id:'remote-receipts'}}]]);
+});
+
+test('partially restored mixed delete resumes without restoring the same remote receipt twice',async()=>{
+  let fail=true;const calls=[];
+  const f=history({call:async(cmd,args)=>{calls.push([cmd,plain(args)]);if(cmd==='restore_recycled_files'&&fail)throw Error('local file locked');}});
+  f.ctx.trackDelete(['C:\\local.txt'],'remote-receipts',2);await f.ctx.undo();
+  fail=false;await f.ctx.undo();
+  assert.equal(calls.filter(([cmd])=>cmd==='device_transfer').length,1);
+  assert.equal(calls.filter(([cmd])=>cmd==='restore_recycled_files').length,2);
+  await f.ctx.redo();assert.equal(calls.at(-1)[1].action,'redo_transfer');
+});
 test('random copy/undo/redo/new-action sequences agree with an independent filesystem model',async()=>{
   await fc.assert(fc.asyncProperty(fc.array(fc.constantFrom('copy','undo','redo'),{minLength:1,maxLength:80}),async commands=>{
     const disk=new Set(),expected=new Set(),past=[],future=[];let serial=0;

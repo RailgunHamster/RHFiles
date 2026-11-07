@@ -14,6 +14,13 @@ test('native Windows update settings offer CNB/GitHub only and persist source ch
       automatic:document.getElementById('settings-auto-update').checked
     }))()`);
     assert.deepEqual(snapshot,{modes:['cnb','github'],selected:'cnb',cnb:'https://cnb.cool/railgunhamster/RHFiles',retired:false,automatic:false});
+    const install=()=>app.evaluate("({checked:document.getElementById('settings-auto-install-update').checked,disabled:document.getElementById('settings-auto-install-update').disabled})");
+    assert.deepEqual(await install(),{checked:false,disabled:true});
+    await app.evaluate("RHFilesAPI.invoke('updates.autoInstall.set',{enabled:true})");
+    assert.equal(await app.evaluate("JSON.parse(localStorage.getItem('rhfiles-settings')).autoInstallUpdates"),true);
+    await app.evaluate("closeSettings();RHFilesAPI.invoke('settings.open',{section:'updates'})");
+    assert.deepEqual(await install(),{checked:true,disabled:true});
+    await app.evaluate("RHFilesAPI.invoke('updates.autoInstall.set',{enabled:false})");
     for(const mode of ['github','cnb']){
       await app.evaluate(`(()=>{const el=document.getElementById('settings-update-source');el.value=${JSON.stringify(mode)};el.dispatchEvent(new Event('change',{bubbles:true}));return true})()`);
       const persisted=await app.evaluate("JSON.parse(localStorage.getItem('rhfiles-settings'))");

@@ -279,7 +279,7 @@ async function routeDeviceCommand(cmd,args){
     case 'delete_file':case 'delete_files':case 'delete_files_permanently':{
       const selected=cmd==='delete_file'?[args.path]:args.paths,remote=selected.filter(isDevicePath),local=selected.filter(p=>!isDevicePath(p));
       value=await call('device_transfer',{action:'delete',args:{...args,paths:remote,permanent:cmd==='delete_files_permanently'}});
-      if(local.length&&!value.cancelled){const other=await call(cmd==='delete_file'?'delete_files':cmd,{...args,paths:local});value={deleted:[...(value.deleted||[]),...(other.deleted||[])],errors:[...(value.errors||[]),...(other.errors||[])],cancelled:!!other.cancelled};}
+      if(local.length&&!value.cancelled){const other=await call(cmd==='delete_file'?'delete_files':cmd,{...args,paths:local});value={...value,deleted:[...(value.deleted||[]),...(other.deleted||[])],errors:[...(value.errors||[]),...(other.errors||[])],cancelled:!!other.cancelled};}
       break;
     }
     case 'folder_size':value=await call('device_transfer',{action:'size',args});break;

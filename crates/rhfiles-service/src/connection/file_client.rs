@@ -154,6 +154,7 @@ pub enum FileRequest {
         path: String,
     },
     Recycle { path: String, revision: String },
+    RestoreRecycle { receipt: String },
     CheckedMutation { path:String, destination:Option<String>, revision:String, target_revision:Option<String> },
     UploadCreate {
         path: String,
@@ -175,6 +176,10 @@ impl FileRequest {
     fn validate(&self) -> Result<(), String> {
         match self {
             Self::Capabilities | Self::WindowsAccessCredential => Ok(()),
+            Self::RestoreRecycle { receipt } => {
+                if receipt.len()!=43||!receipt.bytes().all(|c|c.is_ascii_alphanumeric()||b"_-".contains(&c)){return Err("[invalid_request] 回收站撤销标识无效".into());}
+                Ok(())
+            }
             Self::Recycle { path, revision } => {
                 validate_path(path)?;
                 if revision.is_empty() || revision.len() > 256 {return Err("[invalid_request] 文件版本无效".into());}
@@ -273,6 +278,7 @@ impl FileRequest {
             Self::Copy { .. } => "copy",
             Self::Delete { .. } => "delete",
             Self::Recycle { .. } => "recycle",
+            Self::RestoreRecycle { .. } => "recycle.restore",
             Self::CheckedMutation {destination,..} => if destination.is_some(){"rename.checked"}else{"delete.checked"},
             Self::UploadCreate { .. } => "upload.create",
             Self::UploadStatus { .. } => "upload.status",
@@ -305,6 +311,7 @@ impl FileRequest {
             Self::Copy { .. } => (Method::POST, "copy".into()),
             Self::Delete { .. } => (Method::POST, "delete".into()),
             Self::Recycle { .. } => (Method::POST, "recycle-checked".into()),
+            Self::RestoreRecycle { .. } => (Method::POST, "recycle-restore".into()),
             Self::CheckedMutation {destination,..} => (Method::POST,if destination.is_some(){"rename-checked"}else{"delete-checked"}.into()),
             Self::UploadCreate { .. } => (Method::POST, "uploads".into()),
             Self::UploadStatus { id }
@@ -340,6 +347,7 @@ impl FileRequest {
                 },
             ));
         match self {
+            Self::RestoreRecycle { receipt } => { request = request.json(&json!({"receipt":receipt})); }
             Self::Recycle { path, revision } => {
                 request = request.json(&json!({"path":path,"revision":revision}));
             }

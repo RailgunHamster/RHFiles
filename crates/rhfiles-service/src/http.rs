@@ -638,8 +638,20 @@ async fn handle(s: Arc<State>, mut r: Request) -> Result<Response> {
             if m.revision.is_empty() || m.revision.len()>256 || m.destination.is_some() || m.target_revision.is_some() {return Err(bad("回收站操作参数无效"));}
             a.check(false,true)?;s.unlocked(&m.path,&a).await?;
             let storage=s.storage.clone();
-            let result=tokio::task::spawn_blocking(move||storage.recycle_checked(&m.path,&m.revision,move||a.check(false,true))).await.map_err(|_|Error::new("internal","移入回收站失败"))?;
-            s.invalidate();result?;Ok(StatusCode::NO_CONTENT.into_response())
+            let owner=a.id.clone();
+            let result=tokio::task::spawn_blocking(move||storage.recycle_checked(&m.path,&m.revision,&owner,move||a.check(false,true))).await.map_err(|_|Error::new("internal","移入回收站失败"))?;
+            s.invalidate();Ok(Json(serde_json::json!({"receipt":result?})).into_response())
+        },
+        ("POST","/api/v1/recycle-restore")=>{
+            #[derive(Deserialize)] #[serde(deny_unknown_fields)] struct Restore {receipt:String}
+            let m:Restore=json(r).await?;
+            if m.receipt.len()!=43||!m.receipt.bytes().all(|c|c.is_ascii_alphanumeric()||b"_-".contains(&c)){return Err(bad("回收站撤销标识无效"));}
+            a.check(true,false)?;
+            let path=s.storage.recycled_path(&m.receipt,&a.id)?;
+            s.unlocked(&path,&a).await?;
+            let storage=s.storage.clone();let owner=a.id.clone();
+            let result=tokio::task::spawn_blocking(move||storage.restore_recycled(&m.receipt,&owner,move||a.check(true,false))).await.map_err(|_|Error::new("internal","回收站还原失败"))?;
+            s.invalidate();Ok(Json(result?).into_response())
         },
         ("POST","/api/v1/rename-checked"|"/api/v1/delete-checked")=>{
             let m:CheckedMutation=json(r).await?;

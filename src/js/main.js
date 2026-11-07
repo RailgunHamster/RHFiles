@@ -389,6 +389,20 @@ function canCheckForUpdates(manual) {
   return !!manual || isAutomaticUpdateCheckEnabled();
 }
 
+function hasRunningFileTasks() {
+  return typeof _operationTasks !== 'undefined' && [..._operationTasks.values()].some(task=>task.status==='running');
+}
+
+function isAutomaticUpdateInstallEnabled() {
+  return /Win/i.test(globalThis.navigator?.platform || '') && isAutomaticUpdateCheckEnabled() && G.settings.autoInstallUpdates===true;
+}
+
+function resumeAutomaticUpdate() {
+  if(!G._automaticUpdatePending||G._updateCheckRunning||hasRunningFileTasks())return;
+  G._automaticUpdatePending=false;
+  if(isAutomaticUpdateInstallEnabled())checkForUpdates(false);
+}
+
 function getUpdateProxy() {
   if (G.settings.proxyEnabled !== true) return null;
   return String(G.settings.proxyUrl || '').trim() || 'http://127.0.0.1:7890';
@@ -512,7 +526,9 @@ function updateSettingsStatusText(status, error, state) {
   if (!element) return;
   element.title = error ? String(error) : '';
   const progress = G._updateProgress;
-  if (!error && progress && ['downloading','verifying','applying'].includes(progress.phase)) {
+  if (!error && G._automaticUpdatePending && isAutomaticUpdateInstallEnabled()) {
+    element.textContent=t('update.waitingForTasks');
+  } else if (!error && progress && ['downloading','verifying','applying'].includes(progress.phase)) {
     if (progress.phase === 'downloading') {
       element.textContent = t('update.statusDownloading', {version:progress.version || '',percentage:progress.percentage || 0,
         downloaded:fmtSize(progress.downloadedBytes || 0), total:fmtSize(progress.totalBytes || 0),speed:fmtSize(progress.speed || 0)});
@@ -566,11 +582,11 @@ async function refreshUpdateSettingsStatus() {
   G._updateCheckRunning = true;
   updateSettingsStatusText(null);
   if (button) button.disabled = true;
+  let checked;
   try {
-    const status = await call('check_updates', {
-      source: getUpdateSource(),
-      proxy: getUpdateProxy(),
-    });
+    const source=getUpdateSource(),proxy=getUpdateProxy();
+    const status = await call('check_updates', {source,proxy});
+    checked={source,proxy,status};
     G._updateStatus = status;
     updateSettingsStatusText(status);
   } catch (error) {
@@ -579,9 +595,10 @@ async function refreshUpdateSettingsStatus() {
     if (button) button.disabled = false;
     G._updateCheckRunning = false;
   }
+  if(checked&&isAutomaticUpdateInstallEnabled())return checkForUpdates(false,checked);
 }
 
-async function checkForUpdates(manual) {
+async function checkForUpdates(manual, checked) {
   if (!canCheckForUpdates(manual)) {
     updateSettingsStatusText(null, null, 'disabled');
     return;
@@ -595,12 +612,13 @@ async function checkForUpdates(manual) {
   await refreshLastUpdateFailure();
   if (G._updateCheckRunning) return;
   G._updateCheckRunning = true;
+  G._automaticUpdatePending = false;
   const button = document.getElementById('settings-check-update');
   if (button) button.disabled = true;
   try {
     const source = getUpdateSource();
     const proxy = getUpdateProxy();
-    const status = await call('check_updates', {source, proxy});
+    const status = checked?.source===source&&checked.proxy===proxy ? checked.status : await call('check_updates', {source, proxy});
     G._updateStatus = status;
     updateSettingsStatusText(status);
 
@@ -612,17 +630,18 @@ async function checkForUpdates(manual) {
       if (manual) showNotice(t('update.noUpdate', {version: status.currentVersion || ''}));
       return;
     }
-    if (typeof _operationTasks !== 'undefined'
-        && [..._operationTasks.values()].some(task => task.status === 'running')) {
+    const automatic = !manual && isAutomaticUpdateInstallEnabled();
+    if (hasRunningFileTasks()) {
+      if(automatic){G._automaticUpdatePending=true;updateSettingsStatusText(status);}
       if (manual) showNotice(t('update.busy'));
       return;
     }
 
     const version = status.availableVersion;
     const noticeKey = 'rhfiles-update-notified';
-    if (!manual && localStorage.getItem(noticeKey) === version) return;
+    if (!manual && !automatic && localStorage.getItem(noticeKey) === version) return;
     const notes = String(status.releaseNotes || '').trim();
-    const confirmed = await showConfirmDialog({
+    const confirmed = automatic || await showConfirmDialog({
       kind: 'update',
       title: t(status.pendingRestart ? 'update.readyTitle' : 'update.availableTitle'),
       message: t(status.pendingRestart ? 'update.readyMessage' : 'update.availableMessage', {version}),
@@ -640,9 +659,11 @@ async function checkForUpdates(manual) {
       updateDownloadProgress({phase:'downloading',version,percentage:0});
       await call('download_update', {source, proxy, appearance:updateTransitionAppearance(),targetVersion:version});
     }
+    if(automatic && (!isAutomaticUpdateInstallEnabled()||source!==getUpdateSource()||proxy!==getUpdateProxy()))return;
+    if(automatic && hasRunningFileTasks()){G._automaticUpdatePending=true;updateSettingsStatusText(status);return;}
     updateDownloadProgress({phase:'applying',version,percentage:100});
     try { saveTabState(); } catch (error) {}
-    if ([..._operationTasks.values()].some(task => task.status === 'running')) {
+    if (hasRunningFileTasks()) {
       throw new Error(t('update.busy'));
     }
     await call('apply_update', {source, proxy, appearance:updateTransitionAppearance(),targetVersion:version});
@@ -654,5 +675,6 @@ async function checkForUpdates(manual) {
   } finally {
     G._updateCheckRunning = false;
     if (button) button.disabled = false;
+    if(G._automaticUpdatePending&&!hasRunningFileTasks())queueMicrotask(resumeAutomaticUpdate);
   }
 }

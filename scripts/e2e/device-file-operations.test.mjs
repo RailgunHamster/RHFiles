@@ -54,6 +54,18 @@ test('real group filesystem: normal UI rename, case-only rename, merge/conflict/
     fs.writeFileSync(path.join(root,'extracted','merged','new'),'external changed target');
     await assert.rejects(b.evaluate('call("extract_archive",'+JSON.stringify({path:p('remote.zip'),dest:p('extracted'),overwrite:'replace',extractionPlanId:again.planId})+')'),/conflict/);assert.equal(read(path.join('extracted','merged','new')),'external changed target');
     const deleted=await api(b,'devices.delete',{paths:[p('目录'),p('two')]});assert.deepEqual(deleted.errors,[]);assert.equal(deleted.deleted.length,2);assert(!fs.existsSync(path.join(root,'目录')));assert(!fs.existsSync(path.join(root,'two')));
+    assert.equal(deleted.undoSupported,true);assert(deleted.historyId);
+    await api(b,'devices.undoTransfer',{id:deleted.historyId});assert(fs.existsSync(path.join(root,'目录')));assert(fs.existsSync(path.join(root,'two')));
+    await list();await api(b,'selection.set',{paths:[p('目录'),p('two')]});
+    await b.evaluate('G.settings.confirmRecycleDelete=false;deleteSelected(false)');assert(!fs.existsSync(path.join(root,'目录')));
+    const historyKey=async(key)=>{
+      await b.evaluate('document.activeElement?.blur();G.lastActivePane="left";true');
+      await b.send('Input.dispatchKeyEvent',{type:'keyDown',key,code:'Key'+key.toUpperCase(),windowsVirtualKeyCode:key.toUpperCase().charCodeAt(0),modifiers:2});
+      await b.send('Input.dispatchKeyEvent',{type:'keyUp',key,code:'Key'+key.toUpperCase(),windowsVirtualKeyCode:key.toUpperCase().charCodeAt(0),modifiers:0});
+    };
+    await historyKey('z');await until(async()=>fs.existsSync(path.join(root,'目录'))&&!await b.evaluate('historyBusy'),'Ctrl+Z restores remote folder');assert(fs.existsSync(path.join(root,'two')));
+    await historyKey('y');await until(async()=>!fs.existsSync(path.join(root,'目录'))&&!await b.evaluate('historyBusy'),'Ctrl+Y recycles remote folder again');assert(!fs.existsSync(path.join(root,'two')));
+    await b.evaluate('undo()');assert(fs.existsSync(path.join(root,'目录')));assert(fs.existsSync(path.join(root,'two')));
     await assert.rejects(api(b,'devices.delete',{paths:[base]}),/forbidden/);assert.equal(read('one'),'other device');
     await api(a,'groups.configure',{id:group,enabled:true,permissions:{write:false,delete:false}});await api(b,'groups.connect',{id:group,peer:device.peer,endpoint:'https://127.0.0.1:'+(await api(a,'server.state')).status.port});
     for(const [id,args]of [['devices.rename',{path:p('one'),newName:'denied'}],['devices.create',{parent:base,name:'denied',template:'txt'}],['devices.delete',{paths:[p('one')]}]])await assert.rejects(api(b,id,args),/forbidden|unauthorized/);

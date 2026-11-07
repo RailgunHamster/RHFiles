@@ -64,6 +64,59 @@ if ($env:RHFILES_RECYCLE_QA_RESTORE -eq '1') {
 
 #[cfg(windows)]
 #[tokio::test]
+async fn recycle_undo_uses_receipts_and_never_overwrites_a_new_occupant() {
+    let f=Fixture::new(true,true).await;
+    let file=f.share.join("undo.txt");
+    std::fs::write(&file,b"original undo content").unwrap();
+    let entry:Value=f.request("GET","/api/v1/stat").query(&[("path","/Files/undo.txt")]).send().await.unwrap().json().await.unwrap();
+    let deleted:Value=f.request("POST","/api/v1/recycle-checked").json(&json!({"path":"/Files/undo.txt","revision":entry["revision"]})).send().await.unwrap().json().await.unwrap();
+    let receipt=deleted["receipt"].as_str().unwrap();assert_eq!(receipt.len(),43);
+    std::fs::write(&file,b"new occupant").unwrap();
+    assert_eq!(f.request("POST","/api/v1/recycle-restore").json(&json!({"receipt":receipt})).send().await.unwrap().status(),409);
+    assert_eq!(std::fs::read(&file).unwrap(),b"new occupant");
+    std::fs::remove_file(&file).unwrap();
+    let restored=f.request("POST","/api/v1/recycle-restore").json(&json!({"receipt":receipt})).send().await.unwrap();
+    let status=restored.status();let text=restored.text().await.unwrap();
+    if !status.is_success(){owned_recycle_entry(&file,true);}
+    assert_eq!(status,200,"{text}");
+    assert_eq!(std::fs::read(&file).unwrap(),b"original undo content");
+    let entry:Value=serde_json::from_str(&text).unwrap();
+    let second:Value=f.request("POST","/api/v1/recycle-checked").json(&json!({"path":"/Files/undo.txt","revision":entry["revision"]})).send().await.unwrap().json().await.unwrap();
+    assert_ne!(second["receipt"],deleted["receipt"]);
+    assert!(!f.request("POST","/api/v1/recycle-restore").json(&json!({"receipt":receipt})).send().await.unwrap().status().is_success());
+    assert!(!file.exists());
+    let restored=f.request("POST","/api/v1/recycle-restore").json(&json!({"receipt":second["receipt"]})).send().await.unwrap();
+    assert_eq!(restored.status(),200,"{}",restored.text().await.unwrap());
+    assert_eq!(std::fs::read(&file).unwrap(),b"original undo content");
+    assert_eq!(owned_recycle_entry(&file,false),0);
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn recycle_undo_restores_a_complete_folder_and_rejects_another_device() {
+    let f=Fixture::new(true,true).await;
+    let folder=f.share.join("Undo folder");std::fs::create_dir(&folder).unwrap();
+    std::fs::create_dir(folder.join("nested")).unwrap();std::fs::write(folder.join("nested/内容.txt"),b"nested undo content").unwrap();
+    let entry:Value=f.request("GET","/api/v1/stat").query(&[("path","/Files/Undo folder")]).send().await.unwrap().json().await.unwrap();
+    let deleted:Value=f.request("POST","/api/v1/recycle-checked").json(&json!({"path":"/Files/Undo folder","revision":entry["revision"]})).send().await.unwrap().json().await.unwrap();
+    let other_data=tempfile::tempdir().unwrap();
+    let other_groups=rhfiles_service::groups::Groups::open(other_data.path()).unwrap();
+    let request=other_groups.request("Other device").unwrap();
+    let packet=f.service.groups().approve(&f.group,&request,false).unwrap();
+    other_groups.join(packet,Permissions{write:true,delete:true}).unwrap();
+    let other=group_session_from(&f.service,&f.group,&other_groups).await;
+    let rejected=f.client.post(format!("{}/api/v1/recycle-restore",f.base)).basic_auth(other["username"].as_str().unwrap(),Some(other["password"].as_str().unwrap())).json(&json!({"receipt":deleted["receipt"]})).send().await.unwrap();
+    assert!(!rejected.status().is_success());assert!(!folder.exists());
+    let restored=f.request("POST","/api/v1/recycle-restore").json(&json!({"receipt":deleted["receipt"]})).send().await.unwrap();
+    let status=restored.status();let text=restored.text().await.unwrap();
+    if !status.is_success(){owned_recycle_entry(&folder,true);}
+    assert_eq!(status,200,"{text}");
+    assert_eq!(std::fs::read(folder.join("nested/内容.txt")).unwrap(),b"nested undo content");
+    assert_eq!(owned_recycle_entry(&folder,false),0);
+}
+
+#[cfg(windows)]
+#[tokio::test]
 async fn recycle_keeps_original_names_and_nonempty_folders_restorable_while_permanent_delete_bypasses_bin() {
     let f=Fixture::new(false,true).await;
     let file=f.share.join("回收 % #.txt");
@@ -76,7 +129,7 @@ async fn recycle_keeps_original_names_and_nonempty_folders_restorable_while_perm
         let status=response.status();let body=response.text().await.unwrap();
         // Restore even when an assertion fails, preserving a clean test bin.
         let removed=!original.exists();let recycled=owned_recycle_entry(original,true);
-        assert_eq!(status,204,"{body}");assert!(removed);assert_eq!(recycled,1);assert!(original.exists());
+        assert_eq!(status,200,"{body}");assert!(removed);assert_eq!(recycled,1);assert!(original.exists());
     }
     assert_eq!(std::fs::read(&file).unwrap(),b"recover file");
     assert_eq!(std::fs::read(folder.join("nested/keep.txt")).unwrap(),b"recover nested content");
@@ -971,6 +1024,9 @@ async fn webdav_copy_move_cannot_recurse_into_the_source_or_move_a_share_root() 
 
 async fn group_session(service:&Service,id:&str)->Value {
     let groups=service.groups();
+    group_session_from(service,id,&groups).await
+}
+async fn group_session_from(service:&Service,id:&str,groups:&rhfiles_service::groups::Groups)->Value {
     let client=Client::builder().no_proxy().add_root_certificate(reqwest::Certificate::from_pem(service.status().certificate_pem.as_bytes()).unwrap()).timeout(std::time::Duration::from_secs(10)).build().unwrap();
     let url=format!("https://127.0.0.1:{}",service.status().port);
     let challenge:Value=client.post(format!("{url}/api/v1/groups/challenge")).json(&json!({"groupId":id,"deviceId":groups.device_id()})).send().await.unwrap().json().await.unwrap();

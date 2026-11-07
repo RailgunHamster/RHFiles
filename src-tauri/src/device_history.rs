@@ -15,6 +15,11 @@ enum State {
         remaining: usize,
         at_target: bool,
     },
+    Recycle {
+        entries: Vec<(DevicePath, String, Option<Snapshot>)>,
+        at_bin: bool,
+        cursor: usize,
+    },
     Unavailable,
 }
 struct History {
@@ -93,6 +98,38 @@ pub(super) fn record_copy(entries: Vec<CopyEntry>, p: &Progress<'_>) -> Option<S
     );
     Some(id)
 }
+pub(super) fn record_recycle(
+    entries: Vec<(DevicePath, String)>,
+    p: &Progress<'_>,
+) -> Option<String> {
+    if entries.is_empty() {
+        return None;
+    }
+    let bytes: usize = entries
+        .iter()
+        .map(|(path, receipt)| path.uri().len() + receipt.len() + 512)
+        .sum();
+    if bytes > 32 * 1024 * 1024 {
+        return None;
+    }
+    let id = random().ok()?;
+    put(
+        id.clone(),
+        History {
+            state: State::Recycle {
+                entries: entries
+                    .into_iter()
+                    .map(|(path, receipt)| (path, receipt, None))
+                    .collect(),
+                at_bin: true,
+                cursor: 0,
+            },
+            leases: p.leases.clone(),
+            bytes,
+        },
+    );
+    Some(id)
+}
 pub(super) async fn execute(
     action: &str,
     args: &Value,
@@ -109,6 +146,61 @@ pub(super) async fn execute(
         p.history = false;
         p.exclusive_target = true;
         match &mut item.state {
+            State::Recycle {
+                entries,
+                at_bin,
+                cursor,
+            } => {
+                if *at_bin != undo {
+                    return Err("[history_state] 此删除操作已撤销或重做".into());
+                }
+                p.items = entries.len() as u64;
+                while *cursor < entries.len() {
+                    p.check()?;
+                    let (path, receipt, restored) = &mut entries[*cursor];
+                    if undo {
+                        let entry = request(
+                            path,
+                            FileRequest::RestoreRecycle {
+                                receipt: receipt.clone(),
+                            },
+                        )
+                        .await?
+                        .json(65536)
+                        .await?;
+                        *restored = Some(Snapshot {
+                            directory: entry["isDir"]
+                                .as_bool()
+                                .ok_or("[invalid_response] 缺少还原项目类型")?,
+                            size: entry["size"]
+                                .as_u64()
+                                .ok_or("[invalid_response] 缺少还原项目大小")?,
+                            revision: field(&entry, "revision")?.into(),
+                            read_revision: None,
+                        });
+                    } else {
+                        let stamp = restored
+                            .as_ref()
+                            .ok_or("[history_unavailable] 缺少还原项目版本，未重新删除")?;
+                        let result = request(
+                            path,
+                            FileRequest::Recycle {
+                                path: path.path.clone(),
+                                revision: stamp.revision.clone(),
+                            },
+                        )
+                        .await?
+                        .json(65536)
+                        .await?;
+                        *receipt = field(&result, "receipt")?.into();
+                    }
+                    *cursor += 1;
+                    p.done = *cursor as u64;
+                    p.emit("running", &Location::Remote(path.clone()), false);
+                }
+                *at_bin = !undo;
+                *cursor = 0;
+            }
             State::Move {
                 source,
                 target,
@@ -217,7 +309,7 @@ pub(super) async fn execute(
                 return Err(
                     "[history_unavailable] 文件操作完成，但对象已变化或缺少版本证明，不能再次撤销"
                         .into(),
-                )
+                );
             }
         }
         Ok(json!({"changed":true,"historyId":id}))

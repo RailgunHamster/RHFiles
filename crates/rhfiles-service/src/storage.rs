@@ -69,6 +69,13 @@ pub struct Storage {
     pub roots: HashMap<String, Arc<Root>>,
     pub mutation: Mutex<()>,
     pub recovery_warnings: Mutex<Vec<String>>,
+    recycled: Mutex<std::collections::VecDeque<(String, RecycleRecord)>>,
+}
+#[derive(Debug)]
+struct RecycleRecord {
+    owner: String,
+    node: Node,
+    item: crate::recycle::Recycled,
 }
 #[derive(Clone, Debug)]
 pub struct Node {
@@ -193,6 +200,7 @@ impl Storage {
             roots,
             mutation: Mutex::new(()),
             recovery_warnings: Mutex::new(Vec::new()),
+            recycled: Mutex::new(std::collections::VecDeque::new()),
         };
         storage.recover_checked()?;
         Ok(storage)
@@ -319,7 +327,7 @@ impl Storage {
         }
         Ok(())
     }
-    pub fn recycle_checked(&self, path: &str, revision: &str, check: impl Fn() -> Result<()> + Send + Sync + 'static) -> Result<()> {
+    pub fn recycle_checked(&self, path: &str, revision: &str, owner: &str, check: impl Fn() -> Result<()> + Send + Sync + 'static) -> Result<String> {
         let _guard = self.mutation.lock().unwrap();
         let node = self.node(path)?;
         node.require_child()?;
@@ -327,7 +335,51 @@ impl Storage {
         if node.stat()?.revision != revision {
             return Err(Error::new("conflict", "源文件已变化，未移入回收站"));
         }
-        crate::recycle::put(node, revision.to_owned(), check)
+        let token = random()?;
+        let item = crate::recycle::put(node.clone(), revision.to_owned(), check)?;
+        let mut records = self.recycled.lock().unwrap();
+        records.push_back((token.clone(), RecycleRecord { owner:owner.into(), node, item }));
+        // Keep at least one complete maximum-size client deletion batch.
+        if records.len() > 10000 { records.pop_front(); }
+        Ok(token)
+    }
+    pub fn restore_recycled(&self, token: &str, owner: &str, check: impl Fn() -> Result<()> + Send + Sync + 'static) -> Result<Entry> {
+        let _guard = self.mutation.lock().unwrap();
+        let mut records = self.recycled.lock().unwrap();
+        let index = records.iter().position(|(id, record)| id == token && record.owner == owner)
+            .ok_or_else(|| Error::new("history_unavailable", "回收站撤销记录已过期或不属于此设备，未按路径猜测还原"))?;
+        let record = &records[index].1;
+        let node = self.node(&record.node.virtual_path)?;
+        node.require_child()?;
+        let check=Arc::new(check);
+        check()?;
+        if node.root.dir.symlink_metadata(&node.relative).is_ok() { return Err(Error::new("conflict", "原位置已有新项目，未覆盖")); }
+        let stage = node.root.staging()?;
+        let captured = format!("capture-{token}");
+        let journal = format!("mutation-{token}.json");
+        // Let the Shell remove its Recycle Bin metadata into journalled staging.
+        // The final capability-relative rename cannot overwrite a racing creator.
+        // Existing crash recovery restores staged originals into vacant names.
+        if stage.symlink_metadata(&captured).is_err() {
+            let state=serde_json::json!({"source":node.relative.to_string_lossy(),"captured":captured,"backup":format!("backup-{token}"),"sourceRevision":record.item.revision});
+            use std::io::Write;
+            let mut file=stage.open_with(&journal,OpenOptions::new().write(true).create(true).truncate(true))?;
+            file.write_all(&serde_json::to_vec(&state).map_err(|_|Error::new("internal","无法记录还原状态"))?)?;
+            file.sync_all()?;
+            let authorize=check.clone();
+            crate::recycle::restore_to(&record.item,&node,&node.root.host_path.join(format!("{PRIVATE_PREFIX}staging")).join(&captured),move||authorize())?;
+        }
+        if metadata_revision(&stage.metadata(&captured)?) != record.item.revision { return Err(Error::new("conflict", "待还原项目已变化，未覆盖")); }
+        check()?;
+        rename_noreplace(&stage,Path::new(&captured),&node.root.dir,&node.relative)?;
+        let entry=node.stat()?;
+        let _=stage.remove_file(&journal);
+        records.remove(index);
+        Ok(entry)
+    }
+    pub(crate) fn recycled_path(&self, token: &str, owner: &str) -> Result<String> {
+        self.recycled.lock().unwrap().iter().find(|(id,record)|id==token&&record.owner==owner)
+            .map(|(_,record)|record.node.virtual_path.clone()).ok_or_else(||Error::new("history_unavailable","回收站撤销记录不可用"))
     }
     pub fn rename(&self, from: &str, to: &str) -> Result<()> {
         let from = self.node(from)?;

@@ -155,19 +155,27 @@ function trackBatchRename(pathPairs, remoteEntries) {
   });
 }
 
-function trackDelete(paths) {
+function trackDelete(paths, remoteHistoryId, totalCount) {
   const deletedPaths = [...paths];
+  let localDeleted = true, remoteDeleted = true;
   pushUndo({
-    label: t('undo.deleteItems', {count: deletedPaths.length}),
-    undo: async () => { await call("restore_recycled_files", { paths: deletedPaths }); },
+    label: t('undo.deleteItems', {count: totalCount ?? deletedPaths.length}),
+    undo: async () => {
+      if(remoteHistoryId && remoteDeleted){await call('device_transfer',{action:'undo_transfer',args:{id:remoteHistoryId}});remoteDeleted=false;}
+      if(deletedPaths.length && localDeleted){await call("restore_recycled_files", { paths: deletedPaths });localDeleted=false;}
+    },
     redo: async () => {
-      const outcome = await call("delete_files", { paths: deletedPaths });
-      if (outcome?.errors?.length) {
-        if (outcome.deleted?.length) {
-          await call("restore_recycled_files", { paths: outcome.deleted });
+      if(deletedPaths.length && !localDeleted){
+        const outcome = await call("delete_files", { paths: deletedPaths });
+        if (outcome?.errors?.length) {
+          if (outcome.deleted?.length) {
+            await call("restore_recycled_files", { paths: outcome.deleted });
+          }
+          throw new Error(outcome.errors.join('\n'));
         }
-        throw new Error(outcome.errors.join('\n'));
+        localDeleted=true;
       }
+      if(remoteHistoryId && !remoteDeleted){await call('device_transfer',{action:'redo_transfer',args:{id:remoteHistoryId}});remoteDeleted=true;}
     }
   });
 }

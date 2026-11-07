@@ -1269,13 +1269,15 @@ async fn mutations(
             progress.items = plans.iter().map(|(_, p)| p.len() as u64).sum();
             let mut deleted = Vec::new();
             let mut errors = Vec::new();
+            let mut recycled = Vec::new();
             for (root, plan) in plans {
                 let result = async {
                     for (path, stamp) in plan.iter().rev() {
                         progress.check()?;
                         if !permanent {
                             let remote = remote_child(path)?;
-                            request(remote, FileRequest::Recycle { path:remote.path.clone(), revision:stamp.revision.clone() }).await?;
+                            let result = request(remote, FileRequest::Recycle { path:remote.path.clone(), revision:stamp.revision.clone() }).await?.json(65536).await?;
+                            recycled.push((remote.clone(),field(&result,"receipt")?.to_string()));
                             progress.done += 1;
                             progress.emit("running", path, false);
                             continue;
@@ -1322,9 +1324,8 @@ async fn mutations(
                     true,
                 );
             }
-            Ok(
-                json!({"deleted":deleted,"errors":errors,"cancelled":cancelled,"undoSupported":false}),
-            )
+            let history_id = history::record_recycle(recycled, progress);
+            Ok(json!({"deleted":deleted,"errors":errors,"cancelled":cancelled,"undoSupported":history_id.is_some(),"historyId":history_id}))
         }
         "size" => {
             let path = Location::parse(field(args, "path")?)?;

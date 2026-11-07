@@ -417,6 +417,7 @@ function openSettings() {
   const updates = '<div class="settings-card">' +
     '<div class="settings-row"><label for="settings-auto-update">' + t('settings.autoUpdate') + '</label>' +
     '<input id="settings-auto-update" type="checkbox" onchange="setAutoUpdateEnabled(this.checked)"' + (G.settings.autoUpdateEnabled!==false?' checked':'') + '></div>' +
+    (/Win/i.test(globalThis.navigator?.platform || '') ? '<div class="settings-row"><label for="settings-auto-install-update">' + t('settings.autoInstallUpdates') + '</label><input id="settings-auto-install-update" type="checkbox" onchange="setAutoInstallUpdates(this.checked)"' + (G.settings.autoInstallUpdates===true?' checked':'') + (G.settings.autoUpdateEnabled===false?' disabled':'') + '></div><p class="settings-card-description">' + t('settings.autoInstallUpdatesHint') + '</p>' : '') +
     '<div class="settings-row"><label for="settings-update-source">' + t('settings.updateSource') + '</label>' +
     '<select id="settings-update-source" onchange="setUpdateSourceMode(this.value)">' +
       '<option value="cnb"' + (G.settings.updateSourceMode==='cnb'?' selected':'') + '>' + t('settings.updateSourceCnb') + '</option>' +
@@ -502,8 +503,16 @@ function openSettings() {
 function setAutoUpdateEnabled(enabled) {
   G.settings.autoUpdateEnabled = !!enabled;
   saveSettings();
+  const install=document.getElementById('settings-auto-install-update');if(install)install.disabled=!enabled;
   refreshUpdateSettingsStatus();
   loadReleaseHistory(false);
+}
+
+function setAutoInstallUpdates(enabled) {
+  G.settings.autoInstallUpdates = /Win/i.test(globalThis.navigator?.platform || '') && !!enabled;
+  saveSettings();
+  if(!enabled)G._automaticUpdatePending=false;
+  refreshUpdateSettingsStatus();
 }
 
 function setUpdateSourceMode(mode) {

@@ -1165,6 +1165,7 @@ function loadSettings() {
     iconMode: 'mixed',
     defaultLayout: 'details',
     autoUpdateEnabled: true,
+    autoInstallUpdates: false,
     proxyEnabled: false,
     proxyUrl: '',
     deviceDownloadParallelism: 2,
