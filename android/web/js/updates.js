@@ -27,7 +27,7 @@ const androidUpdates=(()=>{
   function setHistoryPage(page){historyPage=releaseHistoryPages.split(historyEntries,page).page;renderHistoryOlder();return historyState();}
   function renderHistory(){
     const node=$('app-changelog');if(!node)return;node.replaceChildren();
-    const recent=ui.el('section','release-log-section');recent.id='update-history-recent';recent.append(ui.el('h3','','最近更新记录'));
+    const recent=ui.el('section','release-log-section');recent.id='update-history-recent';recent.append(ui.el('h3','','最新更新'));
     const state=historyState();historyPage=state.page;
     for(const [i,item]of state.recent.entries())recent.append(versionCard(item,i===0));
     if(!state.total)recent.append(ui.el('p','muted','暂无更新记录。'));

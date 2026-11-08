@@ -408,12 +408,14 @@ try{
     check(await p.evaluate(()=>{const a=document.getElementById('update-actions'),n=document.getElementById('update-pending-notes');return !!(a.compareDocumentPosition(n)&Node.DOCUMENT_POSITION_FOLLOWING)&&a.getBoundingClientRect().bottom<=n.getBoundingClientRect().top;}),'Update actions stay visually and structurally above pending notes when an update exists');
     check((await p.locator('#update-notes').innerText()).includes('\n2. 第二行 <img') && await p.locator('#update-notes img').count()===0,'Update notes number entries, preserve line breaks and never inject HTML');
     check(!(await p.locator('#update-notes').innerText()).includes('旧版不应'),'Pending update notes do not expand accumulated historical releases');
-    check(await p.locator('#update-history-recent details').count()===10,'The recent log is limited to ten installed versions');
+    check(await p.locator('#update-history-recent details').count()===1,'Only the single latest installed version is featured');
     check(await p.locator('#update-history-older details').count()===10,'The older log contains only its first ten-record page');
     await p.locator('#update-history-recent details').first().locator('summary').click();
     const checksBeforePaging=await p.evaluate(()=>__model.updateRequests);
     await p.click('#update-history-next');
-    check(await p.locator('#update-history-older details').count()===5&&await p.locator('.release-log-pagination output').innerText()==='2/2','The last history page shows only its remaining five versions');
+    check(await p.locator('#update-history-older details').count()===10&&await p.locator('.release-log-pagination output').innerText()==='2/3','The second history page contains ten earlier versions');
+    await p.click('#update-history-next');
+    check(await p.locator('#update-history-older details').count()===4&&await p.locator('.release-log-pagination output').innerText()==='3/3','The last history page shows only its remaining four versions');
     check(await p.locator('#update-history-next').isDisabled(),'The final history page cannot advance');
     check(await p.evaluate(before=>!document.querySelector('#update-history-recent details').open&&__model.updateRequests===before,checksBeforePaging),'Paging preserves recent expansion and makes no update request');
     await p.evaluate(()=>RHFilesAPI.invoke('updates.history.page.set',{page:1}));
@@ -527,7 +529,7 @@ try{
     check(before>0&&await tabs.evaluate(e=>e.scrollLeft)<before&&await p.locator('#drawer').isHidden(),'Real rightward settings-tab pan scrolls tabs and never opens the drawer');
     await p.click('[data-settings-section=updates]');await p.locator('#app-changelog details').first().waitFor();
     const latest=require('../js/changelog.js').sections(bundledHistory)[0];
-    const history=await p.locator('#app-changelog').innerText();check(history.includes(latest.title)&&history.includes(latest.text.split('\n').find(line=>/^1\./.test(line)))&&await p.locator('#update-history-recent details').count()===10&&await p.locator('#update-history-older details').count()===10&&await p.evaluate(()=>__model.updateRequests===0),'Offline release notes keep ten recent records separate from paginated older records');
+    const history=await p.locator('#app-changelog').innerText();check(history.includes(latest.title)&&history.includes(latest.text.split('\n').find(line=>/^1\./.test(line)))&&await p.locator('#update-history-recent details').count()===1&&await p.locator('#update-history-older details').count()===10&&await p.evaluate(()=>__model.updateRequests===0),'Offline release notes feature only the latest record and paginate all previous versions');
     await p.evaluate(()=>{__model.updates.state='latest';__model.updates.release=null;return androidUpdates.onSettings()});check(await p.locator('#app-changelog').innerText()===history,'Latest/installed state never erases release history');
     await p.evaluate(()=>{__model.updates.state='failed';__model.updates.message='offline';return androidUpdates.onSettings()});check(await p.locator('#app-changelog').innerText()===history,'Failed update checks never erase release history');
     check(errors.length===0,'New gesture, favorite and history regressions have no frontend errors');await capture(p,'018-permanent-history');await context.close();

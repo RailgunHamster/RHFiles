@@ -274,7 +274,7 @@
   "settings.updateSourceHelp": "请填写公开的 CNB / GitHub 仓库地址；无需填写发布令牌。Windows 与 Android 使用独立更新清单。自动检查开启时会验证当前来源。",
   "settings.checkUpdates": "立即检查",
   "settings.releaseHistory": "版本记录",
-  "settings.historyRecent": "最近更新记录",
+  "settings.historyRecent": "最新更新",
   "settings.historyOlder": "历史记录",
   "settings.historyPrevious": "上一页",
   "settings.historyNext": "下一页",
