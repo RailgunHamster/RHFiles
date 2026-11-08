@@ -12,6 +12,7 @@ param(
     [switch]$StageOnly
 )
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'github-public-assets.ps1')
 $manifest = Get-Content -LiteralPath (Join-Path $Directory 'releases.android.json') -Raw | ConvertFrom-Json
 if ($manifest.schemaVersion -ne 1 -or $manifest.packageId -ne 'com.railgunhamster.rhfiles') { throw 'Invalid Android feed' }
 $release = @($manifest.releases | Sort-Object { [long]$_.versionCode } -Descending)[0]
@@ -54,7 +55,7 @@ foreach ($file in $files) {
     if ($already) {
         if ($already.digest -eq "sha256:$digest") { continue }
         if (-not $CompatibilityMirror -or $name -ne 'releases.android.json') { throw "Existing GitHub asset differs: $name; will not overwrite it" }
-        $oldFeed=Invoke-RestMethod $already.browser_download_url @requestOptions
+        $oldFeed=Read-RHFilesGithubJsonAsset -Repository $Repository -Release $TargetRelease -FileName 'releases.android.json' -Proxy $Proxy
         if ($oldFeed -is [string]) { $oldFeed=$oldFeed | ConvertFrom-Json }
         if ($oldFeed.schemaVersion -ne 1 -or $oldFeed.packageId -ne $manifest.packageId) { throw 'Unexpected compatibility feed' }
         $oldCode=($oldFeed.releases | Measure-Object versionCode -Maximum).Maximum
