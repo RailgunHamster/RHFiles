@@ -82,5 +82,6 @@ jobs:
           path: |
             test-artifacts/android-*/summary.json
             test-artifacts/android-*/*.png
+            test-artifacts/android-*/*.xml
             test-artifacts/android-*/events.json
             test-artifacts/android-preview-*.log

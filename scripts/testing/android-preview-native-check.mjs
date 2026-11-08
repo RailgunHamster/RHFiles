@@ -159,11 +159,15 @@ try{
   const invalid=await call('files.cacheApk',{path:entry('broken.apk').path});const failed=await until(async()=>{const j=await native('job.status',{id:invalid.jobId});return ['failed','completed'].includes(j.state)&&j;},'invalid APK cache');assert.equal(failed.state,'failed');assert.equal(failed.outputs.length,0);check(true,'invalid APK fails explicitly without exposing incomplete output');
   adb('shell','appops','set','com.railgunhamster.rhfiles','REQUEST_INSTALL_PACKAGES','allow');
   const installerVisible=()=>adb('shell','dumpsys','activity','activities').split(/\r?\n/).some(line=>/topResumedActivity|mResumedActivity/.test(line)&&/packageinstaller|permissioncontroller.*Install/i.test(line));
+  let installerReceipts=0;
   const installerReady=()=>{
     if(!installerVisible())return false;
     adb('shell','uiautomator','dump','--compressed','/data/local/tmp/rhfiles-qa-install-confirmation.xml');
     const xml=adb('exec-out','cat','/data/local/tmp/rhfiles-qa-install-confirmation.xml');
-    return /text="RHFiles"/.test(xml)&&[...xml.matchAll(/<node\b[^>]*>/g)].some(([node])=>/resource-id="android:id\/button1"/.test(node)&&/text="(?:Update|Install)"/i.test(node));
+    const ready=/text="RHFiles"/.test(xml)&&/Do you want to (?:update|install) this app\?/.test(xml)&&[...xml.matchAll(/<node\b[^>]*>/g)].some(([node])=>/text="(?:Update|Install)"/i.test(node)&&/clickable="true"/.test(node)&&/enabled="true"/.test(node));
+    fs.writeFileSync(path.join(phone.artifactDir,'apk-installation-latest.xml'),xml);
+    if(ready)fs.writeFileSync(path.join(phone.artifactDir,`apk-installation-${++installerReceipts}.xml`),xml);
+    return ready;
   };
   await call('files.installCachedApk',{jobId:cache.jobId});await until(installerReady,'system package installer ready for explicit confirmation',45000);
   check(true,'completed remote APK hands off to Android system installation confirmation');adb('shell','input','keyevent','4');await pause(400);
