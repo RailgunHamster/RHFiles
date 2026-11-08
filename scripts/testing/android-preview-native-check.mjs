@@ -38,7 +38,7 @@ const relayHost=process.env.RHFILES_TEST_FIXTURE_RELAY;
 if(relayHost&&relayHost!=='nuc')throw Error('Only the explicitly selected nuc test relay is admitted');
 const fixture=spawn(path.resolve(python),['-u',path.resolve('scripts/testing/protocol-fixtures.py'),directory],{windowsHide:true,stdio:['pipe','pipe','pipe'],env:{...process.env,...(relayHost?{RHFILES_FIXTURE_FTP_PASV_START:'45080'}:{})}});
 let output='',fixtureErrors='';fixture.stdout.on('data',b=>output+=b);fixture.stderr.on('data',b=>fixtureErrors+=b);
-let phone,desktop,headless,groupId;const connections=[];let checks=0;
+let phone,desktop,headless,groupId,reversePort;const connections=[];let checks=0;
 const relays=[];
 async function relay(ports){
   if(!relayHost)return;
@@ -108,7 +108,14 @@ try{
   const request=await native('groups.request',{deviceName:'Owned emulator preview QA'});
   const approval=headless?await headless.approve(request.uri):await windows('device_groups',{command:'approve',args:{id:groupId,uri:request.uri,canInvite:false}});
   await native('groups.join',{uri:approval.uri,confirmed:true});
-  if(relayHost||headless){const result=await native('groups.connect',{id:groupId,peer,endpoint:'https://10.0.2.2:'+service.port});assert.equal(result.outcome,'connected');}
+  if(relayHost||headless){
+    // The loopback-only fixture signs 127.0.0.1, not the emulator's 10.0.2.2
+    // host alias. Preserve the signed endpoint through an owned ADB tunnel.
+    if(headless){adb('reverse','--no-rebind',`tcp:${service.port}`,`tcp:${service.port}`);reversePort=service.port;}
+    const endpoint=`https://${headless?'127.0.0.1':'10.0.2.2'}:${service.port}`;
+    const result=await native('groups.connect',{id:groupId,peer,endpoint});
+    assert.equal(result.outcome,'connected','Owned group connection diagnostics: '+JSON.stringify(result));
+  }
   const roots=await native('roots');let groupRoot;
   for(const location of roots.filter(r=>r.path?.startsWith('remote://'))){const id=location.path.split('/')[2],c=await native('connection.get',{id});if(c.groupId===groupId)groupRoot=location.path;}
   assert.ok(groupRoot,'test group publishes a storage root');const groupEntries=(await native('list',{path:groupRoot})).entries;
@@ -162,6 +169,7 @@ finally{
   if(phone){for(const id of connections)await phone.evaluate(`api.native('connection.delete',{id:${JSON.stringify(id)}})`).catch(()=>{});if(groupId)await phone.evaluate(`api.native('groups.forget',{id:${JSON.stringify(groupId)},confirmed:true})`).catch(()=>{});phone.close();}
   if(desktop){await desktop.evaluate("call('lan_service_stop',{})").catch(()=>{});await desktop.close();}
   if(headless)await headless.close();
+  if(reversePort)adb('reverse','--remove',`tcp:${reversePort}`);
   fixture.stdin.end();fixture.kill();
   for(const relay of relays)relay.kill();
   assert.equal(path.dirname(path.resolve(directory)),path.resolve(os.tmpdir()));assert.ok(path.basename(directory).startsWith('rhfiles-preview-native-'));
