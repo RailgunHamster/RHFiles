@@ -369,7 +369,7 @@
           }
         }
         showList(route.scroll,position);
-        androidHistory.record(state.route,folderDisplayName(listing.path),pathLabel(listing.path));
+        androidHistory.record(state.route,state.route.boundary===listing.path?state.route.boundaryLabel:state.route.label||folderDisplayName(listing.path),rootFor(listing.path)?pathLabel(listing.path):fmt.displayPath(listing.path));
       } else if (route.screen === 'favorites') {
         state.entries = state.favorites.map(item => ({ ...item, kind: item.isDir ? 'folder' : kindOf(item.name) }));
         showList(route.scroll,position);
@@ -385,7 +385,7 @@
           const page = await categoryPage(route);
           if (id !== navigationId) return;
           state.entries = libraryEntries(page.entries,route); state.listing = page; showList(route.scroll,position);
-          if(route.folder)androidHistory.record(state.route,folderDisplayName(route.folder)+' · '+labels[route.category],pathLabel(route.folder));
+          if(route.folder)androidHistory.record(state.route,(route.label||folderDisplayName(route.folder))+' · '+labels[route.category],rootFor(route.folder)?pathLabel(route.folder):fmt.displayPath(route.folder));
         }
       } else if (route.screen === 'search') {
         $('search-input').value = route.query || '';

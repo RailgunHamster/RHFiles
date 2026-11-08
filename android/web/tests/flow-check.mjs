@@ -467,6 +467,8 @@ try{
     check((await p.evaluate(()=>RHFilesAPI.invoke('history.list'))).entries.length===2,'Browsing history persists across an app page restart');
     await p.evaluate(id=>RHFilesAPI.invoke('history.open',{id}),download.id);await row(p,'report.pdf').waitFor();
     check((await p.evaluate(()=>RHFilesAPI.invoke('history.list'))).entries.length===2,'Opening a history record reuses navigation and deduplicates the visit');
+    await p.evaluate(()=>RHFilesAPI.invoke('navigation.open',{path:'/storage/emulated/0/Download',label:'测试下载位置'}));
+    check((await p.evaluate(()=>RHFilesAPI.invoke('history.list'))).entries[0].label==='测试下载位置','History preserves the visible name of a named storage or shortcut');
     await p.evaluate(()=>RHFilesAPI.invoke('navigation.open',{path:'/storage/emulated/0/missing-qa-folder'}).catch(()=>null));
     check((await p.evaluate(()=>RHFilesAPI.invoke('history.list'))).entries.length===2,'Failed navigation is never added as a visit');
     await p.evaluate(()=>RHFilesAPI.invoke('navigation.tool',{tool:'history'}));
