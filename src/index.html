@@ -197,11 +197,11 @@
           <button type="button" id="device-working-copies" class="sidebar-item sidebar-child-action" data-api-action="devices.workingCopies.show" onclick="RHFilesAPI.invoke('devices.workingCopies.show').catch(e=>showNotice(String(e)))"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3h9l4 4v13H8zM17 3v5h4M4 7H2v14h3M11 12h7M11 16h5"/></svg><span>Cache &amp; working copies</span><svg class="sidebar-action-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></button>
         </div>
       </div>
-      <div class="sidebar-section">
+      <div class="sidebar-section" id="favorites-sidebar-section">
         <div class="sidebar-heading" data-i18n="sidebar.favorites">Favorites</div>
         <div id="pinned-list" class="pinned-list"></div>
       </div>
-      <div class="sidebar-section">
+      <div class="sidebar-section" id="quick-access-section">
         <div class="sidebar-heading" data-i18n="sidebar.quickAccess">Quick access</div>
         <div class="sidebar-item" data-nav="Desktop">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="1" y="3" width="14" height="10" rx="1.5" stroke="currentColor" stroke-width="1"/><path d="M5 14h6" stroke="currentColor" stroke-width="1" stroke-linecap="round"/></svg>
@@ -228,14 +228,14 @@
           <span data-i18n="home.videos">Videos</span>
         </div>
       </div>
-      <div class="sidebar-section">
+      <div class="sidebar-section" id="tags-sidebar-section">
         <div class="sidebar-heading" data-i18n="sidebar.tags">Tags</div>
         <div id="tag-list" class="tag-list"></div>
       </div>
       <div class="sidebar-section" id="recycle-sidebar-section">
         <button class="sidebar-item" id="sidebar-recycle" data-api-action="recycle.open"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 7h14M9 7V4h6v3M7 7l1 14h8l1-14M10 11v6M14 11v6"/></svg><span data-i18n="recycle.title">Recycle Bin</span></button>
       </div>
-      <div class="sidebar-section">
+      <div class="sidebar-section" id="recent-sidebar-section">
         <div class="sidebar-heading" data-i18n="sidebar.recent">Recent</div>
         <div id="recent-list"></div>
       </div>
@@ -243,7 +243,7 @@
         <div class="sidebar-heading" data-i18n="sidebar.cloud">Cloud Storage</div>
         <div id="cloud-list"></div>
       </div>
-      <div class="sidebar-section">
+      <div class="sidebar-section" id="drives-sidebar-section">
         <div class="sidebar-heading" data-i18n="sidebar.thisPC">This PC</div>
         <div id="drives-list"></div>
       </div>
@@ -251,7 +251,7 @@
         <div class="sidebar-heading">WSL</div>
         <div id="wsl-list"></div>
       </div>
-      <div class="sidebar-section">
+      <div class="sidebar-section" id="libraries-sidebar-section">
         <div class="sidebar-heading" data-i18n="sidebar.libraries">Libraries</div>
         <div id="libraries-list"></div>
       </div>
@@ -645,6 +645,7 @@
 <script src="js/theme.js"></script>
 <script src="js/tabs.js"></script>
 <script src="js/sidebar.js"></script>
+<script src="js/sidebar-order.js"></script>
 <script src="js/shared-config.js"></script>
 <script src="js/config-sync.js"></script>
 <script src="js/network-locations.js"></script>

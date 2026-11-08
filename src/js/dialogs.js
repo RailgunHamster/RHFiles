@@ -340,6 +340,9 @@ function openSettings() {
       '<option value="system"' + (G.settings.iconMode==='system'?" selected":"") + '>' + t('settings.iconSystem') + '</option>' +
       '<option value="mixed"' + ((G.settings.iconMode||'mixed')==='mixed'?" selected":"") + '>' + t('settings.iconMixed') + '</option>' +
     '</select></div></div>' +
+    '<div class="settings-card" id="sidebar-order-card"><div class="settings-card-title">' + t('sidebar.customizeOrder') + '</div>' +
+      '<p class="settings-card-description">' + t('sidebar.orderHelp') + '</p><div id="sidebar-order-list"></div>' +
+      '<button type="button" class="dialog-btn" id="sidebar-order-reset" data-api-action="sidebar.order.reset">' + t('btn.resetDefault') + '</button></div>' +
     '<div class="settings-card"><div class="settings-card-title">' + t('settings.advancedCss') + '</div>' +
       '<p class="settings-card-description">' + t('settings.advancedCssHelp') + '</p>' +
     '<div id="custom-theme-section" class="settings-nested">' +
@@ -492,6 +495,8 @@ function openSettings() {
   const initialSection = localStorage.getItem('rhfiles-settings-section') || 'general';
   switchSettingsSection(initialSection, false);
   renderToolbarConfig();
+  renderSidebarOrderSettings();
+  RHFilesUI.listen(document.getElementById('sidebar-order-reset'),'click',()=>sidebarOrderAction('sidebar.order.reset'),undefined,'settings.sidebar.order.reset');
   renderShortcutConfig();
   updateThemeSettingsControls();
   refreshUpdateSettingsStatus();

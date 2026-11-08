@@ -64,6 +64,12 @@
   register('settings.close',object(),()=>{closeSettings();return {closed:true};});
   register('favorites.list',object(),()=>getPinnedFolders().map(item=>({...item})),'read');
   register('favorites.rename',object({path:string,name:{type:'string',minLength:1,maxLength:1024}},['path','name']),p=>renameFavoriteFolder(p.path,p.name),'write');
+  const sidebarGroup={type:'string',enum:SIDEBAR_GROUPS.map(([id])=>id)};
+  register('sidebar.order.get',object(),()=>sidebarOrderState(),'read');
+  register('sidebar.order.set',object({order:{type:'array',items:sidebarGroup,maxItems:SIDEBAR_GROUPS.length}},['order']),p=>setSidebarOrder(p.order),'write','Save whole sidebar groups in the supplied order; omitted groups are appended in default order. Duplicate and unknown IDs are rejected.');
+  register('sidebar.groups.move',object({id:sidebarGroup,target:sidebarGroup,after:boolean},['id','target']),p=>moveSidebarGroup(p.id,p.target,!!p.after),'write','Move a complete group before/after another group, preserving its children and navigation state.');
+  register('sidebar.order.reset',object(),()=>resetSidebarOrder(),'write');
+  register('sidebar.customize',object(),()=>showSidebarOrderSettings());
   register('configSync.status',object(),()=>desktopConfigSync.refresh(),'read');
   register('configSync.save',object({enabled:boolean,url:{type:'string',maxLength:8192},username:{type:'string',maxLength:8192},password:{type:'string',maxLength:8192},clearPassword:boolean,insecure:boolean},['enabled','url','username','insecure']),p=>desktopConfigSync.save(p),'write');
   register('configSync.run',object(),()=>desktopConfigSync.run(true),'external');

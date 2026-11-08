@@ -17,19 +17,22 @@ test('device-group UI persists removals, confirms local group deletion, and supp
     const request=await call(b,'request',{deviceName:'UI guest'});const approval=await call(a,'approve',{id,uri:request.uri,canInvite:true});await call(b,'join',{uri:approval.uri,confirmed:true});const peer=(await call(b,'state')).deviceId;
     await a.evaluate("lanService.mount(document.getElementById('lan-service-settings'))");
     await until(()=>a.evaluate("document.querySelector('.device-groups')?.textContent.includes('UI guest')"),'member displayed');
-    await a.evaluate("[...document.querySelectorAll('.dg-member')].find(n=>n.textContent.includes('UI guest')).querySelector('button').click()");
+    // Do not depend on button position: Rename is also a member action.
+    await a.click('[data-group-action="remove.'+id+'.'+peer+'"]');
     await until(()=>a.evaluate("!!document.querySelector('.app-confirm-overlay')"),'local removal confirmation');
-    await a.evaluate("document.querySelector('.app-confirm-overlay button:last-of-type').click()");
+    assert.match(await a.evaluate("document.querySelector('.app-confirm-overlay').textContent"),/仅在本机移除此设备/);
+    await a.click('.app-confirm-overlay button:last-of-type');
     await until(async()=>(await call(a,'state')).groups[0].members.find(m=>m.id===peer).blocked,'persistent removal');
     await call(a,'join',{uri:await call(b,'export',{id}).then(v=>v.uri),confirmed:true});
     await assert.rejects(call(a,'restore',{id,peer,confirmed:false}));
-    const profile=a.profileRoot;a.close();a=await launchApp({emulateFocus:true,desktopId:'group-ui-a',profileDirectory:profile});
+    const profile=a.profileRoot;await a.close();a=await launchApp({emulateFocus:true,desktopId:'group-ui-a',profileDirectory:profile});
     assert.equal((await call(a,'state')).groups[0].members.find(m=>m.id===peer).blocked,true);
     await a.evaluate("setLang('zh');openSettings();switchSettingsSection('lan');true");
     await until(()=>a.evaluate("document.querySelector('.device-groups')?.textContent.includes('UI guest')"),'blocked member after relaunch');
-    await a.evaluate("[...document.querySelectorAll('.dg-member')].find(n=>n.textContent.includes('UI guest')).querySelector('button').click()");
+    await a.click('[data-group-action="restore.'+id+'.'+peer+'"]');
     await until(()=>a.evaluate("!!document.querySelector('.app-confirm-overlay')"),'manual restore confirmation');
-    await a.evaluate("document.querySelector('.app-confirm-overlay button:last-of-type').click()");
+    assert.match(await a.evaluate("document.querySelector('.app-confirm-overlay').textContent"),/确认在本机恢复此设备/);
+    await a.click('.app-confirm-overlay button:last-of-type');
     await until(async()=>!(await call(a,'state')).groups[0].members.find(m=>m.id===peer).blocked,'manual restore');
     await a.screenshot('device-groups-local-restore');
     const other=await call(a,'create',{name:'Keep this group',deviceName:machineName});
@@ -48,10 +51,10 @@ test('device-group UI persists removals, confirms local group deletion, and supp
     assert.ok((await call(a,'state')).groups.some(g=>g.id===other));
     await a.screenshot('device-groups-forgotten');
     const retained=await call(b,'export',{id});assert.ok(retained.uri);
-    const forgottenProfile=a.profileRoot;a.close();a=await launchApp({emulateFocus:true,desktopId:'group-ui-a',profileDirectory:forgottenProfile});
+    const forgottenProfile=a.profileRoot;await a.close();a=await launchApp({emulateFocus:true,desktopId:'group-ui-a',profileDirectory:forgottenProfile});
     assert.equal((await call(a,'state')).groups.length,1);
     await assert.rejects(call(a,'join',{uri:retained.uri,confirmed:true}));
     const freshRequest=await call(a,'request',{deviceName:machineName});const freshApproval=await call(b,'approve',{id,uri:freshRequest.uri,canInvite:true});
     await call(a,'join',{uri:freshApproval.uri,confirmed:true});assert.ok((await call(a,'state')).groups.some(g=>g.id===id));
-  }finally{a.close();b.close();}
+  }finally{await Promise.all([a.close(),b.close()]);}
 });

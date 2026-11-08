@@ -1026,5 +1026,14 @@
   "archive.inputProtected": "A matching target is an input archive or volume. It cannot be replaced; choose Skip, Keep Both or Cancel.",
   "archive.typeConflict": "An extraction path has an incompatible file/folder type or passes through a link: {path}. Resolve this path before retrying; existing folders will not be replaced or deleted.",
   "archive.sourceConflict": "Cannot overwrite an input archive or volume: {path}. Choose Keep Both, Skip or a different destination.",
-  "recycle.title": "Recycle Bin"
+  "recycle.title": "Recycle Bin",
+  "sidebar.rhfilesDevices": "RHFiles devices",
+  "sidebar.networkLocations": "Network locations",
+  "sidebar.usbDevices": "USB devices · MTP",
+  "sidebar.customizeOrder": "Sidebar group order",
+  "sidebar.orderHelp": "Drag a group's grip in the sidebar to move the entire group, or use the arrows below. Changes are saved automatically.",
+  "sidebar.reorderHint": "Drag to reorder the whole group; click to configure. When focused, use Up / Down to move.",
+  "sidebar.reorderGroup": "Reorder {name}",
+  "sidebar.moveUp": "Move up",
+  "sidebar.moveDown": "Move down"
 }

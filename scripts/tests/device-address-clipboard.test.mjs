@@ -23,7 +23,7 @@ function fixture({zh=true,webClipboard=true}={}){
   });
   load(ctx,'device-groups-ui.js');load(ctx,'device-browser.js');
   load(ctx,'ops.js',['formatPathsForClipboard','copyPathsFromMenu','copyPathFromMenu','copySelectedPaths']);
-  load(ctx,'automation-desktop.js');
+  load(ctx,'sidebar-order.js');load(ctx,'automation-desktop.js');
   return {api,ctx,calls,notices,alerts,setState:value=>state=value,setStateReader:value=>stateReader=value,
     get clipboard(){return clipboard;},copy:paths=>ctx.copyPathsFromMenu(paths)};
 }

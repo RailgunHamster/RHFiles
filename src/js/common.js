@@ -299,6 +299,15 @@ Object.assign(_builtinEn, {
   'nav.loadingTitle': 'Opening folder...',
   'nav.folderLoadTimedOut': 'Folder loading timed out after 10 seconds',
   'nav.folderEmpty': 'This folder is empty',
+  'sidebar.rhfilesDevices': 'RHFiles devices',
+  'sidebar.networkLocations': 'Network locations',
+  'sidebar.usbDevices': 'USB devices · MTP',
+  'sidebar.customizeOrder': 'Sidebar group order',
+  'sidebar.orderHelp': 'Drag a group’s sidebar grip to move the entire group, or use the arrows below. Changes are saved automatically.',
+  'sidebar.reorderHint': 'Drag to reorder the whole group; click to configure. When focused, use Up / Down to move.',
+  'sidebar.reorderGroup': 'Reorder {name}',
+  'sidebar.moveUp': 'Move up',
+  'sidebar.moveDown': 'Move down',
   'nav.startupTimedOutDetail': 'RHFiles startup did not finish. Try again; diagnostic details were written to the application log.',
   'settings.historyRefreshing': 'Offline history is ready; refreshing from the selected update source...',
   'archive.actualConflicts': '{count} archive file(s) have the same name as existing destination files. Choose how to handle all matching files in this extraction.',
@@ -400,6 +409,7 @@ function applyI18n() {
   if (typeof updateSearchScopeUI === 'function') updateSearchScopeUI();
   if (typeof updateFavoriteButtons === 'function') updateFavoriteButtons();
   if (typeof renderPinnedFolders === 'function') renderPinnedFolders();
+  if (typeof refreshSidebarOrderLabels === 'function') refreshSidebarOrderLabels();
   if (typeof renderOperationCenter === 'function') renderOperationCenter();
   if (typeof renderTabs === 'function' && G?.tabs) renderTabs();
   if (typeof renderFiles === 'function' && typeof getTab === 'function' && getTab()) {

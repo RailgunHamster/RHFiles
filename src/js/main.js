@@ -49,6 +49,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     reportStartupIssue('language', error);
   }
   applyI18n();
+  initSidebarOrder();
   if (typeof initCommands === 'function') initCommands();
   if (typeof restorePreviewPane === 'function') restorePreviewPane();
   document.querySelectorAll(".layout-btn").forEach(b => b.classList.toggle("active", b.dataset.layout === G.layout));
