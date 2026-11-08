@@ -700,9 +700,10 @@ async function paste(isRight) {
   }
 }
 
-async function openFileHandler(path) {
+async function openFileHandler(path,file,isRight=G.lastActivePane==='right') {
   if(typeof isRecyclePath==='function'&&isRecyclePath(path)){showNotice(recycleText('restoreFirst'));return;}
   try {
+    if(typeof desktopMediaViewer!=='undefined'&&await desktopMediaViewer.open(path,file,isRight))return;
     await call("open_file", { path });
   } catch (e) {
     alert(t('alert.openFileFailed', { error: e }));
@@ -738,7 +739,7 @@ async function activateEntry(file, isRight, index) {
     return;
   }
   try {
-    await call("open_file", { path: file.path });
+    await openFileHandler(file.path,file,isRight);
     addRecentFile(file.path, file.name, false, file.extension);
   } catch (error) {}
 }

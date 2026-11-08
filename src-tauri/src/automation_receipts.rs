@@ -73,6 +73,7 @@ impl Store {
     }
     fn begin(&mut self, run: Run, native_action: &str) -> Result<Admission, String> {
         let valid = match native_action {
+            "file-viewer.close" => matches!(run.action.as_str(), "media.viewer.close" | "ui.invoke"),
             "player.close" => matches!(
                 run.action.as_str(),
                 "rhvideo.player.close" | "rhvideo.player.input" | "ui.invoke"
@@ -442,6 +443,15 @@ mod tests {
         let mut bad = run("bad", "bad");
         bad.completion_result = Some(json!({"forged":true}));
         assert!(s.begin(bad, "player.close").is_err());
+    }
+    #[test]
+    fn filesystem_viewer_close_is_receipted_without_admitting_other_media_actions() {
+        let mut store=Store::default();let mut request=run("file-viewer","file-viewer");request.action="media.viewer.close".into();
+        assert!(matches!(store.begin(request.clone(),"file-viewer.close").unwrap(),Admission::New));
+        store.finish_id("file-viewer",&Ok(json!({"closed":true})));
+        assert_eq!(store.lookup(&query("file-viewer")).unwrap()["result"]["closed"],true);
+        assert!(matches!(store.begin(request,"file-viewer.close").unwrap(),Admission::Existing(Ok(_))));
+        let mut invalid=run("not-close","not-close");invalid.action="media.viewer.next".into();assert!(store.begin(invalid,"file-viewer.close").is_err());
     }
     #[test]
     fn retention_pressure_refuses_new_actions_instead_of_forgetting_request_keys() {

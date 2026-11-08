@@ -1,0 +1,49 @@
+import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import path from 'node:path';import os from 'node:os';import {createHash} from 'node:crypto';import {spawnSync} from 'node:child_process';
+import {launchApp,until,sleep} from '../testing/app-session.mjs';import {cdpSession} from '../rhfiles-api.mjs';
+test('filesystem media viewer: real images, continuous input, native video, independent RHFiles group streaming and stale controls',{timeout:240000},async()=>{
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'rhfiles-file-viewer-')),ffmpeg=process.env.FFMPEG||path.resolve('src-tauri/thirdparty/ffmpeg.exe');let app,server,page;
+  function encode(args){const r=spawnSync(ffmpeg,['-hide_banner','-loglevel','error',...args],{windowsHide:true,encoding:'utf8',timeout:30000});assert.equal(r.status,0,r.stderr);}
+  for(const [name,color]of [['a.png','teal'],['b.png','cornflowerblue'],['c.png','coral']])encode(['-f','lavfi','-i','color=c='+color+':s=400x650','-frames:v','1',path.join(directory,name)]);
+  for(const ext of ['mp4','mkv'])encode(['-f','lavfi','-i','testsrc2=size=320x180:rate=15','-f','lavfi','-i','sine=frequency=600:sample_rate=44100','-t','120','-c:v','mpeg4','-q:v','6','-c:a','aac',path.join(directory,'sample.'+ext)]);
+  const hash=file=>createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+  const sourceHashes=new Map(fs.readdirSync(directory).map(name=>[name,hash(path.join(directory,name))]));
+  try{
+    app=await launchApp();const main=(name,args={})=>app.evaluate(`RHFilesAPI.invoke(${JSON.stringify(name)},${JSON.stringify(args)})`);
+    await app.evaluate("G.settings.language='zh';G.settings.autoUpdateEnabled=false;G.previewOn=false;true");await main('navigation.open',{path:directory});
+    await main('media.preferences.set',{imageOpenWith:'rhfiles',videoOpenWith:'rhfiles',imageBrowseMode:'paged'});
+    await app.evaluate(`openFileHandler(${JSON.stringify(path.join(directory,'b.png'))})`);
+    const target=await until(async()=>(await(await fetch('http://127.0.0.1:'+app.port+'/json/list')).json()).find(row=>new URL(row.url).pathname==='/file-viewer.html'),'owned filesystem viewer');page=await cdpSession(target,30000);
+    const call=(name,args={})=>page.evaluate(`RHFilesAPI.invoke(${JSON.stringify(name)},${JSON.stringify(args)})`);
+    await until(()=>page.evaluate('RHFilesAPI.snapshot().state.application?.ready'),'viewer action registry');await until(()=>page.evaluate('[...document.querySelectorAll(".image-page img")].every(i=>i.naturalWidth>0)'),'real local images');
+    let state=await call('media.viewer.state');assert.equal(state.entries.length,3);assert.equal(state.entries[state.index].name,'b.png');assert.equal(state.mode,'paged');
+    await call('media.viewer.mode.set',{mode:'continuous'});await until(async()=>(await main('media.preferences.get')).imageBrowseMode==='continuous','viewer preference saved in main settings');
+    const box=await page.evaluate('(()=>{const r=document.getElementById("viewport").getBoundingClientRect();return {x:r.x+700,y:r.y+r.height/2};})()');
+    await page.send('Input.dispatchMouseEvent',{type:'mousePressed',...box,button:'left',buttons:1,clickCount:1});await page.send('Input.dispatchMouseEvent',{type:'mouseMoved',x:box.x-75,y:box.y,button:'left',buttons:1});await page.send('Input.dispatchMouseEvent',{type:'mouseReleased',x:box.x-75,y:box.y,button:'left',buttons:0,clickCount:1});
+    state=await call('media.viewer.state');assert.ok(state.position>1&&state.position<2);await sleep(500);assert.equal((await call('media.viewer.state')).position,state.position);assert.ok(await page.evaluate('document.querySelectorAll(".image-page").length<=3'));
+    await call('media.viewer.zoomIn');assert.ok((await call('media.viewer.state')).zoom>1);await call('media.viewer.fit');await call('media.viewer.rotate');assert.equal((await call('media.viewer.state')).angle,90);await call('media.viewer.next');assert.equal((await call('media.viewer.state')).path,path.join(directory,'c.png'));
+    fs.writeFileSync(path.join(app.artifactDir,'file-viewer-images.png'),Buffer.from((await page.send('Page.captureScreenshot',{format:'png'})).data,'base64'));
+    await main('media.viewer.open',{path:path.join(directory,'sample.mkv')});await until(async()=>(await call('media.viewer.state')).kind==='video','filesystem video mode');
+    const ready=()=>until(async()=>{const s=await call('media.viewer.state');return s.video?.renderedFrames>3&&s.video.positionMs>500&&s;},'native filesystem video frames',45000);
+    state=await ready();assert.equal(state.video.engine,'libVLC');assert.equal(state.video.videoWidth,320);assert.equal(state.video.videoHeight,180);assert.ok(state.video.decodedAudioBlocks>0);assert.ok(!state.video.presentationError);
+    const oldScope={generation:state.generation,selection:state.selection,expectedInput:state.video.inputId};
+    await call('media.viewer.video.control',{command:'pause'});await until(async()=>(await call('media.viewer.state')).video?.state===4,'native pause');await call('media.viewer.video.control',{command:'seek',value:20000});await until(async()=>Math.abs((await call('media.viewer.state')).video.positionMs-20000)<1800,'native paused seek',30000);await call('media.viewer.video.control',{command:'volume',value:0});await call('media.viewer.video.control',{command:'rate',value:1.5});await call('media.viewer.video.control',{command:'resume'});await until(async()=>(await call('media.viewer.state')).video?.positionMs>21000,'native resume');
+    await call('media.viewer.fullscreen');assert.equal(await page.evaluate('window.__TAURI__.window.getCurrentWindow().isFullscreen()'),true);await call('media.viewer.fullscreen');
+    await call('media.viewer.next');await ready();await assert.rejects(()=>page.evaluate(`window.__TAURI__.core.invoke('file_viewer_request',{action:'video.control',args:${JSON.stringify({...oldScope,command:'pause'})}})`),/改变|切换/);
+    {
+      const frame=await app.readFileVideoFrame(),bytes=fs.readFileSync(frame.path);let lit=0,colored=0;for(let i=54;i<bytes.length;i+=4){const [b,g,r]=bytes.subarray(i,i+3);if(Math.max(b,g,r)>40)lit++;if(Math.max(b,g,r)-Math.min(b,g,r)>35)colored++;}assert.ok(lit>frame.width*frame.height*.1&&colored>frame.width*frame.height*.02,'actual native video pixels are visible');fs.copyFileSync(frame.path,path.join(app.artifactDir,'file-viewer-native-video.bmp'));
+    }
+    server=await launchApp({desktopId:'file-viewer-service-owned'});const serverCall=(command,args={})=>server.evaluate(`call(${JSON.stringify(command)},${JSON.stringify(args)})`);
+    const service=await serverCall('lan_service_start',{config:{port:0,shares:[{name:'Media',path:directory}]}});const group=await serverCall('device_groups',{command:'create',args:{name:'Media viewer QA',deviceName:'Viewer QA server'}});await serverCall('device_groups',{command:'configure',args:{id:group,enabled:true,permissions:{write:false,delete:false}}});const peer=(await serverCall('device_groups',{command:'state',args:{}})).deviceId;
+    const request=await app.evaluate("call('device_groups',{command:'request',args:{deviceName:'Viewer QA client'}})"),approval=await serverCall('device_groups',{command:'approve',args:{id:group,uri:request.uri,canInvite:false}});await app.evaluate(`call('device_groups',{command:'join',args:{uri:${JSON.stringify(approval.uri)},confirmed:true}})`);
+    const connected=await app.evaluate(`call('device_groups',{command:'connect',args:${JSON.stringify({id:group,peer,endpoint:'https://127.0.0.1:'+service.port})}})`);assert.equal(connected.outcome,'connected');
+    const remote='rhfiles-device://'+group+'/'+peer+'/Media/';
+    await app.evaluate(`call('device_fs',{action:'list',args:{path:${JSON.stringify(remote)}}})`);
+    await main('navigation.open',{path:remote});await main('media.viewer.open',{path:remote+'b.png'});await until(async()=>(await call('media.viewer.state')).path===remote+'b.png','remote group image selected');await until(()=>page.evaluate('[...document.querySelectorAll(".image-page img")].every(i=>i.naturalWidth>0)'),'streaming group images');
+    assert.ok(await page.evaluate('[...document.querySelectorAll(".image-page img")].every(i=>i.src.startsWith("http://127.0.0.1:"))'));
+    await main('media.viewer.open',{path:remote+'sample.mp4'});state=await ready();assert.equal(state.path,remote+'sample.mp4');assert.equal(state.video.engine,'libVLC');
+    for(const [name,digest]of sourceHashes)assert.equal(hash(path.join(directory,name)),digest);
+    const closed=spawnSync(process.execPath,['scripts/rhfiles-api.mjs','--port',String(app.port),'--window','window-file-viewer','--wait','run','media.viewer.close','{}'],{encoding:'utf8',windowsHide:true,timeout:45000});fs.writeFileSync(path.join(app.artifactDir,'file-viewer-close.txt'),closed.stdout+'\n'+closed.stderr);assert.equal(closed.status,0,closed.stdout+'\n'+closed.stderr);assert.match(closed.stdout,/closed|succeeded/);
+    fs.writeFileSync(path.join(app.artifactDir,'file-viewer-summary.json'),JSON.stringify({pass:true,checks:'real local images, current directory queue, free continuous trusted pointer, mode persistence, bounded pages, zoom, rotation, native MKV/MP4 video/audio frames, pause/seek/resume/rate/volume/fullscreen, stale controls refused, actual native pixels, RHFiles group images and streaming video, source hashes unchanged, CLI close receipt survives its window'},null,2));
+    console.log('PASS filesystem media viewer integration: '+app.artifactDir);
+  }finally{page?.close();if(server){await server.evaluate("call('lan_service_stop',{})").catch(()=>{});await server.close();}if(app)await app.close();assert.equal(path.dirname(directory),os.tmpdir());assert.ok(path.basename(directory).startsWith('rhfiles-file-viewer-'));fs.rmSync(directory,{recursive:true,force:true});}
+});

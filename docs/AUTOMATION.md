@@ -100,6 +100,10 @@ Android 文本查看提供 `preview.text.read {path,maxBytes?}`（默认 256 KiB
 
 Android 图片通过 `gallery.mode.set {mode:"paged"|"continuous"}` 切换逐张翻页与自由连续横向滚动，也可在查看器和浏览与显示设置中修改。默认 `paged`；`continuous` 的 `gallery.state.position` 可以是小数，松手后不吸附。`gallery.control {command}` 支持 `previous`、`next`、`zoomIn`、`zoomOut`、`fit`、`rotate`。模式会进入完整配置备份。
 
+Windows 的 `media.preferences.get/set` 分别读取／修改 `imageOpenWith`、`videoOpenWith`（`rhfiles` 或 `system`）和 `imageBrowseMode`（`paged` 或 `continuous`）；设置 → 预览使用相同接口，默认使用内置查看器和逐张翻页。`media.viewer.open {path,pane?}` 显式打开内置查看器，按指定窗格当前排序和筛选后的同类文件组成队列。本地、UNC／SMB 和稳定身份的 RHFiles 设备路径均可使用；图片和设备视频按需读取，不创建远端工作副本。
+
+独立查看器使用 `--window window-file-viewer`：`media.viewer.state` 返回当前文件、队列、图片小数位置、缩放与视频内核状态；`media.viewer.previous/next`、`zoomIn/zoomOut/fit/rotate`、`mode.set {mode}`、`fullscreen`、`systemOpen`、`close` 对应实际控件。`media.viewer.video.control {command,value?}` 支持 `pause/resume/seek/volume/rate`，其中 seek 为毫秒、volume 为 0–100；视频切换后旧输入操作会被拒绝。查看器关闭沿用进程内完成回执及本机查询传输，可通过存活的主窗口查询结果，不会因查看器已关闭而重复执行。
+
 远程单个 APK 的 `files.cacheApk {path}` 立即返回 `jobId`，通过 `tasks.list` 读取缓存进度与最终状态。它使用应用私有工作缓存，最多 2 GiB，校验完整性与 APK 格式后才提供输出；缓存按七天有效期及总预算清理。仅在任务 `completed` 后调用 `files.installCachedApk {jobId}` 打开系统安装确认，缓存失效或任务失败会明确报错。正常点击远程 APK 使用相同后台缓存路径，留在前台时自动交接系统安装器；离开界面后可从已完成任务点击安装。接口不绕过 Android 的未知来源授权或安装确认。
 
 回收站也是普通标签页中的虚拟位置 `recycle://`：支持地址栏、标签页复制、前进/后退，以及左右窗格。`recycle.open` 的 `pane` 指定窗格，`newTab:true` 新建标签页；筛选、排序和选择分别保存在每个标签页。通用的导航、标签页和选择接口也适用于这个位置。项目的 `path` 为只读标识 `recycle://<id>`，不能用于文件系统读写、预览、终端、粘贴或拖拽操作；需先恢复到真实路径。

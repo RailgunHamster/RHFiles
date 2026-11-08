@@ -80,7 +80,7 @@ try{
   check(streamBytes<256*1024,'bounded HTTP preview closes the stream well before the eight MB source finishes');
   const cancellation=native('text.preview',{path:`remote://${streamId}/slow.txt`,requestId:'owned-cancellation-049',maxBytes:262144}).then(()=>({unexpected:true}),error=>({error:error.message}));
   await until(()=>slowStarted,'real stalled HTTP read');const cancelAt=Date.now();await native('text.preview.cancel',{requestId:'owned-cancellation-049'});const cancelled=await cancellation;
-  check(cancelled.error&&Date.now()-cancelAt<4000,'cancel reaches a separate native executor and interrupts the pending network read');
+  check(cancelled.error&&Date.now()-cancelAt<4000,'cancel interrupts the pending network read: '+JSON.stringify({elapsedMs:Date.now()-cancelAt,...cancelled}));
   const dav=locations[0],entry=name=>dav.entries.find(e=>e.name===name);
   await call('navigation.open',{path:dav.path});await call('files.open',{path:entry('说明.md').path});
   await until(()=>view('(w,d)=>!!d.querySelector(".text-preview-markdown h1")'),'real Tauri worker Markdown render');

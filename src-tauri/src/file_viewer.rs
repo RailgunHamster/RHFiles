@@ -1,0 +1,76 @@
+//! Filesystem media viewer. No RHVideo database/session is involved.
+use serde::{Deserialize,Serialize};
+use serde_json::{json,Value};
+use std::sync::{Mutex,atomic::{AtomicU64,Ordering}};
+use tauri::{AppHandle,Emitter,Manager,WindowEvent};
+use rhfiles_service::connection::DevicePath;
+const LABEL:&str="window-file-viewer";
+static SESSION:Mutex<Option<Session>>=Mutex::new(None);
+static SEQUENCE:AtomicU64=AtomicU64::new(0);
+static WINDOW:AtomicU64=AtomicU64::new(0);
+static OPEN:tokio::sync::Mutex<()>=tokio::sync::Mutex::const_new(());
+#[derive(Clone,Serialize,Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Entry {path:String,name:String}
+#[derive(Clone,Serialize)]
+#[serde(rename_all="camelCase")]
+struct Session {generation:u64,selection:u64,index:usize,kind:String,mode:String,entries:Vec<Entry>}
+fn next()->Result<u64,String>{let n=SEQUENCE.fetch_add(1,Ordering::SeqCst)+1;if n>9_007_199_254_740_991{return Err("查看器身份已耗尽，请重启应用".into())}Ok(n)}
+fn kind(path:&str)->Option<&'static str>{
+    let ext=path.rsplit('.').next()?.to_ascii_lowercase();
+    if ["png","jpg","jpeg","webp","gif","bmp","ico","tif","tiff","avif","svg"].contains(&ext.as_str()){Some("image")}
+    else if ["mp4","mkv","mov","avi","webm","m4v","wmv","flv","mpeg","mpg","ts","mts","m2ts","3gp","ogv"].contains(&ext.as_str()){Some("video")}else{None}
+}
+fn validate_entry(entry:&Entry)->Result<(),String>{
+    if entry.path.is_empty()||entry.path.len()>108000||entry.name.len()>4096||entry.path.contains('\0'){return Err("媒体文件路径无效".into())}
+    if entry.path.starts_with("rhfiles-device:"){DevicePath::parse(&entry.path)?;}else if !std::path::Path::new(&entry.path).is_absolute(){return Err("媒体文件必须使用完整文件路径".into())}
+    if kind(&entry.path).is_none(){return Err("此文件不支持内置图片／视频查看".into())}Ok(())
+}
+fn current(args:&Value)->Result<Session,String>{let state=SESSION.lock().map_err(|_|"查看器状态不可用")?;let s=state.as_ref().ok_or("查看器已关闭")?;if args["generation"].as_u64()!=Some(s.generation)||args.get("selection").is_some_and(|v|v.as_u64()!=Some(s.selection)){return Err("查看内容已改变，旧操作未执行".into())}Ok(s.clone())}
+pub(crate) fn is_current(generation:u64,selection:u64)->bool{SESSION.lock().ok().is_some_and(|s|s.as_ref().is_some_and(|s|s.generation==generation&&s.selection==selection))}
+fn stop_video(){#[cfg(windows)]crate::rhvideo_player::file_player::stop();}
+#[tauri::command]
+pub async fn file_viewer_request(app:AppHandle,action:String,mut args:Value)->Result<Value,String>{
+    if let Some(run)=args.as_object_mut().and_then(|v|v.remove("_automationRun")){
+        if action!="close"{return Err("此操作不接受关闭回执".into())}
+        let id=run["id"].as_str().unwrap_or_default().to_owned();
+        if let Some(previous)=crate::automation_receipts::begin(run,"file-viewer.close")?{return previous;}
+        let completion=crate::automation_receipts::Completion::new(id);let result=dispatch(app,action,args).await;completion.finish(&result);return result;
+    }
+    dispatch(app,action,args).await
+}
+async fn dispatch(app:AppHandle,action:String,args:Value)->Result<Value,String>{
+    match action.as_str(){
+        "open"=>{
+            let entries:Vec<Entry>=serde_json::from_value(args["entries"].clone()).map_err(|_|"媒体列表无效")?;
+            if entries.is_empty()||entries.len()>5000{return Err("媒体列表需包含 1–5000 个文件".into())}
+            for entry in &entries{validate_entry(entry)?;}
+            let index=args["index"].as_u64().filter(|v|(*v as usize)<entries.len()).ok_or("媒体索引无效")? as usize;
+            let media_kind=kind(&entries[index].path).unwrap();if entries.iter().any(|e|kind(&e.path)!=Some(media_kind)){return Err("媒体列表不能混合图片与视频".into())}
+            let mode=args["mode"].as_str().unwrap_or("paged");if !["paged","continuous"].contains(&mode){return Err("图片浏览模式无效".into())}
+            let _open=OPEN.lock().await;stop_video();
+            let generation=next()?;let state=Session{generation,selection:next()?,index,kind:media_kind.into(),mode:mode.into(),entries};
+            *SESSION.lock().map_err(|_|"查看器状态不可用")?=Some(state.clone());
+            let window=if let Some(window)=app.get_webview_window(LABEL){window}else{
+                let window=crate::rhvideo::client_window(app.clone(),LABEL,"file-viewer.html","RHFiles · 媒体查看器",(1120.,780.),(500.,360.)).await?;
+                let epoch=WINDOW.fetch_add(1,Ordering::SeqCst)+1;
+                window.on_window_event(move|event|if matches!(event,WindowEvent::Destroyed)&&WINDOW.compare_exchange(epoch,epoch+1,Ordering::SeqCst,Ordering::SeqCst).is_ok(){if let Ok(mut s)=SESSION.lock(){*s=None;}stop_video();});window
+            };
+            window.set_title(&format!("{} · RHFiles",state.entries[state.index].name)).map_err(|e|e.to_string())?;window.emit("file-viewer-changed",json!({"generation":generation})).map_err(|e|e.to_string())?;window.show().map_err(|e|e.to_string())?;window.set_focus().map_err(|e|e.to_string())?;Ok(json!(state))
+        }
+        "state"=>Ok(SESSION.lock().map_err(|_|"查看器状态不可用")?.as_ref().map(|s|json!(s)).unwrap_or(json!({"opened":false}))),
+        "select"=>{let mut s=current(&args)?;let prior=s.selection;let index=args["index"].as_u64().filter(|v|(*v as usize)<s.entries.len()).ok_or("媒体索引无效")? as usize;s.index=index;s.selection=next()?;{let mut slot=SESSION.lock().map_err(|_|"查看器状态不可用")?;if slot.as_ref().map(|v|v.selection)!=Some(prior){return Err("查看内容已改变".into())}*slot=Some(s.clone());}stop_video();if let Some(window)=app.get_webview_window(LABEL){window.set_title(&format!("{} · RHFiles",s.entries[s.index].name)).map_err(|e|e.to_string())?;}Ok(json!(s))}
+        "mode"=>{let mut s=current(&args)?;let mode=args["mode"].as_str().filter(|v|["paged","continuous"].contains(v)).ok_or("图片浏览模式无效")?;s.mode=mode.into();{let mut slot=SESSION.lock().map_err(|_|"查看器状态不可用")?;if !slot.as_ref().is_some_and(|v|v.generation==s.generation&&v.selection==s.selection){return Err("查看内容已改变".into())}*slot=Some(s.clone());}app.emit("file-viewer-preference",json!({"imageBrowseMode":mode})).map_err(|e|e.to_string())?;Ok(json!(s))}
+        "close"=>{current(&args)?;if let Some(w)=app.get_webview_window(LABEL){w.close().map_err(|e|e.to_string())?;}Ok(json!({"closed":true}))}
+        "video.open"=>{
+            let state=current(&args)?;if state.kind!="video"{return Err("当前不是视频".into())}let path=&state.entries[state.index].path;
+            let source=if path.starts_with("rhfiles-device:"){crate::device_fs::device_fs("resource".into(),json!({"path":path})).await?["url"].as_str().ok_or("远程媒体地址缺失")?.to_string()}else{url::Url::from_file_path(std::path::Path::new(path)).map_err(|_|"视频路径无效")?.to_string()};
+            if !is_current(state.generation,state.selection){return Err("查看内容已改变".into())}
+            #[cfg(windows)]return crate::rhvideo_player::file_player::open(app,source,state.entries[state.index].name.clone(),state.generation,state.selection).await;
+            #[cfg(not(windows))]{let _=source;Err("此平台暂未提供内置视频内核".into())}
+        }
+        "video.state"|"video.control"|"video.bounds"=>{current(&args)?;#[cfg(windows)]return crate::rhvideo_player::file_player::request(app,&action,args).await;#[cfg(not(windows))]Err("此平台暂未提供内置视频内核".into())}
+        _=>Err("未知媒体查看器操作".into())
+    }
+}
+#[cfg(test)]mod tests{use super::*;#[test]fn only_media_and_absolute_or_trusted_device_paths_are_accepted(){assert_eq!(kind("D:\\a.MKV"),Some("video"));assert_eq!(kind("D:\\a.json"),None);for p in ["relative.jpg","https://example.com/a.mp4","javascript:a.png"]{assert!(validate_entry(&Entry{path:p.into(),name:"a".into()}).is_err());}}}

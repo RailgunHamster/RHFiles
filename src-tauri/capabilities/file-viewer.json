@@ -1,0 +1,6 @@
+{
+  "identifier": "file-viewer-window",
+  "description": "Fullscreen controls for the built-in filesystem media viewer",
+  "windows": ["window-file-viewer"],
+  "permissions": ["core:window:allow-set-fullscreen"]
+}

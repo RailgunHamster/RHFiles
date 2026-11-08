@@ -29,6 +29,7 @@ pub mod windows_device_access;
 mod profile;
 mod recycle;
 mod rhvideo;
+mod file_viewer;
 mod rhvideo_rotation;
 #[cfg(windows)]
 mod rhvideo_clock;
@@ -214,6 +215,7 @@ pub fn run() {
             automation_receipts::automation_receipt_transport,
             rhvideo::rhvideo_open,
             rhvideo::rhvideo_request,
+            file_viewer::file_viewer_request,
             lan_service::lan_service_state,
             lan_service::lan_service_webdav_compatibility,
             lan_service::lan_service_webdav,

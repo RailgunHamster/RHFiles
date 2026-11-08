@@ -46,6 +46,8 @@ jobs:
         run: npx playwright-core install chromium
       - name: Android remote preview, cache workflow and image browsing UI (native I/O mocked)
         run: npm run test:android-preview
+      - name: Filesystem media viewer interactions (native decoding exercised below)
+        run: node scripts/testing/file-viewer-browser-check.mjs
       - name: Verify business tests catch deliberately broken behavior
         run: npm run test:mutations
       - name: Real filesystem, recovery, archive and persistence tests

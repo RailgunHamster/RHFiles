@@ -27,6 +27,8 @@ mod surface_lifecycle;
 mod grid_host;
 #[path="rhvideo_shared_media.rs"]
 pub(crate) mod shared_media;
+#[path="file_player.rs"]
+pub(crate) mod file_player;
 
 const LABEL: &str = "window-rhvideo-player";
 const CONTROLS_HEIGHT:f64=196.;
@@ -378,6 +380,7 @@ unsafe extern "system" fn surface_proc(
                 }
             }
             shared_media::paint(hwnd);
+            file_player::paint(hwnd);
             return LRESULT(0);
         }
         DefWindowProcW(hwnd, message, wparam, lparam)

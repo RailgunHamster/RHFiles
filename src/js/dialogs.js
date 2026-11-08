@@ -384,7 +384,7 @@ function openSettings() {
     '<div id="toolbar-config-list" class="settings-config-list toolbar-config-list"></div>' +
     '<button class="dialog-btn" onclick="resetToolbarConfig()">' + t('btn.resetDefault') + '</button></div>';
 
-  const preview = '<div class="settings-card">' +
+  const preview = (typeof desktopMediaViewer!=='undefined'&&/Win/i.test(navigator.platform)?desktopMediaViewer.settingsHtml():'')+'<div class="settings-card">' +
     '<div class="settings-row"><label for="settings-preview-default">' + t('settings.previewDefaultOpen') + '</label>' +
     '<input id="settings-preview-default" type="checkbox" onchange="setPreviewDefaultOpen(this.checked)"' + (G.settings.previewDefaultOpen!==false?' checked':'') + '></div>' +
     '<div class="settings-row"><label for="settings-preview-volume">' + t('settings.previewVolume') + '</label>' +
@@ -483,6 +483,7 @@ function openSettings() {
     settingsPage('sync', 'settings.categorySync', 'settings.categorySyncDesc', '<div id="desktop-config-sync"></div>');
   desktopConfigSync.mount(document.getElementById('desktop-config-sync'));
   shellDefaults.mount(document.getElementById('shell-default-settings'));
+  if(typeof desktopMediaViewer!=='undefined')desktopMediaViewer.bind();
   dlg.style.display = "flex";
   lanService.mount(document.getElementById('lan-service-settings'));
   if (IS_MAC && typeof configureMacSettings === 'function') configureMacSettings();
