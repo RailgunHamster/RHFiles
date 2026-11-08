@@ -13,7 +13,12 @@ const [serial,apk,python,receiptFile]=process.argv.slice(2);
 if(!/^emulator-\d+$/.test(serial||'')||!apk||!python||!receiptFile)throw Error('Usage: android-preview-native-check.mjs emulator-N FORMAL.apk FIXTURE-python.exe OWNED-EMULATOR.json (app must already be foreground with ADB automation enabled)');
 const receipt=JSON.parse(fs.readFileSync(receiptFile));
 const manifest=JSON.parse(fs.readFileSync('android/src-tauri/tauri.conf.json'));
-assert.equal(receipt.serial,serial);assert.equal(receipt.readOnly,true);
+assert.equal(receipt.serial,serial);
+if(receipt.readOnly!==true){
+  assert.equal(receipt.owned,true,'Only a freshly created task-owned AVD may be writable');
+  const avd=fs.realpathSync(receipt.avdDirectory),owned=fs.realpathSync('test-artifacts')+path.sep;
+  assert.ok(avd.toLowerCase().startsWith(owned.toLowerCase()));assert.equal(path.basename(avd),receipt.avd+'.avd');
+}
 const adbExe=path.join(process.env.ANDROID_HOME,'platform-tools','adb.exe');
 const adb=(...args)=>{const r=spawnSync(adbExe,['-s',serial,...args],{encoding:'utf8',windowsHide:true,timeout:120000});if(r.status!==0)throw Error(r.stderr||r.stdout||String(r.error));return r.stdout.trim();};
 assert.equal(adb('shell','getprop','ro.kernel.qemu'),'1');assert.equal(adb('emu','avd','name').split('\n')[0].trim(),receipt.avd);

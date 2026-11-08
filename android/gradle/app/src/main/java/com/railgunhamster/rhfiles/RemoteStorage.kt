@@ -402,7 +402,7 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
             require(start==position&&end>=start&&end<size){"服务器媒体偏移不一致"}
             require(response.header("Content-Encoding").let{it==null||it.equals("identity",true)}){"服务器返回了不支持的媒体编码"};size
           }else{require(position==0L){"此服务器不支持拖动媒体进度（HTTP Range）"};response.body!!.contentLength()}
-          MediaInput(object:FilterInputStream(response.body!!.byteStream()){override fun close(){ReadHttp.cancel(response);try{super.close()}finally{response.close()}}},total)
+          MediaInput(ReadHttp.stream(response),total)
         }catch(error:Exception){response.close();throw error}
       }
     }

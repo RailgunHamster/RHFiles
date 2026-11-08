@@ -21,6 +21,17 @@ import java.util.concurrent.TimeUnit
 @RunWith(RobolectricTestRunner::class)
 @Config(manifest=Config.NONE,sdk=[28])
 class RemoteStorageTest {
+  @Test fun closingAReadOnlyHttpStreamInterruptsItsPendingSocketRead(){
+    MockWebServer().use{server->
+      server.start();server.enqueue(MockResponse().setBody("x".repeat(64)).setHeader("Content-Length",1024*1024))
+      val store=RemoteStorage(context){JSONObject().put("type","webdav").put("url",server.url("/dav/").toString())}
+      val stream=store.mediaInput("remote://test/slow.txt").stream
+      val started=java.util.concurrent.CountDownLatch(1)
+      val reader=Thread{try{val buffer=ByteArray(8192);stream.read(buffer);started.countDown();stream.read(buffer)}catch(_:java.io.IOException){}finally{stream.close()}}.apply{isDaemon=true;start()}
+      assertTrue("First bytes arrived",started.await(2,TimeUnit.SECONDS));val start=System.nanoTime();stream.close();reader.join(2000)
+      assertFalse("Close interrupts the read instead of waiting ten seconds",reader.isAlive);assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-start)<2000)
+    }
+  }
   private val context get()=RuntimeEnvironment.getApplication()
   private fun xml(vararg names:String)= """<?xml version="1.0"?><d:multistatus xmlns:d="DAV:">${names.joinToString(""){"<d:response><d:href>/dav/$it</d:href><d:propstat><d:prop><d:resourcetype/><d:getcontentlength>5</d:getcontentlength></d:prop></d:propstat></d:response>"}}</d:multistatus>"""
   @Test fun webdavUsesEncodedNamesAndAuthorizationHeader() {
