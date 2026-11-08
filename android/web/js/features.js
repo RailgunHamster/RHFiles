@@ -117,6 +117,7 @@ const androidFeatures = (() => {
     const valid=()=>generation===toolGeneration && app.state.route.tool===tool;
     if(tool==='tasks'){await pollJobs();return;}
     if(tool==='nearby'){androidNearby.render(node);return;}
+    if(tool==='history'){androidHistory.render(node,app);return;}
     if(tool==='remote') {
       const connections=await api.native('connections');if(!valid())return;
       node.replaceChildren(button('添加网络位置',()=>addRemote(),'primary'));notice(node,'SMB 只填主机名即可浏览该主机的共享文件夹；共享名可留空。添加为常用项后可从首页收藏夹或侧栏进入。密码由 Android Keystore 加密保存。');

@@ -10,6 +10,10 @@ const androidAutomation=(()=>{
     provideReceipts(actions);
     const register=(name,params,handler,risk='ui',description=name)=>actions.register(name,handler,{params,risk,description});
     register('updates.history.state',apiSchema(),()=>androidUpdates.historyState(),'read');
+    register('history.list',apiSchema(),()=>({entries:androidHistory.list(),limit:androidHistoryModel.limit}),'read','Read device-local visited locations, including network and device-group folders');
+    register('history.open',apiSchema({id:{type:'string',minLength:1,maxLength:32768}},['id']),p=>androidHistory.open(p.id,app));
+    register('history.remove',apiSchema({id:{type:'string',minLength:1,maxLength:32768}},['id']),p=>{androidHistory.remove(p.id);return {removed:true};});
+    register('history.clear',apiSchema(),()=>androidHistory.clear());
     register('updates.history.page.set',apiSchema({page:{type:'integer',minimum:1,maximum:100000}},['page']),p=>androidUpdates.setHistoryPage(p.page));
     deviceGroupView.register(actions,(command,args)=>api.native('groups.'+command,args),true);
     register('devices.discover',apiSchema(),()=>app.refreshGroupDevices(),'external','Explicitly refresh trusted group service records and visible storage locations; bounded to 30 seconds / 32 members, never changes permissions');

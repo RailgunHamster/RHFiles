@@ -10,6 +10,14 @@
     }
     return {path:entry.path,name:entry.name,kind:entry.kind,queue,queueTruncated:queue.length<all.length};
   }
-  function swipe(dx,dy,width,velocity){return Math.abs(dx)>Math.abs(dy)*1.25&&(Math.abs(dx)>=width*.2||(Math.abs(dx)>20&&Math.abs(velocity)>.45))?(dx<0?1:-1):0;}
-  return {playback,swipe};
+  function swipe(dx,dy,width,velocity){
+    const distance=Math.abs(dx),threshold=Math.max(24,Math.min(48,width*.08));
+    const flick=distance>=16&&dx*velocity>0&&Math.abs(velocity)>=.3;
+    return distance>Math.abs(dy)*1.25&&(distance>=threshold||flick)?(dx<0?1:-1):0;
+  }
+  function swipeVelocity(samples,position,now){
+    const start=samples.find(sample=>now-sample[1]<=100&&now>sample[1]);
+    return start?(position-start[0])/(now-start[1]):0;
+  }
+  return {playback,swipe,swipeVelocity};
 });

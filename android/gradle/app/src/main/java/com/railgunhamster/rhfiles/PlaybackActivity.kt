@@ -68,6 +68,7 @@ class PlaybackActivity:AppCompatActivity() {
     }
   }
   private lateinit var playerView:PlayerView
+  private var mediaPageTouch:MediaPageTouch?=null
   private val selectionMemory by lazy {ViewModelProvider(this,object:ViewModelProvider.Factory{
     @Suppress("UNCHECKED_CAST") override fun <T:ViewModel> create(modelClass:Class<T>):T {require(modelClass==PlaybackSelectionMemory::class.java);return PlaybackSelectionMemory() as T}
   })[PlaybackSelectionMemory::class.java]}
@@ -169,9 +170,25 @@ class PlaybackActivity:AppCompatActivity() {
     }
     failure=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER;setPadding(dp(24),dp(24),dp(24),dp(24));setBackgroundColor(0xEE111318.toInt());visibility=View.GONE}
     root.addView(failure,FrameLayout.LayoutParams(-1,-1));setContentView(root)
+    val pageHint=TextView(this).apply{textSize=16f;setTextColor(Color.WHITE);setPadding(dp(20),dp(12),dp(20),dp(12));visibility=View.GONE;background=GradientDrawable().apply{setColor(0xCC151820.toInt());cornerRadius=dp(12).toFloat()}}
+    root.addView(pageHint,FrameLayout.LayoutParams(-2,-2,Gravity.CENTER))
+    mediaPageTouch=MediaPageTouch(
+      identity={player?.let{it to rhInputId}},
+      preview={direction->pageHint.visibility=if(direction==null)View.GONE else View.VISIBLE;pageHint.text=if(direction==1)"下一个 →"else"← 上一个"},
+      page={direction->
+        val engine=player;val w=rhWindow
+        if(engine!=null){
+          val parent=w?.options?.optString("origin") in listOf("frame","favorite")
+          val current=(w?.offset?:0)+engine.currentMediaItemIndex;val total=w?.total?:queue.size
+          if(parent||(current+direction in 0 until total))rhUiAction(JSONObject().put("command",if(direction>0)"next"else"previous").put("expectedInputId",rhInputId))
+          else Toast.makeText(this,if(direction>0)"已经是最后一个文件"else"已经是第一个文件",Toast.LENGTH_SHORT).show()
+        }
+      })
+    playerView.setOnTouchListener(mediaPageTouch)
     playerView.setControllerVisibilityListener(PlayerView.ControllerVisibilityListener{visibility->header.visibility=if(failure.visibility==View.VISIBLE)View.VISIBLE else visibility;rhProgress?.visibility=visibility;rhUi.removeCallbacks(rhTick);if(visibility==View.VISIBLE)rhTick.run()})
     playerView.hideController();header.visibility=View.GONE;paintRhActions()
   }
+  override fun onPause(){mediaPageTouch?.cancel();super.onPause()}
   private fun dp(value:Int)=(value*resources.displayMetrics.density).toInt()
   private fun isRhVideo()=::path.isInitialized&&path.startsWith("rhvideo://")
   private fun currentRhId():String {val w=rhWindow?:error("当前不是媒体库视频");return w.ids[(player?.currentMediaItemIndex?:w.index).coerceIn(0,w.ids.lastIndex)]}
@@ -294,6 +311,7 @@ class PlaybackActivity:AppCompatActivity() {
         index=engine.currentMediaItemIndex.coerceIn(0,queue.lastIndex);path=queue[index].path;source=sources[index];titleView.text=queue[index].name;title=queue[index].name
         failure.visibility=View.GONE;paintRhActions()
         val w=rhWindow
+        if(w==null){rhInputId=nextRhInput.incrementAndGet();rhRendered=false}
         if(!rebuildingWindow&&w!=null){
           if((index<=1&&w.offset>0)||(index>=queue.lastIndex-1&&w.offset+queue.size<w.total))rebuildRhWindow(w.offset+index,if(w.options.optBoolean("reference"))w.starts[index]else 0,engine.playWhenReady)
           else{if(reason!=Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT&&!restoredInput){rhInputId=nextRhInput.incrementAndGet();rhRendered=false};if(w.options.optBoolean("reference")&&reason in listOf(Player.MEDIA_ITEM_TRANSITION_REASON_AUTO,Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT))engine.seekTo(w.starts[index]);armRhEnd();rememberRhPlaylist()}

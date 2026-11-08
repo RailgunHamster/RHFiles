@@ -128,7 +128,7 @@
       : route.screen === 'library' ? labels[route.category] + (route.folder ? ' · ' + fmt.baseName(route.folder) : '')
       : route.screen === 'favorites' ? '收藏夹'
       : route.screen === 'search' ? '搜索'
-      : ({ settings: '设置', server: '从电脑访问', usage: '空间分析', remote:'网络位置',providers:'外置存储与网盘',apps:'应用管理',tasks:'文件任务',trash:'回收站',nearby:'附近互传' })[route.tool] || 'RHFiles';
+      : ({ settings: '设置', server: '从电脑访问', usage: '空间分析', remote:'网络位置',providers:'外置存储与网盘',apps:'应用管理',tasks:'文件任务',trash:'回收站',history:'历史记录',nearby:'附近互传' })[route.tool] || 'RHFiles';
     $('title').textContent = title;
     document.querySelector('.topbar').hidden = count > 0;
     $('selection-head').hidden = count === 0;
@@ -369,6 +369,7 @@
           }
         }
         showList(route.scroll,position);
+        androidHistory.record(state.route,folderDisplayName(listing.path),pathLabel(listing.path));
       } else if (route.screen === 'favorites') {
         state.entries = state.favorites.map(item => ({ ...item, kind: item.isDir ? 'folder' : kindOf(item.name) }));
         showList(route.scroll,position);
@@ -384,6 +385,7 @@
           const page = await categoryPage(route);
           if (id !== navigationId) return;
           state.entries = libraryEntries(page.entries,route); state.listing = page; showList(route.scroll,position);
+          if(route.folder)androidHistory.record(state.route,folderDisplayName(route.folder)+' · '+labels[route.category],pathLabel(route.folder));
         }
       } else if (route.screen === 'search') {
         $('search-input').value = route.query || '';
@@ -1001,6 +1003,7 @@
     on('btn-automation',async()=>{const enabled=$('btn-automation').dataset.enabled!=='true';if(enabled&&!await ui.confirm('开启 ADB 自动化？','已授权的电脑将能读取和操作 RHFiles 中的文件；仅在可信电脑上使用。','开启'))return;await api.native('automation.enable',{enabled});await refreshAutomationSetting();});
     on('nav-home',()=>{closeDrawer();return go({screen:'home'});});
     on('nav-settings',()=>{closeDrawer();return go({screen:'tool',tool:'settings'});});
+    on('nav-history',()=>{closeDrawer();return go({screen:'tool',tool:'history'});});
     on('nav-scan',async()=>{closeDrawer();await api.native('qr.scan');await refreshLocations();});
     on('drawer-more',()=>ui.openSheet('更多选项',[action('扫码','scan',async()=>{closeDrawer();await api.native('qr.scan');await refreshLocations();})]));
     on('btn-home',()=>go({screen:'home'}));

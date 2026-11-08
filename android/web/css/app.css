@@ -194,6 +194,16 @@ button:focus-visible,[role=option]:focus-visible { outline:3px solid var(--accen
 .gallery-page { position:absolute; top:0; width:100%; height:100%; display:grid; place-items:center; overflow:hidden; }
 .gallery-page .full-media { position:absolute; inset:0; }
 .gallery-load-state { z-index:1; padding:24px; color:#cad0da; text-align:center; overflow-wrap:anywhere; pointer-events:none; }
+.history-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; padding-bottom:12px; }
+.visit-history-list { display:grid; gap:8px; }
+.visit-history-row { display:flex; align-items:center; border:1px solid var(--line); border-radius:12px; background:var(--surface); }
+.visit-history-open { flex:1; min-width:0; display:flex; align-items:center; gap:12px; padding:14px; border:0; background:transparent; text-align:left; }
+.visit-history-open>svg { flex:none; width:24px; height:24px; color:var(--accent); }
+.visit-history-copy { min-width:0; display:grid; gap:5px; }
+.visit-history-copy strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:15px; }
+.visit-history-copy small { overflow-wrap:anywhere; color:var(--muted); line-height:1.5; }
+.visit-history-copy time { color:var(--muted); font-size:12px; }
+.visit-history-row>.icon-btn { flex:none; margin:0 8px; }
 .application-row { display:flex; align-items:center; gap:14px; text-align:left; }
 .application-icon { width:48px; height:48px; flex:0 0 48px; display:grid; place-items:center; }
 .application-icon img { width:100%; height:100%; object-fit:contain; }

@@ -86,6 +86,10 @@ public class SmbUpdateInstrumentation extends Instrumentation {
             playerActivity=waitForMonitorWithTimeout(monitor,30000);require(playerActivity!=null,"Native player failed to open: "+eval("window.__mediaError"));
             final Activity screen=playerActivity;long until=System.currentTimeMillis()+30000;while(System.currentTimeMillis()<until){dismissSystemFullscreenEducation();if(hasVideoFrame())break;Thread.sleep(250);}
             require(hasVideoFrame(),"No decoded video frame (error page is not playback)");
+            videoDrag(screen,-48,0);awaitVideoTitle(screen,"QA video 2");
+            videoDrag(screen,48,0);awaitVideoTitle(screen,"QA video 1");
+            videoDrag(screen,48,0);require(String.valueOf(screen.getTitle()).equals("QA video 1"),"Previous at the first item wrapped the playlist");
+            videoDrag(screen,0,90);require(String.valueOf(screen.getTitle()).equals("QA video 1"),"Vertical drag changed videos");
             int progressId=getTargetContext().getResources().getIdentifier("exo_progress","id",getTargetContext().getPackageName()),nextId=getTargetContext().getResources().getIdentifier("exo_next","id",getTargetContext().getPackageName());
             boolean[] hidden={false};runOnMainSync(()->{View progress=screen.findViewById(progressId);hidden[0]=progress!=null&&!progress.isShown();});require(hidden[0],"Playback controls must start hidden");
             int[] dimensions=new int[2];runOnMainSync(()->{dimensions[0]=screen.getWindow().getDecorView().getWidth();dimensions[1]=screen.getWindow().getDecorView().getHeight();});
@@ -100,6 +104,21 @@ public class SmbUpdateInstrumentation extends Instrumentation {
             // Keeping the previous SurfaceView frame cannot satisfy this check.
             until=System.currentTimeMillis()+15000;while(!hasVideoFrame(true)&&System.currentTimeMillis()<until)Thread.sleep(250);require(hasVideoFrame(true),"Next queue item has no new decoded frame");
         }finally{removeMonitor(monitor);if(playerActivity!=null){final Activity closing=playerActivity;runOnMainSync(closing::finish);waitForIdleSync();}}
+    }
+    private void awaitVideoTitle(Activity screen,String title) throws Exception {
+        long end=System.currentTimeMillis()+15000;while(!String.valueOf(screen.getTitle()).equals(title)&&System.currentTimeMillis()<end)Thread.sleep(100);
+        require(String.valueOf(screen.getTitle()).equals(title),"Native video swipe did not select "+title);
+    }
+    private void videoDrag(Activity screen,float dx,float dy) throws Exception {
+        int[] bounds=new int[4];runOnMainSync(()->{View view=screen.getWindow().getDecorView();view.getLocationOnScreen(bounds);bounds[2]=view.getWidth();bounds[3]=view.getHeight();});
+        float x=bounds[0]+bounds[2]/2f,y=bounds[1]+bounds[3]/2f,density=screen.getResources().getDisplayMetrics().density;
+        long down=android.os.SystemClock.uptimeMillis();injectContacts(down,MotionEvent.ACTION_DOWN,new int[]{0},new float[][]{{x,y}});
+        for(int i=1;i<=6;i++){injectContacts(down,MotionEvent.ACTION_MOVE,new int[]{0},new float[][]{{x+dx*density*i/6,y+dy*density*i/6}});Thread.sleep(30);}
+        Thread.sleep(150);injectContacts(down,MotionEvent.ACTION_UP,new int[]{0},new float[][]{{x+dx*density,y+dy*density}});Thread.sleep(350);
+    }
+    private void videoGesturesProbe(Bundle result) throws Exception {
+        playbackProbe("/storage/emulated/0/Download/RHFiles-Gesture-QA-1.mp4","/storage/emulated/0/Download/RHFiles-Gesture-QA-2.mp4");
+        result.putString("pass","true");result.putString("checks","real decoded video frames, horizontal next/previous, boundary and vertical guard, tap controls, timeline seek and Next button");finish(Activity.RESULT_OK,result);
     }
     private void mediaProbe(Bundle result) throws Exception {
         eval("void(async()=>{try{const id=await api.native('connection.save',{type:'smb',name:'QA media',host:'127.0.0.1',port:1445,share:'QA',username:'qa',password:'qa-pass'});window.__mediaId=id;const root='remote://'+id+'/';const start=Date.now();for(let i=0;i<4;i++)await api.native('list',{path:root+'子目录'});const ms=Date.now()-start;if(ms>8000)throw Error('Repeated SMB listing stalled: '+ms);"+
@@ -254,6 +273,39 @@ public class SmbUpdateInstrumentation extends Instrumentation {
         if(dx!=0)for(int i=1;i<=12;i++){injectContacts(down,MotionEvent.ACTION_MOVE,new int[]{0},new float[][]{{x+dx*i/12,y}});Thread.sleep(25);}
         injectContacts(down,MotionEvent.ACTION_UP,new int[]{0},new float[][]{{x+dx,y}});Thread.sleep(300);
     }
+    private void galleryDrag(float dx,float dy,boolean cancel) throws Exception {
+        JSONObject point=json("(()=>{const f=document.querySelector('.file-pane:not([hidden])'),r=f.contentDocument.querySelector('.media-viewport').getBoundingClientRect(),o=f.getBoundingClientRect();return{x:o.x+r.x+r.width/2,y:o.y+r.y+r.height/2,width:innerWidth};})()");
+        int[] offset=new int[2],width=new int[1];runOnMainSync(()->{WebView web=find(activity.getWindow().getDecorView());web.getLocationOnScreen(offset);width[0]=web.getWidth();});
+        float scale=(float)(width[0]/point.getDouble("width")),x=offset[0]+(float)point.getDouble("x")*scale,y=offset[1]+(float)point.getDouble("y")*scale;
+        long down=android.os.SystemClock.uptimeMillis();injectContacts(down,MotionEvent.ACTION_DOWN,new int[]{0},new float[][]{{x,y}});
+        for(int i=1;i<=6;i++){injectContacts(down,MotionEvent.ACTION_MOVE,new int[]{0},new float[][]{{x+dx*scale*i/6,y+dy*scale*i/6}});Thread.sleep(30);}
+        Thread.sleep(150);injectContacts(down,cancel?MotionEvent.ACTION_CANCEL:MotionEvent.ACTION_UP,new int[]{0},new float[][]{{x+dx*scale,y+dy*scale}});Thread.sleep(350);
+    }
+    private void galleryProbe(Bundle result) throws Exception {
+        java.io.File directory=new java.io.File(getTargetContext().getExternalFilesDir(null),"gallery-qa-"+java.util.UUID.randomUUID());
+        require(directory.mkdirs(),"Cannot create private gallery fixture");JSONArray entries=new JSONArray();
+        try{
+            for(int i=0;i<3;i++){
+                java.io.File file=new java.io.File(directory,"picture-"+i+".png");android.graphics.Bitmap bitmap=android.graphics.Bitmap.createBitmap(80,60,android.graphics.Bitmap.Config.ARGB_8888);bitmap.eraseColor(i==0?android.graphics.Color.BLUE:i==1?android.graphics.Color.GREEN:android.graphics.Color.RED);
+                try(java.io.FileOutputStream output=new java.io.FileOutputStream(file)){require(bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,output),"Fixture encoding failed");}finally{bitmap.recycle();}
+                entries.put(new JSONObject().put("name",file.getName()).put("path",file.getAbsolutePath()).put("kind","image").put("isDir",false).put("size",file.length()));
+            }
+            awaitScript("!!window.RHFilesWorkbench&&!!document.querySelector('.file-pane:not([hidden])')?.contentWindow?.rhfilesPane");
+            eval("window.__qa=document.querySelector('.file-pane:not([hidden])').contentWindow;RHFilesWorkbench.openLayout(__qa)");awaitScript("!!document.querySelector('[data-layout=single]')");eval("document.querySelector('[data-layout=single]').click()");
+            awaitScript("__qa.rhfilesPane.snapshot().ready===true");
+            eval("void __qa.RHFilesAPI.invoke('navigation.open',{path:"+JSONObject.quote(directory.getAbsolutePath())+"}).then(()=>__qa.RHFilesAPI.invoke('files.open',{path:"+JSONObject.quote(entries.getJSONObject(0).getString("path"))+"})).then(()=>window.__galleryReady=true).catch(e=>window.__galleryError=String(e))");
+            awaitScript("!!window.__galleryReady||!!window.__galleryError");require(eval("!window.__galleryError").equals("true"),eval("window.__galleryError"));
+            awaitScript("__qa.document.querySelector('.gallery-page[data-relative=\"0\"] img')?.naturalWidth===80");
+            eval("window.__galleryEvents=[];for(const name of ['pointerdown','pointermove','pointerup','pointercancel'])__qa.document.querySelector('.media-viewport').addEventListener(name,e=>__galleryEvents.push({type:e.type,x:e.clientX,y:e.clientY,width:__qa.document.querySelector('.media-viewport').clientWidth}))");
+            galleryDrag(-48,0,false);require(eval("__qa.document.querySelector('.viewer-info').textContent==='2 / 3'").equals("true"),"Short native swipe did not advance: "+eval("JSON.stringify({events:__galleryEvents,info:__qa.document.querySelector('.viewer-info').textContent,width:innerWidth,track:__qa.document.querySelector('.gallery-track').style.transform})"));
+            galleryDrag(48,0,false);require(eval("__qa.document.querySelector('.viewer-info').textContent==='1 / 3'").equals("true"),"Short reverse swipe did not return");
+            galleryDrag(48,0,false);require(eval("__qa.document.querySelector('.viewer-info').textContent==='1 / 3'").equals("true"),"First-image boundary escaped");
+            galleryDrag(-8,0,false);galleryDrag(0,90,false);galleryDrag(-48,0,true);require(eval("__qa.document.querySelector('.viewer-info').textContent==='1 / 3'").equals("true"),"Jitter, vertical or canceled movement changed the file");
+            result.putString("viewport",eval("JSON.stringify({width:__qa.innerWidth,height:__qa.innerHeight})"));result.putString("pass","true");result.putString("checks","release APK, real PNG decoding and injected Android MotionEvent: short slow next/previous, boundary, jitter, vertical and canceled drag");finish(Activity.RESULT_OK,result);
+        }finally{
+            eval("if(window.__qa&&__qa.document.querySelector('.image-viewer'))__qa.rhfilesHandleBack()");java.io.File[] files=directory.listFiles();if(files!=null)for(java.io.File file:files)file.delete();directory.delete();
+        }
+    }
     private void wallpaperProbe(Bundle result) throws Exception {
         java.io.File file=new java.io.File("/storage/emulated/0/Download/RHFiles-wallpaper-QA.png");
         android.graphics.Bitmap bitmap=android.graphics.Bitmap.createBitmap(32,24,android.graphics.Bitmap.Config.ARGB_8888);bitmap.eraseColor(android.graphics.Color.BLUE);
@@ -312,6 +364,11 @@ public class SmbUpdateInstrumentation extends Instrumentation {
         require(eval("(()=>{const b=document.querySelector('.pane-divider button'),r=b.getBoundingClientRect(),d=b.parentNode.getBoundingClientRect(),g=getComputedStyle(b,'::before');return Math.abs(r.x+r.width/2-d.x-d.width/2)<.5&&Math.abs(r.y+r.height/2-d.y-d.height/2)<.5&&Math.abs(parseFloat(g.left)-r.width/2)<.5&&Math.abs(parseFloat(g.top)-r.height/2)<.5&&parseFloat(g.width)<=d.width&&parseFloat(g.height)<=d.height;})()").equals("true"),"Divider grip must be centered and contained in its reserved strip");
     }
     private void injectContacts(long down,int action,int[] ids,float[][] xy) throws Exception {
+        if(action==MotionEvent.ACTION_DOWN){
+            boolean owned=false;long end=System.currentTimeMillis()+5000;
+            do{android.view.accessibility.AccessibilityNodeInfo root=getUiAutomation().getRootInActiveWindow();try{owned=root!=null&&getTargetContext().getPackageName().contentEquals(root.getPackageName());}finally{if(root!=null)root.recycle();}if(!owned)Thread.sleep(100);}while(!owned&&System.currentTimeMillis()<end);
+            require(owned,"RHFiles must own input focus before test gestures");
+        }
         MotionEvent.PointerProperties[] properties=new MotionEvent.PointerProperties[ids.length];MotionEvent.PointerCoords[] coords=new MotionEvent.PointerCoords[ids.length];
         for(int i=0;i<ids.length;i++){properties[i]=new MotionEvent.PointerProperties();properties[i].id=ids[i];properties[i].toolType=MotionEvent.TOOL_TYPE_FINGER;coords[i]=new MotionEvent.PointerCoords();coords[i].x=xy[i][0];coords[i].y=xy[i][1];coords[i].pressure=1;coords[i].size=1;}
         MotionEvent event=MotionEvent.obtain(down,android.os.SystemClock.uptimeMillis(),action,ids.length,properties,coords,0,0,1,1,0,0,InputDevice.SOURCE_TOUCHSCREEN,0);
@@ -565,7 +622,9 @@ public class SmbUpdateInstrumentation extends Instrumentation {
             if(arguments.getString("mode","").equals("network-profile")){networkProfileProbe(result);return;}
             if(arguments.getString("mode","").equals("network-smb")){networkSmbProbe(result);return;}
             if(arguments.getString("mode","").equals("media")){mediaProbe(result);return;}
+            if(arguments.getString("mode","").equals("media-gestures")){videoGesturesProbe(result);return;}
             if(arguments.getString("mode","").equals("file-gestures")){fileGesturesProbe(result);return;}
+            if(arguments.getString("mode","").equals("gallery")){galleryProbe(result);return;}
             if(arguments.getString("mode","").equals("wallpaper")){wallpaperProbe(result);return;}
             if(arguments.getString("mode","").equals("external-video")){externalVideoProbe(result);return;}
             if(arguments.getString("mode","").equals("config-sync")){configSyncProbe(result);return;}

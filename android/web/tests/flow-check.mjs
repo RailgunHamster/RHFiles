@@ -459,6 +459,47 @@ try{
     await capture(p,'immersive-image-viewer');check(errors.length===0,'Native playback routing has no frontend exceptions');await context.close();
   }
   {
+    const {context,page:p,errors}=await pageFor();await tile(p,'storage-0').waitFor();await storage(p);await row(p,'Download').click();await row(p,'report.pdf').waitFor();
+    await p.click('#btn-menu');await p.click('#nav-history');await p.locator('.visit-history-open').first().waitFor();
+    let entries=(await p.evaluate(()=>RHFilesAPI.invoke('history.list'))).entries;const download=entries.find(e=>e.path.endsWith('/Download'));
+    check(entries.length===2&&entries[0].id===download.id,'History lists successful folder visits newest first');
+    await p.reload();await p.waitForFunction(()=>typeof RHFilesAPI!=='undefined'&&!!window.rhfilesPane?.snapshot().ready);
+    check((await p.evaluate(()=>RHFilesAPI.invoke('history.list'))).entries.length===2,'Browsing history persists across an app page restart');
+    await p.evaluate(id=>RHFilesAPI.invoke('history.open',{id}),download.id);await row(p,'report.pdf').waitFor();
+    check((await p.evaluate(()=>RHFilesAPI.invoke('history.list'))).entries.length===2,'Opening a history record reuses navigation and deduplicates the visit');
+    await p.evaluate(()=>RHFilesAPI.invoke('navigation.open',{path:'/storage/emulated/0/missing-qa-folder'}).catch(()=>null));
+    check((await p.evaluate(()=>RHFilesAPI.invoke('history.list'))).entries.length===2,'Failed navigation is never added as a visit');
+    await p.evaluate(()=>RHFilesAPI.invoke('navigation.tool',{tool:'history'}));
+    await p.evaluate(id=>RHFilesAPI.invoke('history.remove',{id}),download.id);
+    check(await p.locator('.visit-history-row').count()===1,'Removing a history entry updates the same UI as its command API');
+    await p.getByRole('button',{name:'清空记录',exact:true}).click();await choose(p,'取消');
+    check(await p.locator('.visit-history-row').count()===1,'Canceling Clear History preserves records');
+    await p.getByRole('button',{name:'清空记录',exact:true}).click();await p.locator('#sheet').getByRole('button',{name:'清空记录',exact:true}).click();
+    check(await p.locator('.visit-history-row').count()===0&&await p.evaluate(()=>!!__model.fs['/storage/emulated/0/Download'].find(e=>e.name==='report.pdf')),'Clearing visits never deletes files or folders');
+    check(errors.length===0,'History navigation and confirmation have no frontend errors');await context.close();
+  }
+  for(const width of [400,1280]){
+    const {context,page:p,errors}=await pageFor({viewport:{width,height:900}});await tile(p,'storage-0').waitFor();
+    await tile(p,'storage-0').click();await row(p,'DCIM').click();await row(p,'photo0.jpg').click();await p.locator('.image-viewer').waitFor();
+    const cdp=await context.newCDPSession(p),x=width/2,y=450,distance=width===400?32:48;
+    async function drag(dx,dy=0,{cancel=false}={}){
+      await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x,y,id:1}]});
+      for(let i=1;i<=4;i++){await cdp.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:x+dx*i/4,y:y+dy*i/4,id:1}]});await p.waitForTimeout(35);}
+      if(dx&&dy===0&&Math.abs(dx)>8)check(await p.locator('.gallery-track').evaluate(e=>Math.abs(new DOMMatrixReadOnly(getComputedStyle(e).transform).m41)>1),'The image track follows the finger before release at '+width+'px');
+      await p.waitForTimeout(140);await cdp.send('Input.dispatchTouchEvent',{type:cancel?'touchCancel':'touchEnd',touchPoints:[]});await p.waitForTimeout(300);
+    }
+    await drag(-distance);check((await p.locator('.viewer-info').innerText()).startsWith('2 /'),'A short slow swipe advances on '+width+'px without a large screen-relative drag');
+    await drag(distance);check((await p.locator('.viewer-info').innerText()).startsWith('1 /'),'The same short reverse swipe returns at '+width+'px');
+    await drag(distance);check((await p.locator('.viewer-info').innerText()).startsWith('1 /'),'Swiping beyond the first image only rebounds at '+width+'px');
+    await drag(-8);check((await p.locator('.viewer-info').innerText()).startsWith('1 /'),'Small tap jitter does not turn pages at '+width+'px');
+    await drag(0,90);check((await p.locator('.viewer-info').innerText()).startsWith('1 /'),'Vertical movement does not turn pages at '+width+'px');
+    await drag(-distance,0,{cancel:true});check((await p.locator('.viewer-info').innerText()).startsWith('1 /'),'A system-canceled gesture never turns a page at '+width+'px');
+    if(await p.locator('.image-viewer').evaluate(e=>e.classList.contains('chrome-hidden'))){await p.mouse.click(x,y);await p.waitForTimeout(270);}
+    await p.getByRole('button',{name:'放大',exact:true}).click();await drag(-90,10);
+    check((await p.locator('.viewer-info').innerText()).startsWith('1 /'),'Dragging a zoomed image pans without changing files at '+width+'px');
+    check(await p.locator('.gallery-page').count()<=3&&errors.length===0,'Phone/tablet gesture changes preserve bounded pages without frontend errors');await context.close();
+  }
+  {
     const {context,page:p,errors}=await pageFor({viewport:{width:1280,height:900}});await tile(p,'storage-0').waitFor();
     check(await p.locator('body.wide-layout').count()===1&&await p.locator('#drawer').isVisible(),'Tablet uses persistent navigation');
     check(await p.locator('#app').evaluate(e=>e.getBoundingClientRect().left>=232),'Tablet content does not overlap navigation');
