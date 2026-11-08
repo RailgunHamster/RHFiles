@@ -3,7 +3,8 @@ import {launchApp,until,sleep} from '../testing/app-session.mjs';import {cdpSess
 test('filesystem media viewer: real images, continuous input, native video, independent RHFiles group streaming and stale controls',{timeout:240000},async()=>{
   const directory=fs.mkdtempSync(path.join(os.tmpdir(),'rhfiles-file-viewer-')),ffmpeg=process.env.FFMPEG||path.resolve('src-tauri/thirdparty/ffmpeg.exe');let app,server,page;
   function encode(args){const r=spawnSync(ffmpeg,['-hide_banner','-loglevel','error',...args],{windowsHide:true,encoding:'utf8',timeout:30000});assert.equal(r.status,0,r.stderr);}
-  for(const [name,color]of [['a.png','teal'],['b.png','cornflowerblue'],['c.png','coral']])encode(['-f','lavfi','-i','color=c='+color+':s=400x650','-frames:v','1',path.join(directory,name)]);
+  const corners='drawbox=x=0:y=0:w=128:h=128:color=red:t=fill,drawbox=x=iw-128:y=0:w=128:h=128:color=red:t=fill,drawbox=x=0:y=ih-128:w=128:h=128:color=red:t=fill,drawbox=x=iw-128:y=ih-128:w=128:h=128:color=red:t=fill';
+  for(const [name,color,size]of [['a.png','teal','6000x4000'],['b.png','cornflowerblue','4000x6000'],['c.png','coral','10000x1000']])encode(['-f','lavfi','-i','color=c='+color+':s='+size,'-vf',corners,'-frames:v','1',path.join(directory,name)]);
   for(const ext of ['mp4','mkv'])encode(['-f','lavfi','-i','testsrc2=size=320x180:rate=15','-f','lavfi','-i','sine=frequency=600:sample_rate=44100','-t','120','-c:v','mpeg4','-q:v','6','-c:a','aac',path.join(directory,'sample.'+ext)]);
   const hash=file=>createHash('sha256').update(fs.readFileSync(file)).digest('hex');
   const sourceHashes=new Map(fs.readdirSync(directory).map(name=>[name,hash(path.join(directory,name))]));
@@ -16,6 +17,30 @@ test('filesystem media viewer: real images, continuous input, native video, inde
     const call=(name,args={})=>page.evaluate(`RHFilesAPI.invoke(${JSON.stringify(name)},${JSON.stringify(args)})`);
     await until(()=>page.evaluate('RHFilesAPI.snapshot().state.application?.ready'),'viewer action registry');await until(()=>page.evaluate('[...document.querySelectorAll(".image-page img")].every(i=>i.naturalWidth>0)'),'real local images');
     let state=await call('media.viewer.state');assert.equal(state.entries.length,3);assert.equal(state.entries[state.index].name,'b.png');assert.equal(state.mode,'paged');
+    for(const asset of ['js/file-viewer-window.js','css/file-viewer.css']){
+      const loaded=await page.evaluate(`fetch(${JSON.stringify(asset)}).then(response=>response.text())`);
+      assert.equal(createHash('sha256').update(loaded).digest('hex'),hash(path.resolve('src',asset)),'formal executable contains current '+asset);
+    }
+    for(let at=0;at<3;at++){
+      while((await call('media.viewer.state')).index>0)await call('media.viewer.previous');
+      for(let n=0;n<at;n++)await call('media.viewer.next');
+      for(let turn=0;turn<4;turn++){
+        if(turn)await call('media.viewer.rotate');
+        await call('media.viewer.zoomIn');await call('media.viewer.fit');
+        await until(()=>page.evaluate('[...document.querySelectorAll(".image-page img")].every(image=>image.naturalWidth>0)'),'large native image decode');
+        const bounds=await page.evaluate(`(async()=>{const state=await RHFilesAPI.invoke('media.viewer.state'),image=document.querySelector('.image-page[data-index="'+state.index+'"] img'),box=image.getBoundingClientRect(),frame=document.getElementById('viewport').getBoundingClientRect();return {angle:state.angle,zoom:state.zoom,natural:[image.naturalWidth,image.naturalHeight],box:{left:box.left,top:box.top,right:box.right,bottom:box.bottom},frame:{left:frame.left,top:frame.top,right:frame.right,bottom:frame.bottom}}})()`);
+        assert.equal(bounds.angle,turn*90);assert.equal(bounds.zoom,1);
+        const {box,frame}=bounds;assert.ok(box.left>=frame.left-1&&box.top>=frame.top-1&&box.right<=frame.right+1&&box.bottom<=frame.bottom+1,'large image fits without cropping: '+JSON.stringify(bounds));
+        await page.evaluate('Promise.all([...document.querySelectorAll(".image-page img")].map(image=>image.decode())).then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))');
+        const screenshot=(await page.send('Page.captureScreenshot',{format:'png'})).data;
+        fs.writeFileSync(path.join(app.artifactDir,`file-viewer-fit-${at}-${turn}.png`),Buffer.from(screenshot,'base64'));
+        const pixels=await page.evaluate(`(async()=>{const state=await RHFilesAPI.invoke('media.viewer.state'),image=document.querySelector('.image-page[data-index="'+state.index+'"] img'),frame=document.getElementById('viewport').getBoundingClientRect(),quarter=state.angle%180!==0,fit=Math.min(image.clientWidth/image.naturalWidth,image.clientHeight/image.naturalHeight),width=(quarter?image.naturalHeight:image.naturalWidth)*fit,height=(quarter?image.naturalWidth:image.naturalHeight)*fit;const shot=new Image();shot.src='data:image/png;base64,'+${JSON.stringify(screenshot)};await shot.decode();const canvas=document.createElement('canvas');canvas.width=shot.naturalWidth;canvas.height=shot.naturalHeight;const ctx=canvas.getContext('2d');ctx.drawImage(shot,0,0);const scale=shot.naturalWidth/innerWidth;return [-1,1].flatMap(dx=>[-1,1].map(dy=>Array.from(ctx.getImageData(Math.round((frame.x+frame.width/2+dx*(width/2-3))*scale),Math.round((frame.y+frame.height/2+dy*(height/2-3))*scale),1,1).data)));})()`);
+        fs.writeFileSync(path.join(app.artifactDir,`file-viewer-fit-${at}-${turn}.json`),JSON.stringify({bounds,pixels},null,2));
+        assert.ok(pixels.every(([r,g,b])=>r>150&&g<90&&b<90),'all four real image corner markers remain visible at '+turn*90+' degrees: '+JSON.stringify(pixels));
+        if(at===1&&turn===0)fs.writeFileSync(path.join(app.artifactDir,'file-viewer-large-portrait-fit.png'),Buffer.from(screenshot,'base64'));
+      }
+    }
+    await call('media.viewer.previous');assert.equal((await call('media.viewer.state')).index,1);
     await call('media.viewer.mode.set',{mode:'continuous'});await until(async()=>(await main('media.preferences.get')).imageBrowseMode==='continuous','viewer preference saved in main settings');
     const box=await page.evaluate('(()=>{const r=document.getElementById("viewport").getBoundingClientRect();return {x:r.x+700,y:r.y+r.height/2};})()');
     await page.send('Input.dispatchMouseEvent',{type:'mousePressed',...box,button:'left',buttons:1,clickCount:1});await page.send('Input.dispatchMouseEvent',{type:'mouseMoved',x:box.x-75,y:box.y,button:'left',buttons:1});await page.send('Input.dispatchMouseEvent',{type:'mouseReleased',x:box.x-75,y:box.y,button:'left',buttons:0,clickCount:1});
@@ -43,7 +68,7 @@ test('filesystem media viewer: real images, continuous input, native video, inde
     await main('media.viewer.open',{path:remote+'sample.mp4'});state=await ready();assert.equal(state.path,remote+'sample.mp4');assert.equal(state.video.engine,'libVLC');
     for(const [name,digest]of sourceHashes)assert.equal(hash(path.join(directory,name)),digest);
     const closed=spawnSync(process.execPath,['scripts/rhfiles-api.mjs','--port',String(app.port),'--window','window-file-viewer','--wait','run','media.viewer.close','{}'],{encoding:'utf8',windowsHide:true,timeout:45000});fs.writeFileSync(path.join(app.artifactDir,'file-viewer-close.txt'),closed.stdout+'\n'+closed.stderr);assert.equal(closed.status,0,closed.stdout+'\n'+closed.stderr);assert.match(closed.stdout,/closed|succeeded/);
-    fs.writeFileSync(path.join(app.artifactDir,'file-viewer-summary.json'),JSON.stringify({pass:true,checks:'real local images, current directory queue, free continuous trusted pointer, mode persistence, bounded pages, zoom, rotation, native MKV/MP4 video/audio frames, pause/seek/resume/rate/volume/fullscreen, stale controls refused, actual native pixels, RHFiles group images and streaming video, source hashes unchanged, CLI close receipt survives its window'},null,2));
+    fs.writeFileSync(path.join(app.artifactDir,'file-viewer-summary.json'),JSON.stringify({pass:true,checks:'formal bundled source hashes, large landscape/portrait/panoramic local images fit at all four rotations, fit preserves rotation, current directory queue, free continuous trusted pointer, mode persistence, bounded pages, zoom, native MKV/MP4 video/audio frames, pause/seek/resume/rate/volume/fullscreen, stale controls refused, actual native pixels, RHFiles group images and streaming video, source hashes unchanged, CLI close receipt survives its window'},null,2));
     console.log('PASS filesystem media viewer integration: '+app.artifactDir);
   }finally{page?.close();if(server){await server.evaluate("call('lan_service_stop',{})").catch(()=>{});await server.close();}if(app)await app.close();assert.equal(path.dirname(directory),os.tmpdir());assert.ok(path.basename(directory).startsWith('rhfiles-file-viewer-'));fs.rmSync(directory,{recursive:true,force:true});}
 });

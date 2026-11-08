@@ -5,11 +5,11 @@
   const pages=new Map(),sources=new Map();
   let zh=true;try{zh=JSON.parse(localStorage.getItem('rhfiles-settings')||'{}').language!=='en';}catch{}
   const text=(cn,en)=>zh?cn:en,scope=()=>({generation:state.generation,selection:state.selection}),index=()=>Math.max(0,Math.min(state.entries.length-1,Math.round(position))),clock=ms=>{const seconds=Math.max(0,Math.floor((ms||0)/1000));return Math.floor(seconds/60)+':'+String(seconds%60).padStart(2,'0');};
-  $('mode').options[0].textContent=text('逐张翻页','Paged');$('mode').options[1].textContent=text('连续滚动','Continuous');$('system').textContent=text('系统应用','System app');$('fit').textContent=text('适应','Fit');
+  $('mode').options[0].textContent=text('逐张翻页','Paged');$('mode').options[1].textContent=text('连续滚动','Continuous');$('system').textContent=text('系统应用','System app');$('fit').textContent=text('适应窗口','Fit window');
   function error(value){$('message').textContent=String(value.message||value);}
   function header(){if(!state)return;const i=index();$('title').textContent=state.entries[i].name;document.title=state.entries[i].name+' · RHFiles';$('counter').textContent=(i+1)+' / '+state.entries.length;$('previous').disabled=i===0;$('next').disabled=i===state.entries.length-1;$('mode').value=state.mode;}
   async function source(entry){const key=entry.path;if(!sources.has(key)){if(sources.size>=5)sources.delete(sources.keys().next().value);sources.set(key,key.startsWith('rhfiles-device:')?core.invoke('device_fs',{action:'resource',args:{path:key}}).then(v=>v.url):Promise.resolve(core.convertFileSrc(key)));}return sources.get(key);}
-  function transform(){const image=pages.get(index())?.querySelector('img');if(image)image.style.transform=`translate(${x}px,${y}px) scale(${zoom}) rotate(${angle}deg)`;}
+  function transform(){const quarter=angle%180!==0,w=$('viewport').clientWidth,h=$('viewport').clientHeight;for(const [at,page]of pages){const image=page.querySelector('img'),active=at===index();image.style.width=quarter?h+'px':'100%';image.style.height=quarter?w+'px':'100%';image.style.transform=`translate(-50%,-50%) translate(${active?x:0}px,${active?y:0}px) scale(${active?zoom:1}) rotate(${angle}deg)`;}}
   function images(){
     if(!state||state.kind!=='image')return;const center=index();header();
     for(const [at,page]of pages)if(Math.abs(at-center)>1){page.querySelector('img').removeAttribute('src');page.remove();pages.delete(at);}
@@ -29,7 +29,7 @@
   function snapshot(){return state?{opened:true,...state,index:index(),path:state.entries[index()].path,position,zoom,angle,rendered,video:video?{...video}:null}:{opened:false};}
   async function close(run){const args=scope();clear();return native('close',{...args,...(run?{_automationRun:run}:{})});}
   async function systemOpen(){const path=state.entries[index()].path;return path.startsWith('rhfiles-device:')?core.invoke('device_transfer',{action:'open',args:{path,command:'open_file'}}):core.invoke('open_file',{path});}
-  const actions={next:()=>select(index()+1),previous:()=>select(index()-1),fit:()=>{zoom=1;angle=x=y=0;transform();},zoomIn:()=>{zoom=Math.min(8,zoom*1.4);transform();},zoomOut:()=>{zoom=Math.max(.25,zoom/1.4);transform();},rotate:()=>{angle=(angle+90)%360;transform();},close,systemOpen,fullscreen:async()=>windowApi.setFullscreen(!await windowApi.isFullscreen())};
+  const actions={next:()=>select(index()+1),previous:()=>select(index()-1),fit:()=>{zoom=1;x=y=0;transform();},zoomIn:()=>{zoom=Math.min(8,zoom*1.4);transform();},zoomOut:()=>{zoom=Math.max(.25,zoom/1.4);transform();},rotate:()=>{angle=(angle+90)%360;transform();},close,systemOpen,fullscreen:async()=>windowApi.setFullscreen(!await windowApi.isFullscreen())};
   const object=(properties={},required=[])=>({type:'object',properties,required,additionalProperties:false});
   api.provideState('application',()=>({platform:'windows',window:'window-file-viewer',ready:!!state}));api.register('media.viewer.state',snapshot,{params:object(),risk:'read'});api.register('media.viewer.mode.set',p=>mode(p.mode),{params:object({mode:{enum:['paged','continuous']}},['mode']),risk:'settings'});api.register('media.viewer.video.control',p=>videoControl(p.command,p.value),{params:object({command:{enum:['pause','resume','seek','volume','rate']},value:{type:'number'}},['command']),risk:'ui'});
   api.provideRunLookup(query=>core.invoke('automation_receipt',{query}));api.provideRunTransport(()=>core.invoke('automation_receipt_transport'));
