@@ -35,6 +35,8 @@ try{
   await page.locator('[data-preview-action=close]').click();await page.locator('#filelist .name').getByText('huge.log',{exact:true}).click();await page.waitForFunction(()=>!!document.querySelector('.text-preview-source'));
   check((await call('preview.text.state')).truncated,'large remote text is bounded and identifies truncation');await page.locator('[data-preview-action=more]').click();await page.waitForFunction(()=>document.querySelector('[data-preview-action=more]').hidden);
   check(await page.evaluate(()=>__previewQA.calls.filter(row=>row.command==='text.preview').at(-1).args.maxBytes===1048576),'explicit read-more remains capped at one MB');
+  await call('preview.text.control',{command:'nextPart'});await page.evaluate(()=>{ui.copyText=async text=>__previewQA.clipboard=text;});await call('preview.text.control',{command:'copy'});
+  check(await page.evaluate(()=>__previewQA.clipboard===document.querySelector('.text-preview-source').textContent&&__previewQA.clipboard.length<=32769&&document.querySelector('[data-preview-action=copy]').textContent==='复制本段'),'large preview copies only the visible bounded part, within Android clipboard limits');
   await page.locator('[data-preview-action=close]').click();
   const slow=call('preview.text.open',{path:remote+'delayed.json',name:'delayed.json'});await page.locator('[data-preview-action=close]').click();await slow;
   check(!(await call('preview.text.state')).open&&await page.evaluate(()=>__previewQA.calls.some(row=>row.command==='text.preview.cancel')),'closing a pending preview cancels its request and ignores late data');

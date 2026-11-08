@@ -14,17 +14,18 @@
     panel.append(header,tools,status,content);
     function button(label,id,action){const b=ui.el('button','',label);b.type='button';b.dataset.previewAction=id;RHFilesUI.listen(b,'click',async()=>{try{await action();}catch(error){ui.toast('操作失败：'+(error.message||error));}},undefined,'android.preview.'+id);return b;}
     const close=button('返回','close',()=>ui.closeSheet()),toggle=button('源码','mode',()=>{session.mode=session.mode==='source'?(/\.(md|markdown|mdown)$/i.test(entry.name)?'reading':'formatted'):'source';render();});
-    header.append(close,title);tools.append(toggle,button('复制文本','copy',async()=>{if(session.data){await ui.copyText(session.data.text);ui.toast('已复制文本');}}));
+    async function copyCurrent(){if(session.clipboard==null)throw Error('文本正在读取或排版，请稍后再复制');await ui.copyText(session.clipboard);ui.toast('已复制文本');}
+    const copy=button('复制文本','copy',copyCurrent);copy.disabled=true;header.append(close,title);tools.append(toggle,copy);
     toggle.hidden=!/\.(md|markdown|mdown|json)$/i.test(entry.name);
     function stopWorker(){clearTimeout(workerTimer);worker?.terminate();worker=null;}
     function showText(text){
       const ranges=parts(text),pre=ui.el('pre','text-preview-source'),bar=ui.el('div','text-preview-paging'),label=ui.el('span');
       const previous=button('上一段','previousPart',()=>textView.show(session.part-1)),next=button('下一段','nextPart',()=>textView.show(session.part+1));bar.append(previous,label,next);bar.hidden=ranges.length<=1;content.replaceChildren(bar,pre);
-      textView={show(value){const at=Math.max(0,Math.min(ranges.length-1,value)),[start,end]=ranges[at];session.part=at;session.partCount=ranges.length;pre.textContent=text.slice(start,end);label.textContent=(at+1)+' / '+ranges.length;previous.disabled=at===0;next.disabled=at===ranges.length-1;content.scrollTop=0;}};textView.show(0);
+      textView={show(value){const at=Math.max(0,Math.min(ranges.length-1,value)),[start,end]=ranges[at];session.part=at;session.partCount=ranges.length;pre.textContent=text.slice(start,end);session.clipboard=pre.textContent;copy.textContent=ranges.length>1?'复制本段':'复制文本';copy.disabled=false;label.textContent=(at+1)+' / '+ranges.length;previous.disabled=at===0;next.disabled=at===ranges.length-1;content.scrollTop=0;}};textView.show(0);
     }
     function showSource(message=''){showText(session.data.text);if(message){session.mode='source';toggle.textContent=/\.json$/i.test(entry.name)?'格式化':'阅读';status.textContent+=' · '+message;}}
     function render(){
-      const epoch=++renderEpoch;stopWorker();if(closed||!session.data)return;
+      const epoch=++renderEpoch;stopWorker();session.clipboard=null;copy.disabled=true;if(closed||!session.data)return;
       const data=session.data;status.textContent=(data.encoding||'文本')+' · '+fmt.size(data.bytesRead||new TextEncoder().encode(data.text).length)+(data.truncated?' · 文件较大，仅预览前 '+fmt.size(data.maxBytes||256*1024):'');
       toggle.textContent=session.mode==='source'?(/\.json$/i.test(entry.name)?'格式化':'阅读'):'源码';
       if(session.mode==='source'){showSource();return;}
@@ -37,7 +38,7 @@
         if(session.mode==='formatted'){showText(event.data.text);return;}
         const article=ui.el('article','text-preview-markdown');
         article.innerHTML=DOMPurify.sanitize(event.data.html,{ALLOWED_TAGS:['h1','h2','h3','h4','h5','h6','p','br','hr','pre','code','blockquote','ul','ol','li','strong','em','del','table','thead','tbody','tr','th','td','span','a'],ALLOWED_ATTR:['title','colspan','rowspan'],ALLOW_DATA_ATTR:false,ALLOW_ARIA_ATTR:false});
-        textView=null;session.partCount=0;content.replaceChildren(article);
+        textView=null;session.partCount=0;session.clipboard=data.text;copy.textContent='复制文本';copy.disabled=false;content.replaceChildren(article);
       };
       worker.onerror=()=>{if(closed||epoch!==renderEpoch)return;stopWorker();showSource('排版失败，显示源码');};
       workerTimer=setTimeout(()=>{if(closed||epoch!==renderEpoch)return;stopWorker();showSource('排版耗时较长，显示源码');},2000);
@@ -46,13 +47,13 @@
     const more=button('读取更多（最多 1 MB）','more',()=>read(1024*1024));more.hidden=true;tools.append(more);
     async function read(maxBytes){
       if(session.loading)throw Error('文本正在读取');stopWorker();++renderEpoch;
-      requestId=crypto.randomUUID();session.loading=true;session.error='';more.disabled=true;status.textContent='正在读取…';
+      requestId=crypto.randomUUID();session.loading=true;session.error='';session.clipboard=null;copy.disabled=true;more.disabled=true;status.textContent='正在读取…';
       try{const data=await backend.readTextPreview({path:entry.path,maxBytes,requestId});if(closed)return;session.data=data;more.hidden=!data.truncated||maxBytes>=1024*1024;render();}
       catch(error){if(!closed){session.error=error.message||String(error);status.textContent='无法预览：'+session.error;}}
       finally{session.loading=false;more.disabled=false;}
     }
     function view(mode){if(!session.data)throw Error('文本尚未读取');if(mode==='reading'&&!/\.(md|markdown|mdown)$/i.test(entry.name)||mode==='formatted'&&!/\.json$/i.test(entry.name))throw Error('此文件不支持该显示模式');session.mode=mode;render();}
-    session.controls={source:()=>view('source'),reading:()=>view('reading'),formatted:()=>view('formatted'),more:()=>{if(!session.data?.truncated||session.data.maxBytes>=1024*1024)throw Error('已达到本次预览上限');return read(1024*1024);},previousPart:()=>{if(!textView)throw Error('当前不是分页文本');textView.show(session.part-1);},nextPart:()=>{if(!textView)throw Error('当前不是分页文本');textView.show(session.part+1);},copy:()=>session.data?ui.copyText(session.data.text):Promise.reject(Error('文本尚未读取')),close:()=>ui.closeSheet()};
+    session.controls={source:()=>view('source'),reading:()=>view('reading'),formatted:()=>view('formatted'),more:()=>{if(!session.data?.truncated||session.data.maxBytes>=1024*1024)throw Error('已达到本次预览上限');return read(1024*1024);},previousPart:()=>{if(!textView)throw Error('当前不是分页文本');textView.show(session.part-1);},nextPart:()=>{if(!textView)throw Error('当前不是分页文本');textView.show(session.part+1);},copy:copyCurrent,close:()=>ui.closeSheet()};
     ui.onClosed(()=>{closed=true;stopWorker();if(requestId)void backend.cancelTextPreview(requestId).catch(()=>{});if(current===session)current=null;});
     await read(256*1024);return state();
   }
