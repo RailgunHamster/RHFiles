@@ -3,9 +3,9 @@ name: File manager business tests
 on:
   push:
     branches: [main]
-    paths-ignore: ['android/**', 'docs/**', 'README*']
+    paths: ['**', '!android/**', '!docs/**', '!README*', 'android/web/**']
   pull_request:
-    paths-ignore: ['android/**', 'docs/**', 'README*']
+    paths: ['**', '!android/**', '!docs/**', '!README*', 'android/web/**']
   workflow_dispatch:
 
 permissions:
