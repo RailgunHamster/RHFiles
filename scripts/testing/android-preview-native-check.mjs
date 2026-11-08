@@ -159,9 +159,15 @@ try{
   const invalid=await call('files.cacheApk',{path:entry('broken.apk').path});const failed=await until(async()=>{const j=await native('job.status',{id:invalid.jobId});return ['failed','completed'].includes(j.state)&&j;},'invalid APK cache');assert.equal(failed.state,'failed');assert.equal(failed.outputs.length,0);check(true,'invalid APK fails explicitly without exposing incomplete output');
   adb('shell','appops','set','com.railgunhamster.rhfiles','REQUEST_INSTALL_PACKAGES','allow');
   const installerVisible=()=>adb('shell','dumpsys','activity','activities').split(/\r?\n/).some(line=>/topResumedActivity|mResumedActivity/.test(line)&&/packageinstaller|permissioncontroller.*Install/i.test(line));
-  await call('files.installCachedApk',{jobId:cache.jobId});await until(installerVisible,'system package installer');
+  const installerReady=()=>{
+    if(!installerVisible())return false;
+    adb('shell','uiautomator','dump','--compressed','/data/local/tmp/rhfiles-qa-install-confirmation.xml');
+    const xml=adb('exec-out','cat','/data/local/tmp/rhfiles-qa-install-confirmation.xml');
+    return /text="RHFiles"/.test(xml)&&[...xml.matchAll(/<node\b[^>]*>/g)].some(([node])=>/resource-id="android:id\/button1"/.test(node)&&/text="(?:Update|Install)"/i.test(node));
+  };
+  await call('files.installCachedApk',{jobId:cache.jobId});await until(installerReady,'system package installer ready for explicit confirmation',45000);
   check(true,'completed remote APK hands off to Android system installation confirmation');adb('shell','input','keyevent','4');await pause(400);
-  const rh=locations.find(l=>l.name==='RHFiles group');await call('navigation.open',{path:rh.path});await call('files.open',{path:rh.entries.find(e=>e.name===longApk).path});await until(installerVisible,'default group APK click handoff',120000);
+  const rh=locations.find(l=>l.name==='RHFiles group');await call('navigation.open',{path:rh.path});await call('files.open',{path:rh.entries.find(e=>e.name===longApk).path});await until(installerReady,'default group APK click handoff ready for explicit confirmation',120000);
   check(true,'normal opening of a RHFiles-device APK caches and directly opens system installation confirmation');await phone.screenshot('remote-apk-system-confirmation');adb('shell','input','keyevent','4');await pause(300);
   assert.deepEqual(fs.readdirSync(directory).sort(),[...sourceHashes.keys()].sort());
   for(const [name,digest]of sourceHashes)assert.equal(createHash('sha256').update(fs.readFileSync(path.join(directory,name))).digest('hex'),digest,name+' remains unchanged');
