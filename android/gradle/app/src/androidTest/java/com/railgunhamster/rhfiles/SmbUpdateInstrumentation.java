@@ -86,10 +86,6 @@ public class SmbUpdateInstrumentation extends Instrumentation {
             playerActivity=waitForMonitorWithTimeout(monitor,30000);require(playerActivity!=null,"Native player failed to open: "+eval("window.__mediaError"));
             final Activity screen=playerActivity;long until=System.currentTimeMillis()+30000;while(System.currentTimeMillis()<until){dismissSystemFullscreenEducation();if(hasVideoFrame())break;Thread.sleep(250);}
             require(hasVideoFrame(),"No decoded video frame (error page is not playback)");
-            videoDrag(screen,-48,0);awaitVideoTitle(screen,"QA video 2");
-            videoDrag(screen,48,0);awaitVideoTitle(screen,"QA video 1");
-            videoDrag(screen,48,0);require(String.valueOf(screen.getTitle()).equals("QA video 1"),"Previous at the first item wrapped the playlist");
-            videoDrag(screen,0,90);require(String.valueOf(screen.getTitle()).equals("QA video 1"),"Vertical drag changed videos");
             int progressId=getTargetContext().getResources().getIdentifier("exo_progress","id",getTargetContext().getPackageName()),nextId=getTargetContext().getResources().getIdentifier("exo_next","id",getTargetContext().getPackageName());
             boolean[] hidden={false};runOnMainSync(()->{View progress=screen.findViewById(progressId);hidden[0]=progress!=null&&!progress.isShown();});require(hidden[0],"Playback controls must start hidden");
             int[] dimensions=new int[2];runOnMainSync(()->{dimensions[0]=screen.getWindow().getDecorView().getWidth();dimensions[1]=screen.getWindow().getDecorView().getHeight();});
@@ -98,11 +94,30 @@ public class SmbUpdateInstrumentation extends Instrumentation {
             boolean[] enabled={false};String[] detail={""};runOnMainSync(()->{View progress=screen.findViewById(progressId),next=screen.findViewById(nextId);detail[0]="focus="+screen.hasWindowFocus()+", progress="+(progress==null?"missing":progress.isShown())+", next="+(next==null?"missing":next.isShown()+"/enabled="+next.isEnabled());enabled[0]=progress!=null&&progress.isShown()&&next!=null&&next.isShown()&&next.isEnabled();if(enabled[0]){progress.requestFocus();progress.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_DPAD_RIGHT));progress.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_UP,KeyEvent.KEYCODE_DPAD_RIGHT));}});
             if(!enabled[0]){android.graphics.Bitmap shot=getUiAutomation().takeScreenshot();if(shot!=null)try(java.io.FileOutputStream out=new java.io.FileOutputStream("/storage/emulated/0/Download/RHFiles-QA-player-controls.png")){shot.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out);}finally{shot.recycle();}}
             require(enabled[0],"Tap did not reveal seek/next controls: "+detail[0]);
+            android.graphics.Rect bar=new android.graphics.Rect();runOnMainSync(()->screen.findViewById(progressId).getGlobalVisibleRect(bar));require(bar.width()>100,"Time bar is not available for touch seeking");
+            long scrub=android.os.SystemClock.uptimeMillis();float sy=bar.exactCenterY(),sx=bar.left+bar.width()*.2f,ex=bar.left+bar.width()*.65f;
+            injectContacts(scrub,MotionEvent.ACTION_DOWN,new int[]{0},new float[][]{{sx,sy}});for(int i=1;i<=6;i++){injectContacts(scrub,MotionEvent.ACTION_MOVE,new int[]{0},new float[][]{{sx+(ex-sx)*i/6,sy}});Thread.sleep(25);}injectContacts(scrub,MotionEvent.ACTION_UP,new int[]{0},new float[][]{{ex,sy}});Thread.sleep(450);
+            require(String.valueOf(screen.getTitle()).equals("QA video 1"),"Dragging the time bar switched videos instead of seeking");
             until=System.currentTimeMillis()+15000;while(!hasVideoFrame()&&System.currentTimeMillis()<until)Thread.sleep(250);require(hasVideoFrame(),"Video seek stopped decoding");runOnMainSync(()->screen.findViewById(nextId).performClick());
             until=System.currentTimeMillis()+15000;while(!String.valueOf(screen.getTitle()).equals("QA video 2")&&System.currentTimeMillis()<until)Thread.sleep(150);require(String.valueOf(screen.getTitle()).equals("QA video 2"),"Next did not change the active queue item");
             // The second fixture is solid blue, unlike the first test pattern.
             // Keeping the previous SurfaceView frame cannot satisfy this check.
             until=System.currentTimeMillis()+15000;while(!hasVideoFrame(true)&&System.currentTimeMillis()<until)Thread.sleep(250);require(hasVideoFrame(true),"Next queue item has no new decoded frame");
+            // Normalize controls with real taps before swiping the bare video.
+            // The initial-hidden assertion above must precede all gestures.
+            for(int attempt=0;attempt<2;attempt++){
+                runOnMainSync(()->hidden[0]=!screen.findViewById(progressId).isShown());if(hidden[0])break;
+                long touch=android.os.SystemClock.uptimeMillis();float tx=dimensions[0]*.8f,ty=dimensions[1]*.25f;
+                injectContacts(touch,MotionEvent.ACTION_DOWN,new int[]{0},new float[][]{{tx,ty}});Thread.sleep(80);injectContacts(touch,MotionEvent.ACTION_UP,new int[]{0},new float[][]{{tx,ty}});Thread.sleep(250);
+            }
+            runOnMainSync(()->hidden[0]=!screen.findViewById(progressId).isShown());require(hidden[0],"Cannot hide controls before testing the video surface");
+            videoDrag(screen,48,0);awaitVideoTitle(screen,"QA video 1");
+            until=System.currentTimeMillis()+15000;while((!hasVideoFrame()||hasVideoFrame(true))&&System.currentTimeMillis()<until)Thread.sleep(250);require(hasVideoFrame()&&!hasVideoFrame(true),"Swipe Previous retained the second video's blue frame");
+            videoDrag(screen,-48,0);awaitVideoTitle(screen,"QA video 2");
+            until=System.currentTimeMillis()+15000;while(!hasVideoFrame(true)&&System.currentTimeMillis()<until)Thread.sleep(250);require(hasVideoFrame(true),"Swipe Next has no newly decoded blue frame");
+            videoDrag(screen,48,0);awaitVideoTitle(screen,"QA video 1");
+            videoDrag(screen,48,0);require(String.valueOf(screen.getTitle()).equals("QA video 1"),"Previous at the first item wrapped the playlist");
+            videoDrag(screen,0,90);require(String.valueOf(screen.getTitle()).equals("QA video 1"),"Vertical drag changed videos");
         }finally{removeMonitor(monitor);if(playerActivity!=null){final Activity closing=playerActivity;runOnMainSync(closing::finish);waitForIdleSync();}}
     }
     private void awaitVideoTitle(Activity screen,String title) throws Exception {
