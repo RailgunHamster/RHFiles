@@ -1987,6 +1987,9 @@ function showBlankListContextMenu(x, y, isRight) {
 function showApplicationContextMenu(event) {
   event.preventDefault();
   if (event.target.closest('.context-menu, .ctx-submenu')) return;
+  if(event.target.closest('#sidebar-recycle')){
+    event.stopPropagation();recycleShowSidebarMenu(event.clientX,event.clientY);return;
+  }
   const tabEl = event.target.closest('#tab-bar .tab, #right-tab-bar .tab');
   if (tabEl) {
     event.stopPropagation();

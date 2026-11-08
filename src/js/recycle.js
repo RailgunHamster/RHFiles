@@ -122,17 +122,17 @@ function recycleRender(pane,list,right){
   const state=recycleModel(pane),selected=new Set(recycleSelectedIds(pane)),busy=recycleBusy||state.loading||!!state.error;
   const root=document.createElement('section');root.className='recycle-browser';root.dataset.tabId=pane.id;
   const button=(id,key,icon,disabled)=>'<button class="dialog-btn '+(id==='restore'?'primary':'')+'" data-recycle-control="'+id+'"'+(disabled?' disabled':'')+'>'+(icon?recycleIcon(icon):'')+'<span>'+esc(recycleText(key))+'</span></button>';
-  root.innerHTML='<div class="recycle-toolbar" data-recycle-controls>'+button('restore','restore','restore',busy||!selected.size)+button('keep','keepBoth','',busy||!selected.size)+button('restore-all','restoreAll','',busy||!state.items.length||state.truncated)+'<span class="recycle-flex"></span>'+button('refresh','refresh','refresh',state.loading)+button('system','system','external',false)+'</div>'+
+  root.innerHTML='<div class="recycle-toolbar" data-recycle-controls>'+button('restore','restore','restore',busy||!selected.size)+button('keep','keepBoth','',busy||!selected.size)+button('restore-all','restoreAll','',busy||!state.items.length||state.truncated)+button('empty','empty','trash',busy||!state.items.length||state.truncated)+'<span class="recycle-flex"></span>'+button('refresh','refresh','refresh',state.loading)+button('system','system','external',false)+'</div>'+
     '<div class="recycle-filters" data-recycle-controls><input type="search" data-recycle-control="search" placeholder="'+esc(recycleText('search'))+'" aria-label="'+esc(recycleText('search'))+'" value="'+esc(state.query)+'"><select data-recycle-control="sort" aria-label="'+esc(recycleText('date'))+'">'+[['deletedAt','date'],['name','name'],['originalFolder','folder'],['size','size'],['itemType','type']].map(([field,key])=>'<option value="'+field+'"'+(field===state.sort?' selected':'')+'>'+esc(recycleText(key))+'</option>').join('')+'</select><button class="tb" data-recycle-control="direction" aria-label="'+esc(recycleText(state.descending?'descending':'ascending'))+'">'+(state.descending?'↓':'↑')+'</button></div>'+
     (state.truncated?'<div class="recycle-banner">'+esc(recycleText('partial'))+'</div>':'')+
     (state.error?'<div class="recycle-banner recycle-error" role="alert">'+esc(recycleText('failed',{error:state.error}))+'</div>':'')+
     '<div class="recycle-items" role="grid" aria-label="'+esc(recycleText('title'))+'"></div>'+
     '<div class="recycle-report" data-recycle-control="report" hidden></div>'+
-    '<footer class="recycle-footer" data-recycle-controls><label class="recycle-check-all"><input type="checkbox" data-recycle-control="all"'+(busy?' disabled':'')+'><span>'+esc(recycleText('all'))+'</span></label><span class="recycle-flex"></span>'+button('remove','remove','',busy||!selected.size)+button('empty','empty','trash',busy||!state.items.length||state.truncated)+'</footer>';
+    '<footer class="recycle-footer" data-recycle-controls><label class="recycle-check-all"><input type="checkbox" data-recycle-control="all"'+(busy?' disabled':'')+'><span>'+esc(recycleText('all'))+'</span></label><span class="recycle-flex"></span>'+button('remove','remove','',busy||!selected.size)+'</footer>';
   list.append(root);
   const bind=(name,type,fn)=>RHFilesUI.listen(recycleControl(root,name),type,fn,undefined,'src.js.recycle.location.'+name+'.'+type);
   bind('restore','click',()=>recycleRestore(false,false,pane).catch(()=>{}));bind('keep','click',()=>recycleRestore(true,false,pane).catch(()=>{}));
-  bind('restore-all','click',()=>recycleRestore(false,true,pane).catch(()=>{}));bind('remove','click',()=>recycleDelete(false,pane).catch(()=>{}));bind('empty','click',()=>recycleDelete(true,pane).catch(()=>{}));
+  bind('restore-all','click',()=>recycleRestore(false,true,pane).catch(()=>{}));bind('remove','click',()=>recycleDelete(false,pane).catch(()=>{}));bind('empty','click',()=>recycleEmpty().catch(()=>{}));
   bind('refresh','click',()=>recycleRefresh(pane));bind('system','click',()=>call('recycle_bin_open_system',{}).catch(error=>showNotice(String(error))));
   bind('sort','change',e=>recycleSetSort(e.target.value,state.descending,pane));bind('direction','click',()=>recycleSetSort(state.sort,!state.descending,pane));
   bind('search','input',event=>{const start=event.target.selectionStart;recycleSetQuery(event.target.value,pane);const input=recycleControl(recycleRoot(pane),'search');input.focus();try{input.setSelectionRange(start,start);}catch{}});
@@ -176,7 +176,34 @@ function recycleRender(pane,list,right){
 }
 function recycleShowMenu(x,y,pane=recyclePane()){
   const hasSelection=recycleSelectedIds(pane).length>0;
-  showMenuAt(x,y,[{label:recycleText('restore'),icon:'undo',disabled:!hasSelection||recycleBusy,action:()=>recycleRestore(false,false,pane)},{label:recycleText('keepBoth'),icon:'copy',disabled:!hasSelection||recycleBusy,action:()=>recycleRestore(true,false,pane)},{label:recycleText('copy'),icon:'copyPath',disabled:!hasSelection,action:()=>recycleCopyPaths(pane)},{label:recycleText('remove'),icon:'delete',disabled:!hasSelection||recycleBusy,action:()=>recycleDelete(false,pane)},{label:recycleText('empty'),icon:'delete',disabled:recycleBusy||!recycleModel(pane).items.length||recycleModel(pane).truncated,action:()=>recycleDelete(true,pane)}]);
+  showMenuAt(x,y,[{label:recycleText('restore'),icon:'undo',disabled:!hasSelection||recycleBusy,action:()=>recycleRestore(false,false,pane)},{label:recycleText('keepBoth'),icon:'copy',disabled:!hasSelection||recycleBusy,action:()=>recycleRestore(true,false,pane)},{label:recycleText('copy'),icon:'copyPath',disabled:!hasSelection,action:()=>recycleCopyPaths(pane)},{label:recycleText('remove'),icon:'delete',disabled:!hasSelection||recycleBusy,action:()=>recycleDelete(false,pane)},{label:recycleText('empty'),icon:'delete',disabled:recycleBusy||!recycleModel(pane).items.length||recycleModel(pane).truncated,action:()=>recycleEmpty()}]);
+}
+function recycleShowSidebarMenu(x,y){
+  showMenuAt(x,y,[
+    {label:t('ctx.open'),icon:'open',action:()=>RHFilesAPI.invoke('recycle.open')},
+    {label:t('ctx.newTab'),icon:'tab',action:()=>RHFilesAPI.invoke('recycle.open',{newTab:true})},
+    {label:recycleText('system'),icon:'explorer',action:()=>RHFilesAPI.invoke('recycle.openSystem')},
+    {label:'-'},
+    {label:recycleText('empty'),icon:'delete',disabled:recycleBusy,action:()=>RHFilesAPI.invoke('recycle.empty')},
+  ]);
+}
+async function recycleEmpty(){
+  if(recycleBusy)throw Error(recycleText('busy'));
+  // A detached snapshot keeps this global action independent of tab changes,
+  // filters and selection while preserving the existing two-confirmation plan.
+  const snapshotPane={path:RECYCLE_ROOT,entries:[],sel:new Set(),lastIdx:-1};
+  recycleBusy=true;
+  try{
+    recyclePaintAll();
+    const snapshot=await call('recycle_bin_list',{});
+    if(snapshot.truncated)throw Error(recycleText('partial'));
+    Object.assign(recycleModel(snapshotPane),{items:snapshot.items,total:snapshot.total});
+    if(!snapshot.items.length){showNotice(recycleText('emptyTitle'));return;}
+  }catch(error){showNotice(String(error));throw error;}
+  finally{recycleBusy=false;recyclePaintAll();}
+  const outcome=await recycleDelete(true,snapshotPane);
+  if(outcome){for(const pane of [...G.tabs,...(G.rpTabs||[])])if(isRecyclePath(pane.path))recycleModel(pane).report=outcome;recyclePaintAll();}
+  return outcome;
 }
 async function recycleInspect(entry,pane=recyclePane()){
   if(!entry?.recycle_id||recycleBusy)return;const item=recycleModel(pane).items.find(item=>item.id===entry.recycle_id);if(!item)return;

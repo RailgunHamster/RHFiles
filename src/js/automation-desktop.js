@@ -90,7 +90,7 @@
   register('recycle.select',object({ids:recycleIds,mode:{type:'string',enum:['replace','add','remove']}},['ids']),p=>recycleSetSelection(p.ids,p.mode));
   register('recycle.restore',object({keepBoth:boolean,all:boolean}),p=>recycleRestore(!!p.keepBoth,!!p.all),'write');
   register('recycle.deleteSelected',object(),()=>recycleDelete(false),'destructive','Delete selected recycled items through both confirmations; never accepts arbitrary filesystem paths');
-  register('recycle.empty',object(),()=>recycleDelete(true),'destructive','Review and permanently delete the confirmed snapshot, never newly arriving items');
+  register('recycle.empty',object(),()=>recycleEmpty(),'destructive','Read a fresh Windows Recycle Bin snapshot from any location, then review both confirmations; never delete newly arriving items');
   register('recycle.copyPaths',object(),()=>recycleCopyPaths(),'write');
   register('recycle.openSystem',object(),()=>call('recycle_bin_open_system',{}),'external');
   register('tasks.cancel',object({taskId:string},['taskId']),async p=>{if(!_operationTasks.has(p.taskId))reject('TASK_NOT_FOUND','No such task');await cancelOperation(p.taskId);return {requested:true};});

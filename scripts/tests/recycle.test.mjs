@@ -45,6 +45,45 @@ function operations(confirmations=[true,true],overrides={}){
   c.recycleRebuild(pane,['0123456789abcdef']);
   return {c,calls,dialogs};
 }
+function globalEmpty(confirmations=[false],snapshot={items:[item('fresh-id','fresh.txt')],total:1,truncated:false}){
+  const {c,calls,dialogs}=operations(confirmations,{call:async(name,args)=>{
+    calls.push({name,args});
+    if(name==='recycle_bin_list')return snapshot;
+    if(name==='recycle_bin_prepare_delete')return {planId:'global-plan',count:args.ids.length,names:['fresh.txt']};
+  }});
+  load(c,'recycle.js',['recycleEmpty']);return {c,calls,dialogs};
+}
+test('global Empty reads a fresh snapshot without navigating or using cached selection/filter',async()=>{
+  const {c,calls,dialogs}=globalEmpty([true,true]);c.pane.path='D:\\work';c.state.query='owned';
+  const entries=c.pane.entries;await c.recycleEmpty();
+  assert.equal(c.pane.path,'D:\\work');assert.equal(c.pane.entries,entries);assert.equal(dialogs.length,2);
+  assert.deepEqual(calls.map(call=>call.name),['recycle_bin_list','recycle_bin_prepare_delete','run','recycle_bin_discard_plan']);
+  assert.deepEqual(plain(calls.find(call=>call.name==='run').args.ids),['fresh-id']);
+});
+test('global Empty refuses partial or failed reads and silently avoids destructive calls for an empty bin',async()=>{
+  const partial=globalEmpty([],{items:[],total:10,truncated:true});await assert.rejects(partial.c.recycleEmpty(),/部分/);
+  assert.deepEqual(partial.calls.map(call=>call.name),['recycle_bin_list']);assert.equal(vm.runInContext('recycleBusy',partial.c),false);
+  const empty=globalEmpty([],{items:[],total:0,truncated:false});await empty.c.recycleEmpty();assert.equal(empty.dialogs.length,0);assert.deepEqual(empty.calls.map(call=>call.name),['recycle_bin_list']);
+});
+test('a pending global read reserves the same busy guard as in-view deletion',async()=>{
+  const read=deferred(),{c}=operations([false],{call:async(name,args)=>name==='recycle_bin_list'?read.promise:{planId:'held',count:args.ids?.length||0,names:[]}});
+  load(c,'recycle.js',['recycleEmpty']);const first=c.recycleEmpty();
+  await assert.rejects(c.recycleEmpty(),/运行/);await assert.rejects(c.recycleDelete(),/运行/);
+  c.pane.path='D:\\another-folder';const entries=c.pane.entries;
+  read.resolve({items:[item('new-id','new.txt')],total:1,truncated:false});await first;
+  assert.equal(c.pane.path,'D:\\another-folder');assert.equal(c.pane.entries,entries);assert.equal(vm.runInContext('recycleBusy',c),false);
+});
+test('right-clicking the sidebar Recycle Bin routes to its own menu even on a nested icon',()=>{
+  const calls=[],c=context({recycleShowSidebarMenu:(...args)=>calls.push(args)});load(c,'ops.js',['showApplicationContextMenu']);let stopped=0,prevented=0;
+  c.showApplicationContextMenu({clientX:22,clientY:33,target:{closest:selector=>selector==='#sidebar-recycle'?{}:null},preventDefault:()=>prevented++,stopPropagation:()=>stopped++});
+  assert.deepEqual(calls,[[22,33]]);assert.equal(prevented,1);assert.equal(stopped,1);
+});
+test('sidebar menu calls the global confirmed empty API and is disabled while busy',async()=>{
+  const {c}=operations(),calls=[];c.t=key=>key;c.showMenuAt=(_x,_y,items)=>{c.items=items;};c.RHFilesAPI={invoke:async(...args)=>calls.push(args)};
+  load(c,'recycle.js',['recycleShowSidebarMenu']);c.recycleShowSidebarMenu(0,0);
+  const empty=c.items.find(item=>item.label==='清空回收站');assert(empty);assert.equal(empty.disabled,false);await empty.action();assert.deepEqual(calls,[['recycle.empty']]);
+  vm.runInContext('recycleBusy=true',c);c.recycleShowSidebarMenu(0,0);assert.equal(c.items.find(item=>item.label==='清空回收站').disabled,true);
+});
 test('Permanent deletion reserves a snapshot and needs both confirmations',async()=>{
   const {c,calls,dialogs}=operations();await c.recycleDelete();
   assert.equal(dialogs.length,2);assert.match(dialogs[0].detail,/owned.txt/);

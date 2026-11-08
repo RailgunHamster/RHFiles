@@ -92,6 +92,8 @@ Windows 设备地址支持 `rh://设备名/共享名/路径`（重名时 `rh://�
 
 Windows 回收站提供 `recycle.open`、`recycle.list`（分页）、`recycle.filter`、`recycle.sort`、`recycle.select`、`recycle.restore`、`recycle.deleteSelected`、`recycle.empty`、`recycle.copyPaths` 等语义接口。先打开或刷新，再按不透明 `id` 选择；不要把 `id` 当成文件路径。恢复默认跳过同名项目，`keepBoth:true` 保留两份。永久删除仍须完成两次 UI 确认，清空只影响本次确认快照，不影响新进入回收站的项目。
 
+`recycle.empty` 可以从任意位置调用，与回收站顶部按钮及左侧导航“回收站”的右键菜单相同；会重新读取完整列表，不改变当前标签页，不受筛选或选择影响。空回收站直接提示，无法完整读取时拒绝清空。
+
 回收站也是普通标签页中的虚拟位置 `recycle://`：支持地址栏、标签页复制、前进/后退，以及左右窗格。`recycle.open` 的 `pane` 指定窗格，`newTab:true` 新建标签页；筛选、排序和选择分别保存在每个标签页。通用的导航、标签页和选择接口也适用于这个位置。项目的 `path` 为只读标识 `recycle://<id>`，不能用于文件系统读写、预览、终端、粘贴或拖拽操作；需先恢复到真实路径。
 
 `npm test` 先检查第一方网页 UI 绑定是否全部使用动作表，再跑业务测试。新增按钮、快捷键、菜单和手势须通过 `RHFilesUI.listen/assign` 接入，不能直接另写未登记的监听器。HTML 内联回调在查询时登记；第三方组件、系统 UI、生命周期通知不机械改写。
