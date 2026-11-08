@@ -73,6 +73,7 @@ mod network_tests {
     }
 }
 pub struct State {
+    operations: crate::operations::Operations,
     pub invitations: crate::invitations::Invitations,
     pub groups: Arc<crate::groups::Groups>,
     pub host: Mutex<Option<crate::groups::Server>>,
@@ -110,6 +111,7 @@ impl State {
             .locksystem(locks.clone())
             .build_handler();
         Ok(Self {
+            operations: Default::default(),
             invitations: Default::default(),
             groups,
             host: Mutex::new(None),
@@ -366,7 +368,39 @@ struct GroupSession {
     proof: crate::groups::Signed,
 }
 
-async fn handle(s: Arc<State>, mut r: Request) -> Result<Response> {
+async fn handle(s: Arc<State>, r: Request) -> Result<Response> {
+    let path=r.uri().path();
+    let submit=r.method()==Method::POST&&crate::operations::supported(path)&&r.headers().contains_key(crate::operations::HEADER);
+    let lookup=r.method()==Method::GET&&path.starts_with(crate::operations::PREFIX);
+    if !submit&&!lookup{return handle_direct(s,r).await;}
+    if r.headers().contains_key("Origin"){return Err(Error::new("forbidden","不接受跨站请求"));}
+    let a=s.auth.authenticate_grouped(header(&r,"Authorization"),r.method().as_str(),Some(&s.groups))?;
+    a.check(false,false)?;
+    if a.compatibility_binding.is_some(){return Err(Error::new("forbidden","兼容凭据仅能用于 WebDAV"));}
+    if lookup{return Ok(s.operations.lookup(path.strip_prefix(crate::operations::PREFIX).unwrap(),&a.id)?.response());}
+    let id=header(&r,crate::operations::HEADER).ok_or_else(||bad("操作标识无效"))?.to_owned();
+    let endpoint=path.to_owned();
+    let (parts,body)=r.into_parts();
+    let bytes=axum::body::to_bytes(body,65536).await.map_err(|_|bad("操作参数过大"))?;
+    let digest=format!("{:x}",Sha256::digest([endpoint.as_bytes(),b"\0",bytes.as_ref()].concat()));
+    let (receipt,fresh)=s.operations.submit(&id,&a.id,&digest)?;
+    if fresh {
+        let receipt=receipt.clone();
+        // Own the execution independently of the HTTP request/connection.
+        tokio::spawn(async move {
+            let work=tokio::spawn(async move {handle_direct(s,Request::from_parts(parts,Body::from(bytes))).await});
+            let response=match work.await {Ok(Ok(r))=>r,Ok(Err(e))=>e.into_response(),Err(_)=>Error::new("internal","远端任务异常结束，请核对结果；未重放操作").into_response()};
+            let status=response.status();
+            match axum::body::to_bytes(response.into_body(),65536).await {
+                Ok(bytes)=>receipt.finish(status,bytes),
+                Err(_)=>receipt.finish(StatusCode::INTERNAL_SERVER_ERROR,bytes::Bytes::from_static(b"{\"error\":{\"code\":\"receipt_unavailable\"}}")),
+            }
+        });
+    }
+    Ok(receipt.response())
+}
+
+async fn handle_direct(s: Arc<State>, mut r: Request) -> Result<Response> {
     let path = r.uri().path().to_owned();
     let method = r.method().clone();
     // Refuse browser cross-origin writes, including Basic-authenticated ones.
@@ -586,7 +620,7 @@ async fn handle(s: Arc<State>, mut r: Request) -> Result<Response> {
         return Ok(response.map(Body::new));
     }
     match (method.as_str(),path.as_str()) {
-        ("GET","/api/v1/capabilities")=>Ok(Json(serde_json::json!({"protocol":1,"name":"RHFiles","permissions":a.permissions,"features":["list","stat","range","versioned-ranges-sha256","mkdir","rename","delete","tus","webdav","image-thumbnails","checked-mutations","webdav-client-grant"],"recycleBin":cfg!(windows),"windowsCompatibility":s.compatibility.lock().unwrap().clone(),"overwrite":false,"webdav":"/dav/","uploads":"/api/v1/uploads","maxUpload":MAX_UPLOAD})).into_response()),
+        ("GET","/api/v1/capabilities")=>Ok(Json(serde_json::json!({"protocol":1,"name":"RHFiles","permissions":a.permissions,"features":["list","stat","range","versioned-ranges-sha256","mkdir","rename","delete","tus","webdav","image-thumbnails","checked-mutations","async-mutation-receipts","webdav-client-grant"],"recycleBin":cfg!(windows),"windowsCompatibility":s.compatibility.lock().unwrap().clone(),"overwrite":false,"webdav":"/dav/","uploads":"/api/v1/uploads","maxUpload":MAX_UPLOAD})).into_response()),
         ("GET","/api/v1/list")=>{
             let q:ListQuery=query(&r)?;if q.limit==0||q.limit>2000{return Err(bad("limit 必须在 1–2000 之间"));}
             let cached=s.cache.lock().unwrap().get(&q.path).filter(|c|header(&r,"Cache-Control")!=Some("no-cache")&&c.0.elapsed()<Duration::from_secs(2)).cloned();

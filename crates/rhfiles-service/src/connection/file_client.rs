@@ -298,6 +298,9 @@ impl FileRequest {
                 | Self::UploadStatus { .. }
         )
     }
+    fn tracked_mutation(&self) -> bool {
+        matches!(self,Self::Recycle{..}|Self::RestoreRecycle{..}|Self::CheckedMutation{..}|Self::Delete{..}|Self::Copy{..}|Self::Rename{..}|Self::Mkdir{..})
+    }
     fn build(&self, route: &Route) -> Result<RequestBuilder, String> {
         let (method, endpoint) = match self {
             Self::Capabilities => (Method::GET, "capabilities".into()),
@@ -342,6 +345,10 @@ impl FileRequest {
             .timeout(Duration::from_secs(
                 if matches!(self, Self::Content { .. } | Self::ContentChecked { .. }) {
                     3600
+                } else if self.tracked_mutation() {
+                    // Old hosts execute synchronously. New hosts acknowledge
+                    // immediately and expose a receipt instead of a long POST.
+                    600
                 } else {
                     30
                 },
@@ -496,6 +503,30 @@ impl FileResponse {
     }
 }
 impl Connector {
+    async fn mutation_result(route:&Route,id:&str,lease:&FileLease)->Result<Response,String>{
+        let deadline=Instant::now()+Duration::from_secs(15*60);
+        let unknown="[operation_outcome_unknown] 远端操作结果尚未确认，请查看目标及回收站；没有重复发送操作";
+        let mut failures=0;
+        for attempt in 0..200 {
+            lease.check()?;
+            if Instant::now()>=deadline{return Err(unknown.into());}
+            let response=route.client.get(format!("{}{}/{id}",route.endpoint,crate::operations::PREFIX.trim_end_matches('/')))
+                .basic_auth(&route.username,Some(&route.password)).timeout(Duration::from_secs(10)).send().await;
+            lease.check()?;
+            match response {
+                Ok(r)=>{
+                    if r.status()==reqwest::StatusCode::NOT_FOUND{return Err("[operation_outcome_unknown] 远端任务回执不可用（服务可能已重启），不能据此判断操作失败；没有重复发送操作".into());}
+                    if r.status().is_success()&&r.headers().get(crate::operations::HEADER).and_then(|v|v.to_str().ok())!=Some(id){return Err("[invalid_response] 远端任务标识不匹配，未重复操作".into());}
+                    if r.status()!=reqwest::StatusCode::ACCEPTED{return Ok(r);}
+                    if r.headers().get(crate::operations::HEADER).and_then(|v|v.to_str().ok())!=Some(id){return Err("[invalid_response] 远端任务标识不匹配，未重复操作".into());}
+                    failures=0;
+                }
+                Err(_)=>{failures+=1;if failures>=3{return Err(unknown.into());}}
+            }
+            tokio::time::sleep(Duration::from_millis(if attempt<2{250}else if attempt<10{1000}else{5000})).await;
+        }
+        Err(unknown.into())
+    }
     pub fn file_lease(&self, group: &str, peer: &str) -> Result<FileLease, String> {
         let stamp = self.file_epoch.load(Ordering::SeqCst);
         let session = self
@@ -622,6 +653,7 @@ impl Connector {
             epoch: self.file_epoch.clone(),
             stamp,
         };
+        let operation_id=if operation.tracked_mutation(){Some(format!("{}.{}",crate::model::now_ms(),crate::model::random().map_err(|e|e.to_string())?))}else{None};
         for attempt in 0..2 {
             lease.check()?;
             let route = if let Some(route) = self.usable_file_route(group, peer) {
@@ -639,8 +671,27 @@ impl Connector {
             };
             lease.check()?;
             let start = Instant::now();
-            let response = operation.build(&route)?.send().await;
+            let mut request=operation.build(&route)?;
+            if let Some(id)=&operation_id{request=request.header(crate::operations::HEADER,id);}
+            let response = request.send().await;
             lease.check()?;
+            let response=if let Some(id)=&operation_id {
+                let pending=match &response {
+                    Ok(r)=>{
+                        if r.status()==reqwest::StatusCode::ACCEPTED&&r.headers().get(crate::operations::HEADER).and_then(|v|v.to_str().ok())!=Some(id.as_str()){
+                            return Err("[invalid_response] 远端任务标识不匹配，未重复操作".into());
+                        }
+                        r.status()==reqwest::StatusCode::ACCEPTED
+                    },
+                    Err(e)=>!format!("{e:?}").contains("identity_mismatch"),
+                };
+                if pending {
+                    match Self::mutation_result(&route,id,&lease).await {
+                        Ok(r)=>Ok(r),
+                        Err(error)=>{self.file_report(group,peer,&operation,&route,start,false,"operation_outcome_unknown".into());return Err(error);}
+                    }
+                }else{response}
+            }else{response};
             let (success, code) = match &response {
                 Ok(response) => (
                     response.status().is_success(),

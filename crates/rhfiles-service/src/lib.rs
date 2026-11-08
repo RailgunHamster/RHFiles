@@ -13,6 +13,7 @@ mod identity;
 mod invitations;
 mod locks;
 mod model;
+mod operations;
 mod network_scope;
 mod storage;
 mod uploads;

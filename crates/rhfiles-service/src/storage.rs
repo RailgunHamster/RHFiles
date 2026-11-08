@@ -927,6 +927,51 @@ fn rename_noreplace(
         from.remove_file(source)
     }
 }
+#[cfg(test)]
+mod long_operation_tests {
+    use super::*;
+    use crate::{Service,Permissions,connection::{Connector,FileRequest},groups::Groups};
+    use serde_json::json;
+    #[tokio::test(flavor="multi_thread",worker_threads=2)]
+    async fn real_tls_mutation_waits_beyond_thirty_seconds_and_receipt_never_deletes_a_new_occupant(){
+        let data=tempfile::tempdir().unwrap();let files=tempfile::tempdir().unwrap();
+        let root=files.path().canonicalize().unwrap();let path=root.join("delayed.txt");std::fs::write(&path,b"original").unwrap();
+        let server=Service::start(data.path(),vec![ShareConfig{name:"Files".into(),path:root}],"127.0.0.1:0".parse().unwrap()).unwrap();
+        let host=server.groups();let group=host.create("Async QA","Host",Permissions{write:true,delete:true}).unwrap();server.advertise_group_host().unwrap();
+        let guest_data=tempfile::tempdir().unwrap();let guest=Arc::new(Groups::open(guest_data.path()).unwrap());
+        guest.join(host.approve(&group,&guest.request("Client").unwrap(),true).unwrap(),Permissions::default()).unwrap();
+        let connector=Arc::new(Connector::new(guest.clone()));let peer=host.device_id();
+        let stat=connector.file_request(&group,&peer,FileRequest::Stat{path:"/Files/delayed.txt".into()}).await.unwrap().json(65536).await.unwrap();
+        let revision=stat["revision"].as_str().unwrap().to_string();
+        // Hold the real storage mutation lock. The HTTP acknowledgement must
+        // return independently while the actual filesystem operation waits.
+        let storage=server.state.storage.clone();let (ready_tx,ready_rx)=tokio::sync::oneshot::channel();let (release_tx,release_rx)=std::sync::mpsc::channel();
+        let holder=std::thread::spawn(move||{let _guard=storage.mutation.lock().unwrap();ready_tx.send(()).unwrap();let _=release_rx.recv_timeout(std::time::Duration::from_secs(80));});
+        ready_rx.await.unwrap();
+        let c=connector.clone();let g=group.clone();let p=peer.clone();let rev=revision.clone();
+        let task=tokio::spawn(async move{c.file_request(&g,&p,FileRequest::CheckedMutation{path:"/Files/delayed.txt".into(),destination:None,revision:rev,target_revision:None}).await});
+        tokio::time::sleep(std::time::Duration::from_secs(31)).await;
+        assert!(!task.is_finished(),"A slow operation must remain pending, not fail after 30 seconds");assert!(path.exists());
+        release_tx.send(()).unwrap();holder.join().unwrap();
+        let result=tokio::time::timeout(std::time::Duration::from_secs(12),task).await.unwrap().unwrap().unwrap();
+        assert_eq!(result.response.status(),reqwest::StatusCode::NO_CONTENT);assert!(!path.exists());
+        let id=result.response.headers().get(crate::operations::HEADER).unwrap().to_str().unwrap().to_string();
+        std::fs::write(&path,b"new occupant").unwrap();
+        let credential=server.state.auth.group_session(host.clone(),&group,&guest.device_id()).unwrap();
+        let http=reqwest::Client::builder().no_proxy().add_root_certificate(reqwest::Certificate::from_pem(server.status().certificate_pem.as_bytes()).unwrap()).build().unwrap();
+        let url=format!("https://127.0.0.1:{}",server.status().port);
+        let auth=|request:reqwest::RequestBuilder|request.basic_auth(credential["username"].as_str().unwrap(),credential["password"].as_str());
+        let same=auth(http.post(format!("{url}/api/v1/delete-checked"))).header(crate::operations::HEADER,&id).json(&json!({"path":"/Files/delayed.txt","revision":revision,"destination":null,"targetRevision":null})).send().await.unwrap();
+        assert_eq!(same.status(),reqwest::StatusCode::NO_CONTENT);assert_eq!(std::fs::read(&path).unwrap(),b"new occupant");
+        let changed=auth(http.post(format!("{url}/api/v1/delete-checked"))).header(crate::operations::HEADER,&id).json(&json!({"path":"/Files/other.txt","revision":revision,"destination":null,"targetRevision":null})).send().await.unwrap();
+        assert_eq!(changed.status(),reqwest::StatusCode::CONFLICT);
+        assert_eq!(auth(http.get(format!("{url}{}{id}",crate::operations::PREFIX))).send().await.unwrap().status(),reqwest::StatusCode::NO_CONTENT);
+        host.remove(&group,&guest.device_id()).unwrap();
+        assert!(!auth(http.get(format!("{url}{}{id}",crate::operations::PREFIX))).send().await.unwrap().status().is_success());
+        assert_eq!(std::fs::read(&path).unwrap(),b"new occupant");
+    }
+}
+
 fn volume_space(path: &Path) -> Option<(u64, u64)> {
     #[cfg(windows)]
     {
