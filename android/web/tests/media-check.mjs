@@ -4,7 +4,7 @@ const fixture=await browserFixture(path.resolve(path.dirname(fileURLToPath(impor
 const context=await fixture.browser.newContext({viewport:{width:412,height:892},hasTouch:true});const page=await context.newPage();let checks=0;const errors=[];page.on('pageerror',e=>errors.push(e.message));
 const check=(value,label)=>{assert.ok(value,label);console.log('ok '+(++checks)+' - '+label)};
 await context.addInitScript(()=>{
- const local='/storage/emulated/0',remote='remote://qa/',pixel='data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+ const local='/storage/emulated/0',remote='remote://aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/',pixel='data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
  const entry=(name,kind,parent=local)=>({name,kind,path:parent+name,isDir:kind==='folder',size:128,modifiedMs:1});
  const m=window.__media={calls:[],roots:[{path:local,label:'内部存储'},{path:remote,label:'家用 NAS',network:true,provider:true,protocol:'smb'}],files:{[local]:['a.jpg','b.jpg','c.jpg'].map(name=>entry(name,'image',local+'/')).concat(['a.mp4','b.mp4'].map(name=>entry(name,'video',local+'/'))),[remote]:[entry('相册','folder',remote)],[remote+'相册']:[entry('photo.jpg','image',remote+'相册/'),entry('a.mp4','video',remote+'相册/'),entry('b.mp4','video',remote+'相册/')]} };
  window.__TAURI_INTERNALS__={convertFileSrc:()=>pixel,invoke:async(cmd,args={})=>{switch(cmd){case 'get_permission_status':return {manageExternalStorage:true,sharedStorageReadable:true};case 'index_status':return {entryCount:1,indexing:false};case 'app_info':return {version:'media-qa'};case 'debug_note':return;case 'list_dir':return {path:args.path,entries:m.files[args.path]||[]};case 'get_logs':return {entries:[]};default:throw Error('Unmocked Rust '+cmd)}}};
@@ -19,9 +19,9 @@ try{
  await drawer();check(await page.locator('#roots button').allTextContents().then(a=>a.some(t=>t.includes('内部存储'))&&a.some(t=>t.includes('家用 NAS'))),'saved SMB sits alongside internal storage');
  await page.locator('#roots button').filter({hasText:'家用 NAS'}).click();await name('相册').click();await name('photo.jpg').waitFor();
  await page.locator('#btn-overflow').click();await page.getByRole('button',{name:'收藏此文件夹',exact:true}).click();
- check(await page.evaluate(()=>JSON.parse(localStorage.getItem('rhfiles.favorites')).some(f=>f.path==='remote://qa/相册')),'SMB subfolders can be saved directly to quick access');
+ check(await page.evaluate(()=>JSON.parse(localStorage.getItem('rhfiles.favorites')).some(f=>f.path==='remote://aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/相册')),'SMB subfolders can be saved directly to quick access');
  await drawer();await page.locator('#nav-home').click();await drawer();await page.locator('#nav-favorites button').filter({hasText:'相册'}).click();await name('photo.jpg').waitFor();
- check(await page.evaluate(()=>rhfilesPane.snapshot().route.path)==='remote://qa/相册','quick access returns directly to the SMB subfolder');
+ check(await page.evaluate(()=>rhfilesPane.snapshot().route.path)==='remote://aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/相册','quick access returns directly to the SMB subfolder');
  await name('a.mp4').click();const play=await page.evaluate(()=>__media.calls.filter(c=>c.command==='media.play').at(-1));
  check(play.args.queue.length===2&&play.args.queue.every(e=>e.path.startsWith('remote://')),'network video goes to native playback with its neighboring videos');
  await name('photo.jpg').click();await page.locator('.gallery-page[data-relative="0"] img').waitFor();await page.waitForFunction(()=>document.querySelector('.gallery-page[data-relative="0"] img').complete);
@@ -44,4 +44,4 @@ try{
  await page.locator('#nav-settings').click();await page.locator('#drawer').waitFor({state:'hidden'});await touch('touchstart',80,300);await touch('touchmove',85,500);await touch('touchend',85,500);check(await page.locator('#drawer').isHidden(),'vertical scrolling settings never opens the drawer');
  await touch('touchstart',80,300);await touch('touchmove',220,301);await touch('touchend',220,301);await page.locator('#drawer').waitFor();check(true,'drawer can be summoned in Settings');
  check(errors.length===0,'no unhandled frontend errors: '+errors.join(';'));console.log('PASS '+checks+' media UI checks (native bridge mocked)');
-}finally{await context.close();await fixture.close()}
+}catch(error){console.error(JSON.stringify({errors,banner:await page.locator('#banner').textContent(),state:await page.evaluate(()=>rhfilesPane.snapshot()),list:await page.locator("#filelist").innerText(),calls:await page.evaluate(()=>__media.calls.filter(c=>c.command!=="jobs").slice(-15))},null,2));throw error;}finally{await context.close();await fixture.close()}

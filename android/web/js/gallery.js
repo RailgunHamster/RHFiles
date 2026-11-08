@@ -1,6 +1,19 @@
 /* Three bounded pages: adjacent pictures move with the finger, not a swap on Up. */
 const androidGallery=(()=>{
+  let active=null;
+  function mode(){return localStorage.getItem('rhfiles.imageBrowseMode')==='continuous'?'continuous':'paged';}
+  function state(){return active?{open:true,mode:active.mode,...active.state()}:{open:false,mode:mode()};}
+  function control(command){if(!active)throw Error('图片浏览器未打开');const action=active.controls[command];if(!action)throw Error('未知图片操作');action();return state();}
+  function setMode(value){
+    if(!['paged','continuous'].includes(value))throw Error('图片浏览模式无效');
+    localStorage.setItem('rhfiles.imageBrowseMode',value);
+    document.querySelectorAll('[data-gallery-mode]').forEach(element=>{element.value=value;});
+    if(active&&active.mode!==value){const view=active,entry=view.entry();ui.closeSheet();open(entry,view.entries,view.app);}
+    return state();
+  }
+  function register(view){active=view;return ()=>{if(active===view)active=null;};}
   function open(entry,entries,app){
+    if(mode()==='continuous')return androidContinuousGallery.open(entry,entries,app,register);
     const images=entries.filter(e=>!e.isDir&&e.kind==='image');if(!images.some(e=>e.path===entry.path))images.push(entry);
     let index=images.findIndex(e=>e.path===entry.path),epoch=0,zoom=1,rotation=0,x=0,y=0,origin,samples=[],dx=0,dy=0,moved=false,sliding=false,settling=false,tapTimer,settleTimer;
     const controller=new AbortController(),signal=controller.signal,points=new Map(),cache=new Map();
@@ -8,15 +21,17 @@ const androidGallery=(()=>{
     const viewport=ui.el('div','media-viewport'),track=ui.el('div','gallery-track'),header=ui.el('header','viewer-topbar'),title=ui.el('div','viewer-filename'),toolbar=ui.el('div','viewer-toolbar'),info=ui.el('div','viewer-info');
     title.id='viewer-filename';viewport.append(track);panel.append(viewport,header,toolbar,info);let currentImage;
     function icon(label,name,fn){const button=app.button('',name,fn,'media-icon-btn');button.setAttribute('aria-label',label);button.title=label;button.querySelector('span')?.remove();return button;}
-    header.append(icon('返回文件列表','back',()=>ui.closeSheet()),title,icon('分享图片','share',()=>images[index].path.startsWith('remote://')?ui.toast('网络图片可先保存到本机，再使用系统分享'):api.shareFile(images[index].path)));
+    header.append(icon('返回文件列表','back',()=>ui.closeSheet()),title,icon('连续浏览','continuous',()=>setMode('continuous')),icon('分享图片','share',()=>images[index].path.startsWith('remote://')?ui.toast('网络图片可先保存到本机，再使用系统分享'):api.shareFile(images[index].path)));
     const previous=icon('上一张','previous',()=>animate(-1)),next=icon('下一张','next',()=>animate(1));
     const transform=()=>{if(currentImage)currentImage.style.transform=`translate(${x}px,${y}px) scale(${zoom}) rotate(${rotation}deg)`;};
-    toolbar.append(previous,icon('缩小','zoomOut',()=>{zoom=Math.max(.25,zoom/1.4);transform();}),icon('适应','fit',()=>{zoom=1;x=y=0;transform();}),icon('旋转','rotate',()=>{rotation=(rotation+90)%360;transform();}),icon('放大','zoomIn',()=>{zoom=Math.min(8,zoom*1.4);transform();}),next);
+    const controls={previous:()=>animate(-1),next:()=>animate(1),zoomOut:()=>{zoom=Math.max(.25,zoom/1.4);transform();},fit:()=>{zoom=1;x=y=0;transform();},rotate:()=>{rotation=(rotation+90)%360;transform();},zoomIn:()=>{zoom=Math.min(8,zoom*1.4);transform();}};
+    toolbar.append(previous,icon('缩小','zoomOut',controls.zoomOut),icon('适应','fit',controls.fit),icon('旋转','rotate',controls.rotate),icon('放大','zoomIn',controls.zoomIn),next);
+    const clearView=register({mode:'paged',entry:()=>images[index],entries,app,controls,state:()=>({path:images[index].path,index,count:images.length,position:index,zoom,rotation})});
     function source(item){const key=JSON.stringify([item.path,item.modifiedMs,item.size]);if(!cache.has(key)){if(cache.size>=5)cache.delete(cache.keys().next().value);cache.set(key,api.imageUrl(item));}return cache.get(key);}
     function render(){
       const token=++epoch;currentImage=null;track.replaceChildren();track.style.transition='none';track.style.transform='translateX(0px)';dx=dy=0;zoom=1;x=y=0;rotation=0;
       title.textContent=images[index].name;info.textContent=(index+1)+' / '+images.length;previous.disabled=index===0;next.disabled=index===images.length-1;
-      for(let relative=-1;relative<=1;relative++){
+      for(const relative of [0,1,-1]){
         const item=images[index+relative];if(!item)continue;
         const page=ui.el('div','gallery-page');page.style.left=relative*100+'%';page.dataset.relative=relative;
         const image=new Image();image.className='full-media';image.alt=relative===0?item.name:'';image.decoding='async';image.draggable=false;
@@ -60,8 +75,8 @@ const androidGallery=(()=>{
     RHFilesUI.listen(viewport,'dblclick',()=>{clearTimeout(tapTimer);zoom=zoom===1?2:1;x=y=0;transform();},{signal},"android.web.js.gallery.open.ecc9bd5c139a");
     RHFilesUI.listen(viewport,'wheel',event=>{event.preventDefault();zoom=Math.max(.25,Math.min(8,zoom*(event.deltaY>0?.9:1.1)));transform();},{passive:false,signal},"android.web.js.gallery.open.eb6ce9fd7939");
     RHFilesUI.listen(document,'keydown',event=>{if(event.key==='ArrowRight')animate(1);if(event.key==='ArrowLeft')animate(-1);},{signal},"android.web.js.gallery.open.ea5a60ea371d");
-    ui.onClosed(()=>{controller.abort();clearTimeout(tapTimer);clearTimeout(settleTimer);epoch++;for(const image of track.querySelectorAll('img'))image.removeAttribute('src');cache.clear();});
+    ui.onClosed(()=>{clearView();controller.abort();clearTimeout(tapTimer);clearTimeout(settleTimer);epoch++;for(const image of track.querySelectorAll('img'))image.removeAttribute('src');cache.clear();});
     render();
   }
-  return {open};
+  return {open,mode,setMode,state,control};
 })();

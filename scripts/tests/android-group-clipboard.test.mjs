@@ -22,6 +22,7 @@ for(const mode of ['async','webview-denied','unavailable'])test('Android group s
     $:id=>{if(!nodes.has(id))nodes.set(id,{});return nodes.get(id);},setSettingsSection(){},settingsSection:'storage',
     api:{permissionStatus:async()=>({manageExternalStorage:true}),indexStatus:async()=>({indexing:false,entryCount:0}),appInfo:async()=>({version:'0.1.38'}),updatesAvailable:()=>false,syncAvailable:()=>false},
     fmt:{count:String},refreshAutomationSetting:async()=>{},error:err=>{throw err;},deviceGroupView:{mount:async(_root,options)=>{mounted=options;}}});
+  ctx.androidGallery={mode:()=> 'paged'};
   declaration(ctx,'ui.js','copyText');ctx.ui.copyText=vm.runInContext('copyText',ctx);
   declaration(ctx,'app.js','refreshSettings');await vm.runInContext('refreshSettings()',ctx);
   assert.equal(mounted.copy,ctx.ui.copyText,'Use the platform adapter instead of the denied raw iframe Clipboard API');

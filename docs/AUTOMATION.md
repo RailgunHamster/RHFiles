@@ -96,6 +96,12 @@ Windows 回收站提供 `recycle.open`、`recycle.list`（分页）、`recycle.f
 
 侧栏整组排序使用 `sidebar.order.get` 获取分组 ID、名称、是否存在和当前可见性。`sidebar.order.set` 接受 `{ "order": ["recycle", "devices", "favorites", "quickAccess"] }`，未列出的分组按默认顺序追加；重复或未知 ID 会被拒绝。`sidebar.groups.move` 接受 `{ "id": "recycle", "target": "devices", "after": false }`，移动整组并保留组内项目和当前导航状态；`sidebar.order.reset` 恢复默认，`sidebar.customize` 打开设置中的顺序配置。它们与拖动手柄、设置箭头共用实现，修改立即保存到 `rhfiles-settings.sidebarSectionOrder`，包含在完整配置备份中。暂时隐藏的云盘、WSL 等分组也保留顺序。
 
+Android 文本查看提供 `preview.text.read {path,maxBytes?}`（默认 256 KiB，最多 1 MiB）、`preview.text.open {path,name}`、`preview.text.state` 与 `preview.text.control {command}`。本地、文档提供器、网络位置和 RHFiles 设备共用内容探测与有限读取，不创建下载任务；JSON、Markdown、日志、CSV、XML、YAML、INI 和常见源码扩展名点击即预览，未知扩展名可从更多菜单选择文本预览。控制命令包括 `source`、`reading`（Markdown）、`formatted`（JSON）、`more`、`previousPart`、`nextPart`、`copy`、`close`。`state` 返回读取／错误状态、编码、截断标记及当前分段，长文本不会一次铺满界面；关闭会取消本次读取与排版。
+
+Android 图片通过 `gallery.mode.set {mode:"paged"|"continuous"}` 切换逐张翻页与自由连续横向滚动，也可在查看器和浏览与显示设置中修改。默认 `paged`；`continuous` 的 `gallery.state.position` 可以是小数，松手后不吸附。`gallery.control {command}` 支持 `previous`、`next`、`zoomIn`、`zoomOut`、`fit`、`rotate`。模式会进入完整配置备份。
+
+远程单个 APK 的 `files.cacheApk {path}` 立即返回 `jobId`，通过 `tasks.list` 读取缓存进度与最终状态。它使用应用私有工作缓存，最多 2 GiB，校验完整性与 APK 格式后才提供输出；缓存按七天有效期及总预算清理。仅在任务 `completed` 后调用 `files.installCachedApk {jobId}` 打开系统安装确认，缓存失效或任务失败会明确报错。正常点击远程 APK 使用相同后台缓存路径，留在前台时自动交接系统安装器；离开界面后可从已完成任务点击安装。接口不绕过 Android 的未知来源授权或安装确认。
+
 回收站也是普通标签页中的虚拟位置 `recycle://`：支持地址栏、标签页复制、前进/后退，以及左右窗格。`recycle.open` 的 `pane` 指定窗格，`newTab:true` 新建标签页；筛选、排序和选择分别保存在每个标签页。通用的导航、标签页和选择接口也适用于这个位置。项目的 `path` 为只读标识 `recycle://<id>`，不能用于文件系统读写、预览、终端、粘贴或拖拽操作；需先恢复到真实路径。
 
 `npm test` 先检查第一方网页 UI 绑定是否全部使用动作表，再跑业务测试。新增按钮、快捷键、菜单和手势须通过 `RHFilesUI.listen/assign` 接入，不能直接另写未登记的监听器。HTML 内联回调在查询时登记；第三方组件、系统 UI、生命周期通知不机械改写。

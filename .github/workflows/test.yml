@@ -42,6 +42,10 @@ jobs:
       - run: npm ci --ignore-scripts
       - name: Frontend business scenarios and property tests
         run: npm test
+      - name: Prepare browser for Android UI regressions
+        run: npx playwright-core install chromium
+      - name: Android remote preview, cache workflow and image browsing UI (native I/O mocked)
+        run: npm run test:android-preview
       - name: Verify business tests catch deliberately broken behavior
         run: npm run test:mutations
       - name: Real filesystem, recovery, archive and persistence tests

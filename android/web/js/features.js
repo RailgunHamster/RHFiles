@@ -7,7 +7,7 @@ const androidFeatures = (() => {
   const $ = id => document.getElementById(id);
   const textFile = name => /\.(txt|md|csv|log|json|xml|ini|cfg|toml|ya?ml|js|ts|rs|py|java|kt|c|h|cpp|css|html|sh)$/i.test(name);
   const active = j => ['queued','scanning','running','paused'].includes(j.state);
-  const names = {copy:'复制',move:'移动',delete:'永久删除','trash-delete':'清理回收站',trash:'移入回收站',restore:'恢复',zip:'压缩',extract:'解压',backup:'备份应用'};
+  const names = {copy:'复制',move:'移动',delete:'永久删除','trash-delete':'清理回收站',trash:'移入回收站',restore:'恢复',zip:'压缩',extract:'解压',backup:'备份应用','cache-open':'缓存安装包'};
   const states = {queued:'排队',scanning:'计算大小',running:'进行中',paused:'已暂停',completed:'完成',failed:'失败',canceled:'已取消',interrupted:'上次运行中断'};
   const destinations = [
     ['remote','网络位置','network','SMB / FTP / WebDAV'], ['providers','外置存储与网盘','external','系统授权与文件提供者'],
@@ -53,10 +53,11 @@ const androidFeatures = (() => {
     if(app.state.route.tool==='tasks') paintJobs($('tool-extra'));
     const completed=lastJobs.filter(j=>j.state==='completed' && !refreshedJobs.has(j.id));
     completed.forEach(j=>refreshedJobs.add(j.id));
-    if(completed.length) {
+    const changedFiles=completed.filter(j=>j.op!=='cache-open');
+    if(changedFiles.length) {
       if(app.state.route.screen==='folder' && !app.state.task) await app.refresh();
       const status=await api.indexStatus();
-      if(!status.indexing && completed.some(j=>j.finished>(status.lastFinishedMs || 0))) await api.indexStart({roots:app.state.roots.filter(r=>!api.isVirtual(r.path)).map(r=>r.path)});
+      if(!status.indexing && changedFiles.some(j=>j.finished>(status.lastFinishedMs || 0))) await api.indexStart({roots:app.state.roots.filter(r=>!api.isVirtual(r.path)).map(r=>r.path)});
     }
   }
   function trackTransfer(job){
@@ -100,11 +101,12 @@ const androidFeatures = (() => {
       const guidance=fileTaskGuidance.forTask(j);
       if(guidance){const help=ui.el('details');help.append(ui.el('summary','',guidance.title+' · 怎么处理'));const steps=ui.el('ol');for(const text of guidance.steps)steps.append(ui.el('li','',text));help.append(steps);card.append(help);}
       const actions=ui.el('div','button-row');
+      if(j.op==='cache-open'&&j.state==='completed')actions.append(button('安装',()=>api.native('cache.install',{jobId:j.id})));
       if(active(j)) {
         actions.append(button(j.state==='paused'?'继续':'暂停',async()=>{await api.native('job.control',{id:j.id,action:j.state==='paused'?'resume':'pause'});await pollJobs();}),
           button('取消',async()=>{if(await ui.confirm('取消任务？','已完成的文件会保留；未完成的移动来源不会主动删除。','取消任务')){await api.native('job.control',{id:j.id,action:'cancel'});await pollJobs();}}));
       }
-      if(j.outputs?.length) {
+      if(j.outputs?.length&&j.op!=='cache-open') {
         const details=ui.el('details');details.append(ui.el('summary','','输出位置'),ui.el('pre','',j.outputs.map(fmt.displayPath).join('\n')));card.append(details);
       }
       card.append(actions);node.append(card);

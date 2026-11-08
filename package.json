@@ -1,9 +1,12 @@
 {
   "name": "rhfiles-tests",
   "private": true,
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
-    "test": "node scripts/automation-bindings.mjs && node --test scripts/tests/*.test.mjs",
+    "test": "node scripts/automation-bindings.mjs && node --test scripts/tests/*.test.mjs android/web/tests/*.test.cjs android/web/tests/format.test.js",
+    "test:android-preview": "node android/web/tests/media-check.mjs && node android/web/tests/preview-continuous-check.mjs",
     "api": "node scripts/rhfiles-api.mjs",
     "test:automation-ui": "node scripts/testing/automation-ui-check.mjs",
     "test:android-sort-tasks": "node android/web/tests/sort-task-check.mjs",
@@ -14,6 +17,9 @@
   },
   "devDependencies": {
     "acorn": "8.18.0",
-    "fast-check": "4.10.2"
+    "dompurify": "3.4.17",
+    "fast-check": "4.10.2",
+    "marked": "18.1.3",
+    "playwright-core": "1.65.0"
   }
 }

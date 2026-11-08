@@ -60,7 +60,7 @@ internal class RhFilesConnection(private var config:JSONObject) {
     if(authenticate)builder.header("Authorization",DeviceGroups.authorization(config))
     headers.forEach{(k,v)->builder.header(k,v)}
     val requestStart=android.os.SystemClock.elapsedRealtime()
-    val response=try{client(config).newCall(builder.build()).execute()}catch(e:IOException){
+    val response=try{ReadHttp.execute(client(config).newCall(builder.build()))}catch(e:IOException){
       GroupConnections.requestFailed(config,ConnectionBudget.classify(e),android.os.SystemClock.elapsedRealtime()-requestStart,method !in listOf("GET","HEAD"))
       if(authenticate&&recoverRoute&&config.optString("groupId").isNotEmpty()){
         GroupConnections.failed(config)

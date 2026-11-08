@@ -166,7 +166,7 @@ class MainActivity : TauriActivity() {
           }}
           val uiCommands=setOf("theme","settings","tree.pick","document.pick","usage.settings","shares","shares.clear","panes.touch","config.export.pick","config.import.pick","groups.scan","qr.scan","rhvideo.open","automation.status","automation.enable","automation.ui.list","automation.ui.invoke","automation.ui.set","automation.ui.scroll","automation.back","automation.media.state","automation.media.control","automation.grid.state","automation.grid.control")
           val work={try{if(command=="groups.scan"||command=="qr.scan"){require(scanResult==null){"扫码窗口已打开"};scanResult=respond;try{startActivityForResult(Intent(this@MainActivity,QrScanActivity::class.java),103)}catch(e:Exception){scanResult=null;throw e}}else if(command in listOf("config.export.pick","config.import.pick")){require(picker==null){"已有系统选择器打开"};backupUi.begin(command=="config.export.pick",args.optJSONObject("web")?:JSONObject(),respond)}else if(command=="tree.pick" || command=="document.pick")pick(command=="tree.pick",respond) else respond(dispatch(command,args),null)}catch(e:Exception){respond(null,e.message ?: "系统操作失败")}}
-          if(command in uiCommands||BuildConfig.RHVIDEO_QA_LOCAL_CLOCK&&command=="automation.qa.localClock") work() else if(command in setOf("groups.cancel","groups.diagnostics"))connectionControl.execute(work) else if(command in setOf("media.thumbnail","media.image","app.icon"))mediaIo.execute(work) else io.execute(work)
+          if(command in uiCommands||BuildConfig.RHVIDEO_QA_LOCAL_CLOCK&&command=="automation.qa.localClock") work() else if(command in setOf("groups.cancel","groups.diagnostics","text.preview.cancel"))connectionControl.execute(work) else if(command in setOf("media.thumbnail","media.image","app.icon"))mediaIo.execute(work) else io.execute(work)
         }
       }
     }
@@ -317,7 +317,7 @@ class MainActivity : TauriActivity() {
       } else Intent(Intent.ACTION_VIEW).setDataAndType(uris.first(),mime)
       intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
       intent.clipData=ClipData.newRawUri("RHFiles",uris.first()).also{c->uris.drop(1).forEach{c.addItem(ClipData.Item(it))}}
-      onUi{startActivity(Intent.createChooser(intent,if(share) "分享文件" else "打开方式"))};true
+      onUi{startActivity(if(!share&&mime=="application/vnd.android.package-archive")intent else Intent.createChooser(intent,if(share) "分享文件" else "打开方式"))};true
     }
     "shares" -> JSONArray(shared.toString())
     "shares.clear" -> {shared=JSONArray();true}
@@ -334,6 +334,9 @@ class MainActivity : TauriActivity() {
       val result=SafeFiles.readText(storage.local(args.getString("path")))
       JSONObject().put("text",result.first).put("revision",result.second)
     }
+    "text.preview" -> TextPreview.preview(storage,args.getString("path"),args.getString("requestId"),args.optInt("maxBytes",256*1024))
+    "text.preview.cancel" -> TextPreview.cancel(args.getString("requestId"))
+    "cache.install" -> dispatch("open",JSONObject().put("path",OpenCache.output(this,FileTasks.status(this,args.getString("jobId")))))
     "text.save" -> {SafeFiles.saveText(storage.local(args.getString("path")),args.getString("text"),args.getString("revision"));true}
     "trash.list" -> Trash.list(this)
     "apps" -> apps()

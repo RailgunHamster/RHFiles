@@ -5,6 +5,8 @@ const ui = (() => {
   const ICONS = {
     home: '<path d="m3 10 9-7 9 7M5 9v12h5v-7h4v7h5V9"/>',
     menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
+    continuous:'<path d="M2 6h4v12H2M18 6h4v12h-4"/><rect x="8" y="5" width="8" height="14" rx="1.5"/>',
+    paged:'<rect x="5" y="4" width="14" height="16" rx="2"/><path d="m8 12 2-2m-2 2 2 2m6-2-2-2m2 2-2 2"/>',
     close: '<path d="m6 6 12 12M6 18 18 6"/>',
     up: '<path d="m6 12 6-6 6 6M12 6v15"/>',
     search: '<circle cx="10" cy="10" r="6.5"/><path d="m15 15 6 6"/>',
@@ -102,7 +104,7 @@ const ui = (() => {
     sheet().hidden = true;
     scrim().hidden = true;
     sheetPanel().innerHTML = '';
-    sheetPanel().classList.remove('viewer','editor','image-viewer','chrome-hidden');
+    sheetPanel().classList.remove('viewer','editor','image-viewer','chrome-hidden','continuous-viewer','text-preview');
     if (dismiss) dismiss();
     if (previousFocus && previousFocus.isConnected) previousFocus.focus({ preventScroll: true });
     return true;

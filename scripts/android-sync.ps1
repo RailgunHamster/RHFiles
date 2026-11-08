@@ -187,7 +187,7 @@ Get-ChildItem -LiteralPath (Join-Path $repoRoot 'docs\thirdparty\lan-service') -
     Sync-File -Source $_.FullName -Target (Join-Path $repoRoot ('android\web\lan-service-licenses\'+$_.Name))
 }
 $rhAndroidVersion=(Get-Content -LiteralPath (Join-Path $repoRoot 'android\src-tauri\tauri.conf.json') -Raw|ConvertFrom-Json).version
-$rhAndroidNotes=Join-Path $repoRoot ('docs\release-notes\android\'+$rhAndroidVersion+'.md')
+$rhAndroidNotes=Join-Path $repoRoot ('docs\android-release-notes\'+$rhAndroidVersion+'.md')
 if(Test-Path -LiteralPath $rhAndroidNotes){
     # Versioned notes are reproducible without overwriting local draft notes.
     $rhHistory=Get-ChildItem -LiteralPath (Split-Path $rhAndroidNotes) -Filter '*.md' -File |

@@ -44,7 +44,7 @@ class SettingsBackup(private val context:Context,private val remotes:RemoteStora
       return try{JSONObject(String(plain,Charsets.UTF_8))}finally{plain.fill(0)}
     }
     internal fun validateWeb(web:JSONObject) {
-      val enums=mapOf("rhfiles.theme" to listOf("light","dark"),"rhfiles.view" to listOf("list","grid"),"rhfiles.sort" to listOf("name","date","size","kind"),"rhfiles.hidden" to listOf("0","1"),"rhfiles.panes" to listOf("auto","single","columns","rows"))
+      val enums=mapOf("rhfiles.imageBrowseMode" to listOf("paged","continuous"),"rhfiles.theme" to listOf("light","dark"),"rhfiles.view" to listOf("list","grid"),"rhfiles.sort" to listOf("name","name-desc","date","date-asc","size","size-asc","kind","kind-desc"),"rhfiles.hidden" to listOf("0","1"),"rhfiles.panes" to listOf("auto","single","columns","rows"))
       web.keys().forEach{key->val text=web.getString(key);require(text.length<=65536){"配置字段过长"};when(key){
         in enums->require(text in enums.getValue(key)){"配置选项无效"}
         "rhfiles.panes.screens"->{

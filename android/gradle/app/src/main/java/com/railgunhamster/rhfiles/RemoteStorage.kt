@@ -32,7 +32,6 @@ import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
-import javax.xml.parsers.DocumentBuilderFactory
 import com.railgunhamster.rhfiles.SafeFiles.readBytesBounded
 
 /** Credentials never enter URLs, logs, task journals, or localStorage. */
@@ -306,7 +305,7 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
     val builder=Request.Builder().url(url(l)).method(method,body)
     if (l.c.optString("username").isNotEmpty()) builder.header("Authorization",Credentials.basic(l.c.getString("username"),l.c.optString("password"),Charsets.UTF_8))
     headers.forEach { (k,v) -> builder.header(k,v) }
-    return http.newCall(builder.build()).execute().also { if (!it.isSuccessful) { val code=it.code; it.close(); error("WebDAV 请求失败：HTTP $code（不自动跟随重定向）") } }
+    return ReadHttp.execute(http.newCall(builder.build())).also { if (!it.isSuccessful) { val code=it.code; it.close(); error("WebDAV 请求失败：HTTP $code（不自动跟随重定向）") } }
   }
   fun list(path: String): List<NativeEntry> {
     val l=location(path)
@@ -331,11 +330,7 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
       }
       else -> request(l,"PROPFIND",("<?xml version=\"1.0\"?><d:propfind xmlns:d=\"DAV:\"><d:prop><d:resourcetype/><d:getcontentlength/><d:getlastmodified/></d:prop></d:propfind>").toRequestBody(),mapOf("Depth" to "1")).use { response ->
         val bytes=response.body!!.byteStream().use { it.readBytesBounded(4*1024*1024) }
-        val factory=DocumentBuilderFactory.newInstance().apply {
-          isNamespaceAware=true; setFeature("http://apache.org/xml/features/disallow-doctype-decl",true)
-          setFeature("http://xml.org/sax/features/external-general-entities",false); setFeature("http://xml.org/sax/features/external-parameter-entities",false)
-        }
-        val document=factory.newDocumentBuilder().parse(ByteArrayInputStream(bytes))
+        val document=SafeXml.parse(bytes)
         val nodes=document.getElementsByTagNameNS("DAV:","response"); val results=mutableListOf<NativeEntry>(); val base=url(l)
         for(i in 0 until nodes.length.coerceAtMost(50001)) {
           val e=nodes.item(i) as org.w3c.dom.Element
@@ -407,7 +402,7 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
             require(start==position&&end>=start&&end<size){"服务器媒体偏移不一致"}
             require(response.header("Content-Encoding").let{it==null||it.equals("identity",true)}){"服务器返回了不支持的媒体编码"};size
           }else{require(position==0L){"此服务器不支持拖动媒体进度（HTTP Range）"};response.body!!.contentLength()}
-          MediaInput(object:FilterInputStream(response.body!!.byteStream()){override fun close(){try{super.close()}finally{response.close()}}},total)
+          MediaInput(object:FilterInputStream(response.body!!.byteStream()){override fun close(){ReadHttp.cancel(response);try{super.close()}finally{response.close()}}},total)
         }catch(error:Exception){response.close();throw error}
       }
     }

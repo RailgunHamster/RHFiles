@@ -541,6 +541,8 @@
     if(api.ebooksAvailable()&&/\.(epub|mobi|azw3?|prc|fb2|cbz)$/i.test(entry.name)&&!entry.path.startsWith('remote://'))return api.native('ebook.open',{path:entry.path,name:entry.name,theme:document.documentElement.dataset.theme});
     if(api.playbackAvailable() && ['video','audio'].includes(entry.kind))return api.playMedia(entry,currentEntries());
     if(api.featuresAvailable()&&entry.kind==='image')return androidFeatures.media(entry,currentEntries());
+    if(androidTextPreview.supports(entry.name))return androidTextPreview.open(entry,api);
+    if(api.featuresAvailable()&&entry.path.startsWith('remote://')&&/\.apk$/i.test(entry.name))return androidTextPreview.install(entry,{button});
     if (api.featuresAvailable() && api.isVirtual(entry.path)) {
       if (entry.path.startsWith('content://')) return api.systemOpen(entry.path);
       return androidFeatures.download(entry);
@@ -579,6 +581,7 @@
     if(entry.libraryAlbum)return [action('查看此分类','folder',()=>activate(entry)),action('打开实际文件夹','open',()=>go({screen:'folder',path:entry.path})),action('复制路径','copy',async()=>{await ui.copyText(copyablePath(entry.path));ui.toast('路径已复制');})];
     return [
       action(entry.isDir ? '打开文件夹' : '打开 / 预览', 'open', () => activate(entry)),
+      ...(!entry.isDir&&entry.kind==='document'&&!androidTextPreview.supports(entry.name)?[action('以文本预览','document',()=>androidTextPreview.open(entry))]:[]),
       ...(entry.isDir?[action('分析空间','chart',()=>go({screen:'tool',tool:'usage',path:entry.path}))]:[]),
       action(state.selected.has(entry.path)?'取消选择':'选择','check',()=>toggleSelection(entry.path)),
       ...(!entry.isDir && api.nativeAvailable() ? [action('打开方式', 'open', () => api.systemOpen(entry.path)), action('分享', 'share', () => api.shareFile(entry.path))] : []),
@@ -846,6 +849,7 @@
     $('version').textContent = 'RHFiles Android ' + info.version;
     $('btn-theme').textContent = '主题：' + (document.documentElement.dataset.theme === 'dark' ? '深色' : '明亮');
     $('btn-hidden').textContent = '显示隐藏文件：' + (state.hidden ? '开' : '关');
+    $('image-browse-mode').value=androidGallery.mode();
     if(api.updatesAvailable())androidUpdates.onSettings().catch(error);
     if(api.syncAvailable())configSync.refresh().catch(error);
     const transferSettings=typeof api.transferSettingsAvailable==='function'&&api.transferSettingsAvailable();
@@ -996,6 +1000,7 @@
     RHFilesUI.listen($('scrim'),'click',closeDrawer,undefined,"android.web.js.app.boot.b5946fbd45ef");
     on('btn-menu',openDrawer); on('drawer-close',closeDrawer);
     on('drawer-refresh-devices',()=>RHFilesAPI.invoke('devices.discover'));
+    RHFilesUI.listen($('image-browse-mode'),'change',event=>RHFilesAPI.invoke('gallery.mode.set',{mode:event.target.value}).catch(error),undefined,'android.gallery.mode.setting');
     for(const id of ['device-download-streams','device-download-rate'])RHFilesUI.listen($(id),'change',async()=>{
       if(!$('device-download-rate').checkValidity())return;
       try{await api.native('transfer.configure',{parallelism:Number($('device-download-streams').value),rateMiB:Number($('device-download-rate').value)});}catch(e){error(e);}

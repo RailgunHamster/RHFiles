@@ -89,10 +89,11 @@ const api = (() => {
   }
 
   const virtual = path => /^(content|remote):\/\//.test(path || '');
-  async function job(op, args) {
+  async function job(op, args, onProgress) {
     const id = await nativeCall('job.start', { op, args });
     while (true) {
       const status = await nativeCall('job.status', { id });
+      if(onProgress)onProgress(status);
       window.dispatchEvent(new CustomEvent('rhfiles-task', { detail: status }));
       if (!['queued','scanning','running','paused'].includes(status.state)) {
         const failures = [...(status.failures || [])];
@@ -158,7 +159,7 @@ const api = (() => {
     imageUrl:entry=>entry.path.startsWith('remote://')?nativeCall('media.image',{path:entry.path,maxEdge:1920}).then(value=>value.dataUrl):Promise.resolve(api.assetUrl(entry.path)),
     runJob: job,
     isVirtual: virtual,
-    systemOpen: (path) => nativeCall('open', { path }),
+    systemOpen: async path=>{if(path.startsWith('remote://')&&/\.apk$/i.test(path)){const cached=await api.cacheApk(path);return document.hidden?cached:nativeCall('cache.install',{jobId:cached.jobId});}return nativeCall('open',{path});},
     shareFile: (path) => nativeCall('share', { path }),
     systemTheme: (dark) => host()||window.RHFilesNative ? nativeCall('theme', { dark }) : Promise.resolve(),
 
@@ -184,7 +185,9 @@ const api = (() => {
     copyEntries: args => nativeVersion >= 2 ? job('copy',args) : invoke('copy_entries',args),
     moveEntries: args => nativeVersion >= 2 ? job('move',args) : invoke('move_entries',args),
     entryExists: wrap('entry_exists'),
-    readTextPreview: wrap('read_text_preview'),
+    readTextPreview: args=>nativeVersion>=2?nativeCall('text.preview',{...args,requestId:args.requestId||crypto.randomUUID()}):wrap('read_text_preview')(args),
+    cancelTextPreview: requestId=>nativeVersion>=2?nativeCall('text.preview.cancel',{requestId}):Promise.resolve(),
+    cacheApk: async (path,onProgress)=>{const result=await job('cache-open',{path},onProgress),status=await nativeCall('job.status',{id:result.jobId});if(status.state!=='completed')throw Error(status.message||'安装包缓存已取消或未完成');return result;},
     fileHash: wrap('file_hash'),
     readThumbnail: args=>args.path.startsWith('remote://')&&args.kind==='image'?nativeCall('media.image',{path:args.path,maxEdge:192}):nativeThumbnails?nativeCall('media.thumbnail',args):wrap('read_thumbnail')(args),
 

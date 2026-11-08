@@ -12,7 +12,6 @@ import java.net.*
 import java.util.UUID
 import java.util.concurrent.*
 import java.util.concurrent.atomic.AtomicBoolean
-import javax.xml.parsers.DocumentBuilderFactory
 
 /** Short, opt-in discovery only. No login attempts, port sweep, or metadata fetch. */
 class LanDiscovery(private val context:Context):Closeable {
@@ -138,8 +137,7 @@ class LanDiscovery(private val context:Context):Closeable {
     internal fun probe(id:String)="""<?xml version="1.0"?><s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" xmlns:a="http://schemas.xmlsoap.org/ws/2004/08/addressing" xmlns:d="http://schemas.xmlsoap.org/ws/2005/04/discovery" xmlns:p="http://schemas.xmlsoap.org/ws/2006/02/devprof"><s:Header><a:Action>http://schemas.xmlsoap.org/ws/2005/04/discovery/Probe</a:Action><a:MessageID>$id</a:MessageID><a:To>urn:schemas-xmlsoap-org:ws:2005:04:discovery</a:To></s:Header><s:Body><d:Probe><d:Types>p:Device</d:Types></d:Probe></s:Body></s:Envelope>"""
     internal fun wsName(bytes:ByteArray,id:String):String?=try{
       require(bytes.size<=16384)
-      val factory=DocumentBuilderFactory.newInstance().apply{isNamespaceAware=true;setFeature("http://apache.org/xml/features/disallow-doctype-decl",true);setFeature("http://xml.org/sax/features/external-general-entities",false);setFeature("http://xml.org/sax/features/external-parameter-entities",false)}
-      val doc=factory.newDocumentBuilder().parse(ByteArrayInputStream(bytes))
+      val doc=SafeXml.parse(bytes,16384)
       fun text(name:String)=doc.getElementsByTagNameNS("*",name).item(0)?.textContent?:""
       require(text("RelatesTo")==id&&doc.getElementsByTagNameNS("http://schemas.xmlsoap.org/ws/2005/04/discovery","ProbeMatch").length>0)
       require(text("Types").split(Regex("\\s+")).any{it.substringAfter(':')=="Computer"})

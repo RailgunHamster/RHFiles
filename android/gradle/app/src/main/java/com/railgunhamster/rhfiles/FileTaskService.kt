@@ -120,7 +120,7 @@ object FileTasks {
   fun hasActive()=jobs.values.any { it.state in listOf("queued","running","paused","scanning") }
   @Synchronized fun start(context:Context,op:String,args:JSONObject):String {
     if(op in listOf("move","delete","trash","rename")){val sources=args.optJSONArray("sources");if(sources!=null){require(sources.length()<=1000){"每项任务最多 1000 个来源"};val remote=RemoteStorage(context);for(i in 0 until sources.length())require(!remote.isRhFilesRoot(sources.getString(i))){"不能移动、删除或重命名共享入口，请先打开共享目录再选择内容"}}}
-    load(context);require(op in listOf("copy","move","delete","zip","extract","trash","restore","trash-delete","backup")) { "未知文件操作" }
+    load(context);require(op in listOf("copy","move","delete","zip","extract","trash","restore","trash-delete","backup","cache-open")) { "未知文件操作" }
     if(op in listOf("restore","trash-delete")){
       require(args.toString().toByteArray().size<=6*1024*1024){"回收站任务过大，请分批处理"}
       Trash.ids(args)
@@ -141,7 +141,7 @@ object FileTasks {
         finally {
           job.finished=System.currentTimeMillis();try {persist(context,job)}catch(_:Exception){}
           try {
-            val local=job.outputs.filter{File(it).isAbsolute}.flatMap{path->File(path).walkTopDown().onEnter{!SafeFiles.isLink(it)}.filter{it.isFile}.take(5000).map{it.path}.toList()}
+            val local=job.outputs.filter{job.op!="cache-open"&&File(it).isAbsolute}.flatMap{path->File(path).walkTopDown().onEnter{!SafeFiles.isLink(it)}.filter{it.isFile}.take(5000).map{it.path}.toList()}
             if(local.isNotEmpty())android.media.MediaScannerConnection.scanFile(context,local.toTypedArray(),null,null)
           }catch(_:Exception){}
           service?.finishIfIdle()
@@ -167,6 +167,12 @@ object FileTasks {
   }
   internal fun execute(context:Context,j:Job) {
     val storage=NativeStorage(context)
+    if(j.op=="cache-open") {
+      val path=j.args.getString("path");val entry=storage.stat(path)
+      j.files=1;j.total=entry.size;j.current=entry.name;j.state="running"
+      val output=OpenCache.create(context,storage,j.id,path,entry){checkpoint(j,it)}
+      j.outputs.add(output.path);j.completed.add(path);j.done=1;persist(context,j);return
+    }
     if(j.op in listOf("restore","trash-delete")) {
       val ids=Trash.ids(j.args);j.files=ids.size.toLong();j.state="running"
       for(id in ids) {
