@@ -6,7 +6,7 @@ on:
       runner:
         description: Host with Android hardware virtualization
         type: choice
-        default: macos-15-intel
+        default: ubuntu-22.04
         options: [macos-15-intel, ubuntu-22.04]
       qa_tag:
         description: Temporary private draft containing the exact locally signed test APKs

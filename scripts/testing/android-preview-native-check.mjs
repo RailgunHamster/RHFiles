@@ -83,7 +83,10 @@ try{
   const view=expression=>evaluate(`(()=>{const f=[...document.querySelectorAll('iframe.file-pane')].map(e=>e.contentWindow).find(w=>w.androidTextPreview?.state().open||w.androidGallery?.state().open);const w=f||window;return (${expression})(w,w.document);})()`);
   const version=adb('shell','dumpsys','package','com.railgunhamster.rhfiles');check(version.includes('versionName='+manifest.version)&&version.includes('versionCode='+manifest.bundle.android.versionCode),'installed formal APK matches the Android source version');
   for(const file of ['js/text-preview.js','js/text-preview-worker.js','js/gallery.js','js/gallery-continuous.js','js/api.js','js/app.js','vendor/text-preview/purify.min.js']){
-    const loaded=await evaluate(`fetch(${JSON.stringify(file)}).then(r=>r.text())`);assert.equal(createHash('sha256').update(loaded).digest('hex'),createHash('sha256').update(fs.readFileSync(path.join('android/web',file))).digest('hex'),file+' bundled bytes');
+    // Windows-built APKs contain checkout CRLFs. Canonicalize only those line
+    // endings; all other source content and the APK binary hash stay strict.
+    const loaded=await evaluate(`fetch(${JSON.stringify(file)}).then(r=>r.text())`),canonical=value=>createHash('sha256').update(value.replace(/\r\n/g,'\n')).digest('hex');
+    assert.equal(canonical(loaded),canonical(fs.readFileSync(path.join('android/web',file),'utf8')),file+' bundled source (LF-normalized)');
   }check(true,'formal WebView serves the current reader, worker, gallery and storage bridge');
   const jobsBefore=(await native('jobs')).length;
   const profiles=[{type:'webdav',name:'Preview QA DAV',url:`http://10.0.2.2:${ports.webdav}/dav/`,username:'rhfiles-qa',password:'owned-fixture-only',insecure:true},{type:'ftp',name:'Preview QA FTP',host:'10.0.2.2',port:ports.ftp,username:'rhfiles-qa',password:'owned-fixture-only',insecure:true}];
