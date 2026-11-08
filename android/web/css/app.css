@@ -131,6 +131,13 @@ svg { width:24px; height:24px; fill:none; stroke:currentColor; stroke-width:1.7;
 .network-location small { flex:none; color:var(--muted); font-size:11px; }
 .tool-page .network-more { flex:none; width:44px; height:44px; padding:10px; }
 .installed-changelog { margin-top:24px; border-top:1px solid var(--line); }
+.release-log-section { margin-top:14px; padding:14px; border:1px solid var(--line); border-radius:16px; }
+.release-log-section h3 { margin:0 0 10px; font-size:15px; }
+.release-log-heading { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; }
+.release-log-heading h3 { margin:0; }
+.release-log-pagination { display:flex; align-items:center; gap:8px; margin-left:auto; }
+.release-log-pagination button { min-height:44px; padding:8px 12px; }
+.release-log-pagination output { min-width:4ch; text-align:center; font-size:13px; font-variant-numeric:tabular-nums; }
 .installed-changelog details { margin:12px 0; }
 .installed-changelog summary { min-height:44px; padding:10px 0; cursor:pointer; }
 .installed-changelog pre,#update-notes { font:14px/1.8 system-ui,sans-serif; }

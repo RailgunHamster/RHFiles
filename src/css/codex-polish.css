@@ -1696,6 +1696,14 @@ body.preview-fullscreen-active::before {
   text-align: center;
 }
 
+.settings-history-section { display:grid; gap:8px; padding:12px; border:1px solid var(--divider); border-radius:12px; background:var(--bg-raised); }
+.settings-history-section-heading { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; min-height:32px; }
+.settings-history-section-heading h3 { margin:0; color:var(--text-2); font-size:12px; font-weight:600; }
+.settings-history-pagination { display:flex; align-items:center; gap:8px; margin-left:auto; }
+.settings-history-pagination .dialog-btn { min-height:30px; padding:4px 10px; }
+.settings-history-pagination output { min-width:4ch; color:var(--text-3); text-align:center; font-variant-numeric:tabular-nums; font-size:11px; }
+.settings-history-pagination button:disabled { opacity:.4; cursor:default; }
+
 .settings-history-source {
   padding: 1px 2px 3px;
   color: var(--text-4);

@@ -1,4 +1,5 @@
 # GitHub-only companion policy. No Gitee account, token or API is involved.
+. (Join-Path $PSScriptRoot 'github-public-assets.ps1')
 function Get-RHFilesGithubAndroidSnapshot([string]$Repository,$Options,$PublicOptions){
  if($Repository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'){throw 'Invalid GitHub repository'}
  $releases=@();for($page=1;$page -le 5;$page++){
@@ -10,8 +11,8 @@ function Get-RHFilesGithubAndroidSnapshot([string]$Repository,$Options,$PublicOp
  $index=@($source.assets|Where-Object name -CEQ 'releases.android.json');if($index.Count -ne 1){throw 'Published Android release has no unique companion index'}
  $expected="https://github.com/$Repository/releases/download/$($source.tag_name)/releases.android.json"
  if($index[0].browser_download_url -cne $expected){throw 'Unexpected Android companion URL'}
- $response=Invoke-WebRequest $expected @PublicOptions
- $text=if($response.Content -is [byte[]]){[Text.Encoding]::UTF8.GetString($response.Content)}else{[string]$response.Content}
+ $bytes=Read-RHFilesGithubPublicAsset -Repository $Repository -Release $source -FileName 'releases.android.json' -Proxy $PublicOptions.Proxy
+ $text=[Text.UTF8Encoding]::new($false,$true).GetString($bytes)
  if([Text.Encoding]::UTF8.GetByteCount($text) -gt 2MB){throw 'Android companion index is too large'}
  $manifest=$text|ConvertFrom-Json;$code=Get-RHFilesAndroidChannelCode $manifest
  $current=@($manifest.releases|Sort-Object {[long]$_.versionCode} -Descending)[0]
@@ -30,7 +31,7 @@ function Save-RHFilesGithubAndroidCompanion([string]$Repository,[string]$Directo
  New-Item -ItemType Directory -Path $Directory -Force|Out-Null;$files=@()
  foreach($asset in $snapshot.current.assets){
   $file=Join-Path $Directory $asset.fileName
-  Invoke-WebRequest "https://github.com/$Repository/releases/download/$($snapshot.release.tag_name)/$($asset.fileName)" -OutFile $file @PublicOptions
+  Read-RHFilesGithubPublicAsset -Repository $Repository -Release $snapshot.release -FileName $asset.fileName -OutFile $file -Proxy $PublicOptions.Proxy -MaxBytes 536870912
   if((Get-Item -LiteralPath $file).Length -ne [long]$asset.size -or (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ine $asset.sha256){throw 'Android companion download checksum/size mismatch'}
   $files+=Get-Item -LiteralPath $file
  }

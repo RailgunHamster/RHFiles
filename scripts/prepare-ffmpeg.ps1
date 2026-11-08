@@ -5,6 +5,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot 'ffmpeg-source.ps1')
+. (Join-Path $PSScriptRoot 'github-public-assets.ps1')
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $thirdPartyDirectory = [IO.Path]::GetFullPath((Join-Path $repoRoot "src-tauri\thirdparty"))
 $workDirectory = [IO.Path]::GetFullPath((Join-Path $repoRoot "temp\ffmpeg-9.0.1"))
@@ -93,31 +94,48 @@ for ($attempt = 1; $attempt -le 5; $attempt++) {
 }
 if (-not $downloaded) {
     Write-Warning "The primary FFmpeg archive is unavailable; recovering the same pinned binary from the current verified Windows package. $($lastDownloadError.Exception.Message)"
-    $feedArguments=@{Uri='https://github.com/RailgunHamster/RHFiles/releases/latest/download/releases.win.json';TimeoutSec=30}
-    if($Proxy){$feedArguments.Proxy=$Proxy}
-    $feedResponse=Invoke-WebRequest @feedArguments
-    if($feedResponse.RawContentLength -gt 524288){throw 'FFmpeg recovery metadata exceeds its limit'}
-    $recovery=Get-RHFilesFfmpegRecovery (ConvertFrom-RHFilesFfmpegFeed $feedResponse.Content)
+    $recoveryProvider='cnb'
+    try{
+        $feedOptions=@{Uri='https://cnb.cool/railgunhamster/RHFiles/-/releases/latest/download/releases.win.json';TimeoutSec=30}
+        if($Proxy){$feedOptions.Proxy=$Proxy}
+        $response=Invoke-WebRequest @feedOptions
+        $recovery=Get-RHFilesFfmpegRecovery (ConvertFrom-RHFilesFfmpegFeed $response.Content) -Provider cnb
+    }catch{
+        Write-Warning 'CNB dependency metadata is unavailable; trying the GitHub asset API once.'
+        $recoveryProvider='github'
+        $recoveryRelease=Get-RHFilesGithubPublicRelease -Repository 'RailgunHamster/RHFiles' -Tag latest -Proxy $Proxy
+        $recoveryFeed=Read-RHFilesGithubJsonAsset -Repository 'RailgunHamster/RHFiles' -Release $recoveryRelease -FileName 'releases.win.json' -Proxy $Proxy -MaxBytes 524288
+        $recovery=Get-RHFilesFfmpegRecovery $recoveryFeed
+        $recoveryRelease=Get-RHFilesGithubPublicRelease -Repository 'RailgunHamster/RHFiles' -Tag ('v'+$recovery.Version) -Proxy $Proxy
+    }
     $archivePath = $fallbackArchivePath
     $downloadArguments.Uri = $recovery.Uri
     $downloadArguments.OutFile = $fallbackArchivePath
     $downloadSource = $recovery.Name
     $expectedDownloadedSha256 = $recovery.Sha256
     $lastDownloadError = $null
-    for ($attempt = 1; $attempt -le 3; $attempt++) {
+    for ($attempt = 1; $attempt -le 2; $attempt++) {
         try {
-            Invoke-WebRequest @downloadArguments
+            if($recoveryProvider -eq 'github'){
+                Read-RHFilesGithubPublicAsset -Repository 'RailgunHamster/RHFiles' -Release $recoveryRelease -FileName $recovery.Name -OutFile $archivePath -Proxy $Proxy -MaxBytes 1073741824 -TimeoutSec 300
+            }else{Invoke-WebRequest @downloadArguments}
             if((Get-Item -LiteralPath $archivePath).Length -ne $recovery.Size){throw 'FFmpeg recovery package size mismatch'}
             $downloaded = $true
             break
         } catch {
             $lastDownloadError = $_
             if([int]$_.Exception.Response.StatusCode -in 400,401,403,404,410){break}
-            if ($attempt -lt 3) {
+            if ($attempt -lt 2) {
                 Write-Warning "FFmpeg fallback download attempt $attempt failed; retrying. $($_.Exception.Message)"
                 Start-Sleep -Seconds ([Math]::Pow(2, $attempt))
             }
         }
+    }
+    if(-not $downloaded -and $recoveryProvider -eq 'cnb'){
+        Write-Warning 'CNB dependency download failed; checking the same immutable package through the GitHub API.'
+        $recoveryRelease=Get-RHFilesGithubPublicRelease -Repository 'RailgunHamster/RHFiles' -Tag ('v'+$recovery.Version) -Proxy $Proxy
+        Read-RHFilesGithubPublicAsset -Repository 'RailgunHamster/RHFiles' -Release $recoveryRelease -FileName $recovery.Name -OutFile $archivePath -Proxy $Proxy -MaxBytes 1073741824 -TimeoutSec 300
+        $downloaded=$true
     }
     if (-not $downloaded) {
         throw "Unable to download the pinned FFmpeg build from either source: $($lastDownloadError.Exception.Message)"

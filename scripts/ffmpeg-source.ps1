@@ -6,7 +6,7 @@ function ConvertFrom-RHFilesFfmpegFeed($Content) {
     if([Text.Encoding]::UTF8.GetByteCount($json) -gt 524288){throw 'FFmpeg recovery metadata exceeds its limit'}
     $json | ConvertFrom-Json -Depth 16
 }
-function Get-RHFilesFfmpegRecovery($Feed) {
+function Get-RHFilesFfmpegRecovery($Feed,[ValidateSet('github','cnb')][string]$Provider='github') {
     $packages=@($Feed.Assets | Where-Object {
         $_.PackageId -ceq 'RHFiles' -and $_.Type -ceq 'Full' -and
         $_.Version -match '^\d+\.\d+\.\d+$' -and
@@ -17,7 +17,8 @@ function Get-RHFilesFfmpegRecovery($Feed) {
     if(-not $packages.Count){throw 'Latest Windows feed contains no verified FFmpeg recovery package'}
     $package=$packages[0]
     [pscustomobject]@{
-        Uri="https://github.com/RailgunHamster/RHFiles/releases/latest/download/$($package.FileName)"
+        Uri=if($Provider -eq 'cnb'){"https://cnb.cool/railgunhamster/RHFiles/-/releases/download/v$($package.Version)/$($package.FileName)"}else{"https://github.com/RailgunHamster/RHFiles/releases/download/v$($package.Version)/$($package.FileName)"}
+        Version=$package.Version
         Sha256=$package.SHA256
         Size=[long]$package.Size
         Name=$package.FileName

@@ -2,6 +2,7 @@
 param([Parameter(Mandatory)][string]$Version,[string]$Repository='RailgunHamster/RHFiles')
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'release-policy.ps1')
+. (Join-Path $PSScriptRoot 'github-public-assets.ps1')
 if($Repository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' -or $Version -notmatch '^\d+\.\d+\.\d+$'){throw 'Invalid release repository or version'}
 $headers=@{Accept='application/vnd.github+json'}
 if($env:GH_TOKEN){$headers.Authorization='Bearer '+$env:GH_TOKEN}
@@ -17,7 +18,7 @@ if($asset.Count -ne 1){throw 'Existing release has no unique Windows feed; manua
 $url=[uri]$asset[0].browser_download_url
 if($url.Scheme -ne 'https' -or $url.Host -ne 'github.com' -or -not $url.AbsolutePath.StartsWith("/$Repository/releases/download/v$Version/")){throw 'Unexpected release feed location'}
 # No API credentials follow the asset/CDN redirect.
-$feed=Invoke-RestMethod $url.AbsoluteUri -TimeoutSec 45
+$feed=Read-RHFilesGithubJsonAsset -Repository $Repository -Release $release -FileName 'releases.win.json'
 if($feed -is [string]){$feed=$feed|ConvertFrom-Json}
 $null=Assert-RHFilesPublishedRelease $release $feed $Version
 if($env:GITHUB_OUTPUT){'published=true' >> $env:GITHUB_OUTPUT}

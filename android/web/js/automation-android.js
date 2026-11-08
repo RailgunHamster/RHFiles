@@ -9,6 +9,8 @@ const androidAutomation=(()=>{
     const actions=window.RHFilesAPI,state=app.state;
     provideReceipts(actions);
     const register=(name,params,handler,risk='ui',description=name)=>actions.register(name,handler,{params,risk,description});
+    register('updates.history.state',apiSchema(),()=>androidUpdates.historyState(),'read');
+    register('updates.history.page.set',apiSchema({page:{type:'integer',minimum:1,maximum:100000}},['page']),p=>androidUpdates.setHistoryPage(p.page));
     deviceGroupView.register(actions,(command,args)=>api.native('groups.'+command,args),true);
     register('devices.discover',apiSchema(),()=>app.refreshGroupDevices(),'external','Explicitly refresh trusted group service records and visible storage locations; bounded to 30 seconds / 32 members, never changes permissions');
     register('devices.jumpWindowsPath',apiSchema({path:string,root:string},['path']),p=>app.jumpToDeviceWindowsPath(p.path,p.root),'ui','Navigate to a Windows drive path such as C:\\Users\\... on a connected RHFiles PC that shares the corresponding drive');

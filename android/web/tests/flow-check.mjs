@@ -16,7 +16,7 @@ const output=path.join(web,'tests','__screenshots__');fs.mkdirSync(output,{recur
 let executablePath=process.env.CHROMIUM_PATH;
 const cache=path.join(process.env.LOCALAPPDATA || '', 'ms-playwright');
 if(!executablePath&&fs.existsSync(cache))executablePath=fs.readdirSync(cache).filter(n=>n.startsWith('chromium-')).sort().reverse().map(n=>path.join(cache,n,'chrome-win64','chrome.exe')).find(p=>fs.existsSync(p));
-const bundledHistory=['0.1.3','0.1.2','0.1.1'].map(v=>'# RHFiles Android '+v+'\n\n1. 中文更新记录 '+v+'\n2. Offline history\n').join('\n');
+const bundledHistory=Array.from({length:25},(_,i)=>'0.1.'+(25-i)).map(v=>'# RHFiles Android '+v+'\n\n1. 中文更新记录 '+v+'\n2. Offline history\n').join('\n');
 const server=http.createServer((req,res)=>{
   const target=path.resolve(web,'.'+decodeURIComponent(new URL(req.url,'http://localhost').pathname));
   if(target!==web&&!target.startsWith(web+path.sep))return res.writeHead(403).end();
@@ -408,9 +408,16 @@ try{
     check(await p.evaluate(()=>{const a=document.getElementById('update-actions'),n=document.getElementById('update-pending-notes');return !!(a.compareDocumentPosition(n)&Node.DOCUMENT_POSITION_FOLLOWING)&&a.getBoundingClientRect().bottom<=n.getBoundingClientRect().top;}),'Update actions stay visually and structurally above pending notes when an update exists');
     check((await p.locator('#update-notes').innerText()).includes('\n2. 第二行 <img') && await p.locator('#update-notes img').count()===0,'Update notes number entries, preserve line breaks and never inject HTML');
     check(!(await p.locator('#update-notes').innerText()).includes('旧版不应'),'Pending update notes do not expand accumulated historical releases');
-    check(await p.locator('#app-changelog details').count()===1,'Only the installed latest version appears in the outer release log');
-    const historyCount=await p.evaluate(async()=>releaseNotes.sections(await(await fetch('CHANGELOG.txt')).text()).length-1);
-    await p.click('#update-history');check(historyCount>0&&await p.locator('.release-history details').count()===historyCount,'History menu contains every installed older release without duplicating the latest');await p.evaluate(()=>rhfilesHandleBack());
+    check(await p.locator('#update-history-recent details').count()===10,'The recent log is limited to ten installed versions');
+    check(await p.locator('#update-history-older details').count()===10,'The older log contains only its first ten-record page');
+    await p.locator('#update-history-recent details').first().locator('summary').click();
+    const checksBeforePaging=await p.evaluate(()=>__model.updateRequests);
+    await p.click('#update-history-next');
+    check(await p.locator('#update-history-older details').count()===5&&await p.locator('.release-log-pagination output').innerText()==='2/2','The last history page shows only its remaining five versions');
+    check(await p.locator('#update-history-next').isDisabled(),'The final history page cannot advance');
+    check(await p.evaluate(before=>!document.querySelector('#update-history-recent details').open&&__model.updateRequests===before,checksBeforePaging),'Paging preserves recent expansion and makes no update request');
+    await p.evaluate(()=>RHFilesAPI.invoke('updates.history.page.set',{page:1}));
+    check((await p.evaluate(()=>RHFilesAPI.invoke('updates.history.state'))).page===1,'History pagination has the same command API as its UI');
     await p.click('#update-download');check(await p.locator('#update-progress').isVisible(),'Downloading exposes byte progress');
     check(await p.evaluate(()=>!!(document.getElementById('update-actions').compareDocumentPosition(document.getElementById('update-pending-notes'))&Node.DOCUMENT_POSITION_FOLLOWING)),'Downloading never moves actions below release notes');
     check(await p.locator('#update-state').innerText().then(t=>t.includes('/s')),'APK download shows speed');
@@ -520,7 +527,7 @@ try{
     check(before>0&&await tabs.evaluate(e=>e.scrollLeft)<before&&await p.locator('#drawer').isHidden(),'Real rightward settings-tab pan scrolls tabs and never opens the drawer');
     await p.click('[data-settings-section=updates]');await p.locator('#app-changelog details').first().waitFor();
     const latest=require('../js/changelog.js').sections(bundledHistory)[0];
-    const history=await p.locator('#app-changelog').innerText();check(history.includes(latest.title)&&history.includes(latest.text.split('\n').find(line=>/^1\./.test(line)))&&await p.locator('#update-history').count()===1&&await p.evaluate(()=>__model.updateRequests===0),'Installed numbered latest log works offline; older versions stay inside History');
+    const history=await p.locator('#app-changelog').innerText();check(history.includes(latest.title)&&history.includes(latest.text.split('\n').find(line=>/^1\./.test(line)))&&await p.locator('#update-history-recent details').count()===10&&await p.locator('#update-history-older details').count()===10&&await p.evaluate(()=>__model.updateRequests===0),'Offline release notes keep ten recent records separate from paginated older records');
     await p.evaluate(()=>{__model.updates.state='latest';__model.updates.release=null;return androidUpdates.onSettings()});check(await p.locator('#app-changelog').innerText()===history,'Latest/installed state never erases release history');
     await p.evaluate(()=>{__model.updates.state='failed';__model.updates.message='offline';return androidUpdates.onSettings()});check(await p.locator('#app-changelog').innerText()===history,'Failed update checks never erase release history');
     check(errors.length===0,'New gesture, favorite and history regressions have no frontend errors');await capture(p,'018-permanent-history');await context.close();

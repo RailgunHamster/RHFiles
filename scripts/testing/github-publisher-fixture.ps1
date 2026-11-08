@@ -5,9 +5,13 @@ $case=$env:RHFILES_POLICY_CASE|ConvertFrom-Json
 $script:mockWindows=$null;$script:mockEvents=@();$script:mockPublished=$false
 function Invoke-WebRequest {
  param($Uri,$OutFile,$TimeoutSec,$Proxy,$Headers)
- if($OutFile){if($Uri -cne $case.releases[1].assets[1].browser_download_url){throw 'Unexpected APK download'};[IO.File]::WriteAllBytes($OutFile,[Text.Encoding]::UTF8.GetBytes($case.apk));return}
- if($Uri -cne $case.releases[1].assets[0].browser_download_url){throw 'Unexpected public request'}
- [pscustomobject]@{Content=$case.feed}
+ if($Headers.Authorization){throw 'Credentials must not follow public asset download redirects'}
+ $path=([uri]$Uri).GetLeftPart([UriPartial]::Path)
+ $asset=@(@($case.releases|ForEach-Object assets)+@($script:mockWindows.assets)|Where-Object url -CEQ $path)
+ if($asset.Count -ne 1){throw 'Unexpected public asset request'}
+ [byte[]]$bytes=if($asset[0].content){[byte[]]$asset[0].content}elseif($asset[0].name -ceq 'releases.android.json'){[Text.Encoding]::UTF8.GetBytes($case.feed)}else{[Text.Encoding]::UTF8.GetBytes($case.apk)}
+ if($OutFile){[IO.File]::WriteAllBytes($OutFile,$bytes);return}
+ [pscustomobject]@{Content=$bytes}
 }
 function Invoke-RestMethod {
  param($Uri,$Method='Get',$Body,$InFile,$ContentType,$TimeoutSec,$Proxy,$Headers)
@@ -19,7 +23,8 @@ function Invoke-RestMethod {
  }
  if($Uri -like 'https://uploads.github.com/repos/example/repo/releases/99/assets?name=*' -and $Method -eq 'Post'){
   $name=[uri]::UnescapeDataString(([uri]$Uri).Query.Substring(6));$file=Get-Item -LiteralPath $InFile
-  $asset=[pscustomobject]@{id=(1000+$script:mockEvents.Count);name=$name;size=$file.Length;digest=('sha256:'+(Get-FileHash -LiteralPath $InFile -Algorithm SHA256).Hash.ToLowerInvariant());browser_download_url="https://github.com/example/repo/releases/download/v$($case.windowsVersion)/$name"}
+  $assetId=1000+$script:mockEvents.Count
+  $asset=[pscustomobject]@{id=$assetId;url="$api/releases/assets/$assetId";content=[IO.File]::ReadAllBytes($InFile);name=$name;size=$file.Length;digest=('sha256:'+(Get-FileHash -LiteralPath $InFile -Algorithm SHA256).Hash.ToLowerInvariant());browser_download_url="https://github.com/example/repo/releases/download/v$($case.windowsVersion)/$name"}
   $script:mockWindows.assets+=,$asset;$script:mockEvents+=('upload:'+$name);return $asset
  }
  if($Uri -ceq "$api/releases/99"){

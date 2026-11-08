@@ -69,6 +69,8 @@
   register('configSync.run',object(),()=>desktopConfigSync.run(true),'external');
   register('configSync.resolve',object({choice:{type:'string',enum:['local','remote']}},['choice']),p=>desktopConfigSync.resolve(p.choice),'write');
   register('updates.check',object(),()=>checkForUpdates(true),'external');
+  register('updates.history.state',object(),()=>releaseHistoryState(),'read');
+  register('updates.history.page.set',object({page:{type:'integer',minimum:1,maximum:100000}},['page']),p=>setReleaseHistoryPage(p.page));
   register('updates.autoInstall.set',object({enabled:boolean},['enabled']),p=>{setAutoInstallUpdates(p.enabled);return {enabled:G.settings.autoInstallUpdates===true};},'write');
   register('vcs.info',object({pane}),p=>{const {state}=target(p.pane);return call('vcs_workspace_info',{path:state.path});},'read');
   register('vcs.openInVerso',object({path:string,page:{type:'string',enum:['files','changes','history','reservations','updates']},pane}),async p=>{const {state}=target(p.pane);await call('open_in_verso',{path:p.path||state.path,page:p.page||'files'});return {opened:true};},'external');

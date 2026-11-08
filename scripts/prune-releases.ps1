@@ -11,6 +11,7 @@ param(
 $ErrorActionPreference='Stop'
 . "$PSScriptRoot/cnb-release.ps1"
 . "$PSScriptRoot/release-retention.ps1"
+. "$PSScriptRoot/github-public-assets.ps1"
 $repository=if($Provider -eq 'CNB'){'railgunhamster/RHFiles'}else{'RailgunHamster/RHFiles'}
 $audit=Join-Path "$PSScriptRoot/../test-artifacts" ('release-retention-'+$Provider+'-'+(Get-Date -Format 'yyyyMMdd-HHmmss'))
 New-Item -ItemType Directory -Path $audit|Out-Null
@@ -43,7 +44,7 @@ try {
     $public=@{TimeoutSec=45};if($Provider -eq 'GitHub' -and $Proxy){$public.Proxy=$Proxy}
     foreach($name in @('releases.win.json','releases.android.json')){
         $url=if($Provider -eq 'CNB'){Get-RHFilesCnbPublicUrl $repository latest $name}else{"https://github.com/$repository/releases/latest/download/$name"}
-        $feed=Invoke-RestMethod $url @public;if($feed -is [string]){$feed=$feed|ConvertFrom-Json -Depth 30}
+        $feed=if($Provider -eq 'GitHub'){Read-RHFilesGithubJsonAsset -Repository $repository -Release $latest -FileName $name -Proxy $Proxy}else{Invoke-RestMethod $url @public};if($feed -is [string]){$feed=$feed|ConvertFrom-Json -Depth 30}
         # Keep every currently advertised payload's canonical release, not just
         # a numerically recent tag; an old client must still find its package.
         if($name -eq 'releases.win.json'){$protected+=@($feed.Assets|ForEach-Object {'v'+$_.Version})}

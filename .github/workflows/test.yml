@@ -59,6 +59,8 @@ jobs:
         run: Copy-Item -LiteralPath src-tauri/thirdparty/7z.exe, src-tauri/thirdparty/7z.dll -Destination target/debug
       - name: Prepare real native media test dependencies
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           choco upgrade vlc --version=3.0.23 --allow-downgrade --yes --no-progress --limit-output
           if ($LASTEXITCODE -notin 0,3010) { throw "VLC test dependency installation failed: $LASTEXITCODE" }

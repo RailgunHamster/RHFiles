@@ -576,6 +576,42 @@ function setProxyPart(field, value, input) {
 let _releaseHistoryRequestToken = 0;
 let _releaseHistoryEntries = [];
 let _releaseHistorySnapshot = null;
+let _releaseHistoryPage = 1;
+let _releaseHistoryCurrentVersion = '';
+
+function releaseHistoryState(){return releaseHistoryPages.split(_releaseHistoryEntries,_releaseHistoryPage);}
+function releaseHistoryItems(entries,offset,openFirst=false){
+  return entries.map((entry,i)=>{
+    const published=formatReleasePublishedAt(entry.publishedAt),index=offset+i;
+    return `<details class="settings-release-item" data-release-index="${index}"${openFirst&&i===0?' open':''}>
+      <summary><span class="settings-release-version">v${esc(String(entry.version||''))}</span>${String(entry.version)===_releaseHistoryCurrentVersion?`<span class="settings-release-current">${esc(t('settings.currentVersion'))}</span>`:''}<span class="settings-release-date">${esc(published?t('settings.releasePublishedAt',{date:published}):t('settings.releaseDateUnknown'))}</span></summary>
+      <div class="settings-release-notes"></div></details>`;
+  }).join('');
+}
+function bindReleaseHistoryItems(container){
+  container.querySelectorAll('.settings-release-item').forEach(details=>{
+    RHFilesUI.listen(details,'toggle',()=>{if(details.open)hydrateReleaseHistoryItem(details);},undefined,'settings.history.expand');
+    if(details.open)hydrateReleaseHistoryItem(details);
+  });
+}
+function renderReleaseHistoryOlder(){
+  const node=document.getElementById('settings-release-older');if(!node)return;
+  const state=releaseHistoryState();_releaseHistoryPage=state.page;
+  const focused=document.activeElement?.id;
+  node.innerHTML=`<div class="settings-history-section-heading"><h3>${esc(t('settings.historyOlder'))}</h3>${state.totalOlder?`<nav class="settings-history-pagination" aria-label="${esc(t('settings.historyOlder'))}"><button type="button" class="dialog-btn" id="settings-history-previous"${state.page===1?' disabled':''}>${esc(t('settings.historyPrevious'))}</button><output aria-live="polite">${state.page}/${state.pages}</output><button type="button" class="dialog-btn" id="settings-history-next"${state.page===state.pages?' disabled':''}>${esc(t('settings.historyNext'))}</button></nav>`:''}</div>`+
+    (state.totalOlder?releaseHistoryItems(state.older,state.offset):`<div class="settings-history-state">${esc(t('settings.historyNoOlder'))}</div>`);
+  bindReleaseHistoryItems(node);
+  const previous=document.getElementById('settings-history-previous'),next=document.getElementById('settings-history-next');
+  RHFilesUI.listen(previous,'click',()=>setReleaseHistoryPage(_releaseHistoryPage-1),undefined,'settings.history.previous');
+  RHFilesUI.listen(next,'click',()=>setReleaseHistoryPage(_releaseHistoryPage+1),undefined,'settings.history.next');
+  if(focused==='settings-history-previous'||focused==='settings-history-next'){
+    const wanted=document.getElementById(focused);(wanted&&!wanted.disabled?wanted:focused==='settings-history-next'?previous:next)?.focus();
+  }
+}
+function setReleaseHistoryPage(page){
+  _releaseHistoryPage=releaseHistoryPages.split(_releaseHistoryEntries,page).page;
+  renderReleaseHistoryOlder();return releaseHistoryState();
+}
 
 function hydrateReleaseHistoryItem(details) {
   if (!details || details.dataset.loaded === 'true') return;
@@ -595,7 +631,8 @@ function renderReleaseHistory(response) {
     container.innerHTML = `<div class="settings-history-state">${esc(t('settings.historyEmpty'))}</div>`;
     return;
   }
-  const currentVersion = String(response.currentVersion || '');
+  _releaseHistoryCurrentVersion = String(response.currentVersion || '');
+  const state=releaseHistoryState();_releaseHistoryPage=state.page;
   const sourceLabel = response.source === 'remote' ? t('settings.historyRemote') : t('settings.historyBundled');
   const refreshing = response.refreshing
     ? `<div class="settings-history-refreshing"><span aria-hidden="true"></span>${esc(t('settings.historyRefreshing'))}</div>`
@@ -603,19 +640,10 @@ function renderReleaseHistory(response) {
   const warning = response.warning
     ? `<div class="settings-history-warning" title="${esc(String(response.warning))}">${esc(t('settings.historyFallback'))}</div>`
     : '';
-  container.innerHTML = `<div class="settings-history-source">${esc(sourceLabel)}</div>${refreshing}${warning}` +
-    _releaseHistoryEntries.map((entry, index) => {
-      const current = String(entry.version) === currentVersion;
-      const published = formatReleasePublishedAt(entry.publishedAt);
-      return `<details class="settings-release-item" data-release-index="${index}"${index === 0 ? ' open' : ''}>
-        <summary><span class="settings-release-version">v${esc(String(entry.version || ''))}</span>${current ? `<span class="settings-release-current">${esc(t('settings.currentVersion'))}</span>` : ''}<span class="settings-release-date">${esc(published ? t('settings.releasePublishedAt',{date:published}) : t('settings.releaseDateUnknown'))}</span></summary>
-        <div class="settings-release-notes"></div>
-      </details>`;
-    }).join('');
-  container.querySelectorAll('.settings-release-item').forEach(details => {
-    RHFilesUI.listen(details,'toggle', () => { if (details.open) hydrateReleaseHistoryItem(details); },undefined,"src.js.dialogs.renderReleaseHistory.67b494dd017d");
-    if (details.open) hydrateReleaseHistoryItem(details);
-  });
+  container.innerHTML = `<div class="settings-history-source">${esc(sourceLabel)}</div>${refreshing}${warning}`+
+    `<section class="settings-history-section" id="settings-release-recent"><div class="settings-history-section-heading"><h3>${esc(t('settings.historyRecent'))}</h3></div>${releaseHistoryItems(state.recent,0,true)}</section>`+
+    '<section class="settings-history-section" id="settings-release-older"></section>';
+  bindReleaseHistoryItems(container);renderReleaseHistoryOlder();
 }
 
 async function loadReleaseHistory(manual) {

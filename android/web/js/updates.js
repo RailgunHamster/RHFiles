@@ -2,6 +2,37 @@
 const androidUpdates=(()=>{
   let app,status,pollTimer,hourTimer,wantInstall=false,installing=false,form,lastAuto=0;
   let generation=0,readSequence=0,appliedRead=0;
+  let historyEntries=[],historyPage=1;
+  const historyState=()=>releaseHistoryPages.split(historyEntries,historyPage);
+  function versionCard(item,opened=false){
+    const details=ui.el('details');details.open=opened;details.append(ui.el('summary','',item.title));let loaded=false;
+    const hydrate=()=>{if(details.open&&!loaded){loaded=true;details.append(ui.el('pre','update-notes',item.text));}};
+    RHFilesUI.listen(details,'toggle',hydrate,undefined,'updates.history.expand');hydrate();return details;
+  }
+  function renderHistoryOlder(){
+    const node=$('update-history-older');if(!node)return;const focused=document.activeElement?.id;node.replaceChildren();
+    const state=historyState();historyPage=state.page;
+    const heading=ui.el('div','release-log-heading');heading.append(ui.el('h3','','历史记录'));node.append(heading);
+    if(!state.totalOlder){node.append(ui.el('p','muted','暂无更早的更新记录。'));return;}
+    const pager=ui.el('nav','release-log-pagination');pager.setAttribute('aria-label','历史记录翻页');
+    const previous=button('update-history-previous','上一页',()=>setHistoryPage(historyPage-1)),next=button('update-history-next','下一页',()=>setHistoryPage(historyPage+1));
+    previous.disabled=state.page===1;next.disabled=state.page===state.pages;
+    const count=ui.el('output','',state.page+'/'+state.pages);count.setAttribute('aria-live','polite');
+    pager.append(previous,count,next);heading.append(pager);
+    for(const item of state.older)node.append(versionCard(item));
+    if(focused==='update-history-previous'||focused==='update-history-next'){
+      const wanted=$(focused);(wanted&&!wanted.disabled?wanted:focused==='update-history-next'?previous:next)?.focus();
+    }
+  }
+  function setHistoryPage(page){historyPage=releaseHistoryPages.split(historyEntries,page).page;renderHistoryOlder();return historyState();}
+  function renderHistory(){
+    const node=$('app-changelog');if(!node)return;node.replaceChildren();
+    const recent=ui.el('section','release-log-section');recent.id='update-history-recent';recent.append(ui.el('h3','','最近更新记录'));
+    const state=historyState();historyPage=state.page;
+    for(const [i,item]of state.recent.entries())recent.append(versionCard(item,i===0));
+    if(!state.total)recent.append(ui.el('p','muted','暂无更新记录。'));
+    const older=ui.el('section','release-log-section');older.id='update-history-older';node.append(recent,older);renderHistoryOlder();
+  }
   function mutate(){generation++;clearTimeout(pollTimer);}
   const $=id=>document.getElementById(id);
   const active=s=>['checking','downloading','verifying'].includes(s);
@@ -44,16 +75,10 @@ const androidUpdates=(()=>{
       button('update-install','继续安装',install,true),
       button('update-cancel','取消',async()=>{mutate();wantInstall=false;status=await api.native('update.cancel');paint();schedule();}));
     node.append(info,progress,actions,pending);
-    const history=ui.el('section','installed-changelog');history.id='app-changelog';history.append(ui.el('h3','','更新日志'),ui.el('p','muted','随应用保存的历次更新记录；离线、更新完成后也可以查看。'));node.append(history);
+    const history=ui.el('section','installed-changelog');history.id='app-changelog';node.append(history);
     try{
       const response=await fetch('CHANGELOG.txt');if(!response.ok)throw Error('HTTP '+response.status);
-      const versions=releaseNotes.sections(await response.text());
-      const versionCard=(item,opened=false)=>{const details=ui.el('details');details.open=opened;details.append(ui.el('summary','',item.title),ui.el('pre','update-notes',item.text));return details;};
-      if(versions[0])history.append(versionCard(versions[0],true));
-      if(versions.length>1)history.append(button('update-history','历史日志',()=>{
-        ui.openSheet('历史日志',[{label:'关闭',icon:'close'}]);const list=ui.el('section','release-history');
-        for(const item of versions.slice(1))list.append(versionCard(item));$('sheet-panel').append(list);
-      }));
+      historyEntries=releaseNotes.sections(await response.text());renderHistory();
     }catch{history.append(ui.el('p','muted','本地更新记录读取失败，请重新打开设置。'));}
     for(const e of form.elements)if(e.name){const value=status.config[e.name] ?? ({source:'cnb',cnb:'https://cnb.cool/railgunhamster/RHFiles'})[e.name];if(e.type==='checkbox')e.checked=!!value;else e.value=value ?? '';}
     showSource();paint();
@@ -104,5 +129,5 @@ const androidUpdates=(()=>{
     if(workbench.primary())hourTimer=setInterval(()=>{if(!document.hidden){lastAuto=Date.now();check(false,'hour').catch(app.error);}},3600000);
     document.addEventListener('visibilitychange',()=>{if(!document.hidden)load().then(()=>{if(workbench.primary()&&Date.now()-lastAuto>=3600000){lastAuto=Date.now();return check(false,'hour');}}).catch(app.error);});
   }
-  return {init,onSettings,paintHome};
+  return {init,onSettings,paintHome,historyState,setHistoryPage};
 })();

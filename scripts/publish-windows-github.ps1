@@ -49,7 +49,7 @@ try{
     $all=Invoke-RestMethod "$api/releases?per_page=100" @options
     $remote=$all|Where-Object tag_name -CEQ $tag|Select-Object -First 1
     if($remote -and -not $remote.draft){
-        $publishedFeed=Invoke-RestMethod "https://github.com/$Repository/releases/download/$tag/releases.win.json" @public
+        $publishedFeed=Read-RHFilesGithubJsonAsset -Repository $Repository -Release $remote -FileName 'releases.win.json' -Proxy $Proxy
         if($publishedFeed -is [string]){$publishedFeed=$publishedFeed|ConvertFrom-Json}
         $null=Assert-RHFilesPublishedRelease $remote $publishedFeed $version
         foreach($file in $files){$hash=(Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant();if(($remote.assets|Where-Object name -CEQ $file.Name|Select-Object -First 1).digest -cne "sha256:$hash"){throw "Stable release differs from local output: $($file.Name); refusing replacement"}}
@@ -88,11 +88,11 @@ try{
     $null=Assert-RHFilesPublishedRelease $staged $feed $version
     Assert-RHFilesGithubAndroidUnchanged $Repository $companion $options $public
     $remote=Invoke-RestMethod "$api/releases/$($remote.id)" -Method Patch -Body (@{draft=$false;prerelease=$false;make_latest='true'}|ConvertTo-Json) -ContentType 'application/json; charset=utf-8' @options
-    $publicFeed=Invoke-RestMethod "https://github.com/$Repository/releases/download/$tag/releases.win.json" @public
+    $publicFeed=Read-RHFilesGithubJsonAsset -Repository $Repository -Release $remote -FileName 'releases.win.json' -Proxy $Proxy
     if($publicFeed -is [string]){$publicFeed=$publicFeed|ConvertFrom-Json}
     $null=Assert-RHFilesPublishedRelease $remote $publicFeed $version
     $latest=Invoke-RestMethod "$api/releases/latest" @options
     if($latest.id -ne $remote.id){throw 'Windows Latest did not advance; inspect channel before proceeding'}
-    if($companion){$android=Invoke-RestMethod "https://github.com/$Repository/releases/download/$tag/releases.android.json" @public;if($android -is [string]){$android=$android|ConvertFrom-Json};if((Get-RHFilesAndroidChannelCode $android) -ne $companion.snapshot.code){throw 'Public Android companion did not survive Windows publication'}}
+    if($companion){$android=Read-RHFilesGithubJsonAsset -Repository $Repository -Release $remote -FileName 'releases.android.json' -Proxy $Proxy;if((Get-RHFilesAndroidChannelCode $android) -ne $companion.snapshot.code){throw 'Public Android companion did not survive Windows publication'}}
     Write-Host "Published $($remote.html_url)"
 }finally{$headers.Clear();$credentialLines=$null;$passwordLine=$null;$publisherToken=$null}
