@@ -1,0 +1,81 @@
+name: Android native remote preview acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      qa_tag:
+        description: Temporary private draft containing the exact locally signed test APKs
+        required: true
+        type: string
+      apk_sha256:
+        required: true
+        type: string
+      probe_sha256:
+        required: true
+        type: string
+
+# Draft assets need repository write access. Only the download step receives
+# this ephemeral GitHub token; no personal token or signing key is uploaded.
+permissions:
+  contents: write
+
+jobs:
+  native-preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android-preview-service
+      - run: npm ci --ignore-scripts
+      - name: Download exact signed validation packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+          QA_TAG: ${{ inputs.qa_tag }}
+          APK_SHA256: ${{ inputs.apk_sha256 }}
+          PROBE_SHA256: ${{ inputs.probe_sha256 }}
+        run: |
+          [[ "$QA_TAG" =~ ^qa-android-preview-[0-9]+$ ]]
+          [[ "$APK_SHA256" =~ ^[a-f0-9]{64}$ && "$PROBE_SHA256" =~ ^[a-f0-9]{64}$ ]]
+          mkdir -p test-artifacts/android-ci-apks
+          gh release download "$QA_TAG" --repo "$GITHUB_REPOSITORY" --pattern RHFiles-Android-QA-x86_64.apk --pattern RHFiles-Android-QA-test.apk --dir test-artifacts/android-ci-apks
+          printf '%s  %s\n' "$APK_SHA256" test-artifacts/android-ci-apks/RHFiles-Android-QA-x86_64.apk "$PROBE_SHA256" test-artifacts/android-ci-apks/RHFiles-Android-QA-test.apk | sha256sum --check
+      - name: Prepare synthetic protocol servers
+        run: |
+          python3 -m venv test-artifacts/preview-venv
+          test-artifacts/preview-venv/bin/pip install paramiko==5.1.0 pyftpdlib==2.2.0
+          cargo build -p rhfiles-service --example preview_fixture --locked
+      - name: Enable KVM on the disposable runner
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          test -r /dev/kvm && test -w /dev/kvm
+      - name: Test ordinary minified APK on an accelerated emulator
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          avd-name: RHFilesPreviewCI
+          emulator-port: 5554
+          emulator-boot-timeout: 600
+          disable-linux-hw-accel: false
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -read-only -accel on -camera-back none -camera-front none
+          script: bash scripts/testing/android-preview-ci.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-native-preview-evidence
+          retention-days: 7
+          path: |
+            test-artifacts/android-*/summary.json
+            test-artifacts/android-*/*.png
+            test-artifacts/android-*/events.json
+            test-artifacts/android-preview-*.log

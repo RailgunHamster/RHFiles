@@ -8,6 +8,7 @@
 /android/web/CHANGELOG.txt
 /scripts/testing/smb-server/bin/
 /scripts/testing/smb-server/obj/
+/scripts/testing/__pycache__/
 .cache/
 *.slint_cache
 .sisyphus/

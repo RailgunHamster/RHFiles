@@ -43,7 +43,9 @@ export async function androidSession(serial=process.env.RHFILES_TEST_EMULATOR ||
   const launch=launchAndroidTestApp(adb,display);
   if(adb('shell','dumpsys','window').includes('Application Not Responding'))throw Error('The emulator has an Android ANR dialog; recover the emulator before UI assertions.');
   const pid=await until(()=>adb('shell','pidof',packageId),'app process');
-  const port=adb('forward','tcp:0','localabstract:webview_devtools_remote_'+pid);
+  const fixedPort=process.env.RHFILES_TEST_CDP_PORT;
+  if(fixedPort&&(!/^[1-9]\d{3,4}$/.test(fixedPort)||Number(fixedPort)<1024||Number(fixedPort)>65535))throw Error('Invalid owned test CDP port');
+  const port=fixedPort?(adb('forward','--no-rebind','tcp:'+fixedPort,'localabstract:webview_devtools_remote_'+pid),fixedPort):adb('forward','tcp:0','localabstract:webview_devtools_remote_'+pid);
   let socket,connecting,closed=false,targetId,lastTargetCheck=0;
   const pending=new Map(),events=[];let requestId=0;
   const artifactDir=fs.mkdtempSync(path.join(root,'test-artifacts','android-'));

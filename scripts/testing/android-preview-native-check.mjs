@@ -9,6 +9,7 @@ import {createHash} from 'node:crypto';
 import {androidSession,until,pause} from './android-session.mjs';
 import {launchApp} from './app-session.mjs';
 import {listenBrowserLoopback} from './browser-loopback.mjs';
+import {startPreviewService} from './preview-service.mjs';
 const [serial,apk,python,receiptFile]=process.argv.slice(2);
 if(!/^emulator-\d+$/.test(serial||'')||!apk||!python||!receiptFile)throw Error('Usage: android-preview-native-check.mjs emulator-N FORMAL.apk FIXTURE-python.exe OWNED-EMULATOR.json (app must already be foreground with ADB automation enabled)');
 const receipt=JSON.parse(fs.readFileSync(receiptFile));
@@ -16,16 +17,35 @@ const manifest=JSON.parse(fs.readFileSync('android/src-tauri/tauri.conf.json'));
 assert.equal(receipt.serial,serial);
 if(receipt.readOnly!==true){
   assert.equal(receipt.owned,true,'Only a freshly created task-owned AVD may be writable');
-  const avd=fs.realpathSync(receipt.avdDirectory),owned=fs.realpathSync('test-artifacts')+path.sep;
-  assert.ok(avd.toLowerCase().startsWith(owned.toLowerCase()));assert.equal(path.basename(avd),receipt.avd+'.avd');
+  if(receipt.remoteHost){
+    assert.equal(receipt.remoteHost,'nuc');assert.equal(process.env.RHFILES_TEST_FIXTURE_RELAY,'nuc');
+    assert.match(receipt.remoteRoot,/^\/tmp\/rhfiles-preview049-[A-Za-z0-9]+$/);
+    assert.equal(receipt.avd,'RHFilesPreview049NucQA');assert.equal(serial,'emulator-5568');
+    const proof=spawnSync('ssh',['-T','-o','BatchMode=yes','nuc','python3','-'],{encoding:'utf8',windowsHide:true,timeout:15000,input:`import os, json, stat\nroot=${JSON.stringify(receipt.remoteRoot)}\nassert os.path.realpath(root)==root and os.stat(root).st_uid==os.getuid()\nassert stat.S_IMODE(os.stat(root).st_mode)==0o700\npid=int(open(root+'/emulator.pid').read())\nassert os.stat('/proc/'+str(pid)).st_uid==os.getuid()\nargs=open('/proc/'+str(pid)+'/cmdline','rb').read().decode().split('\\0')\nassert args[0].startswith(root+'/sdk/emulator/')\nassert args[args.index('-avd')+1]=='RHFilesPreview049NucQA'\nassert args[args.index('-port')+1]=='5568'\nassert os.path.realpath(root+'/avd/RHFilesPreview049NucQA.avd').startswith(root+'/avd/')\nprint(json.dumps({'owned': True, 'pid': pid}))\n`});
+    assert.equal(proof.status,0,'Remote emulator ownership proof: '+proof.stderr);assert.equal(JSON.parse(proof.stdout).owned,true);
+  }else{
+    const avd=fs.realpathSync(receipt.avdDirectory),owned=fs.realpathSync('test-artifacts')+path.sep;
+    assert.ok(avd.toLowerCase().startsWith(owned.toLowerCase()));assert.equal(path.basename(avd),receipt.avd+'.avd');
+  }
 }
-const adbExe=path.join(process.env.ANDROID_HOME,'platform-tools','adb.exe');
+const adbExe=path.join(process.env.ANDROID_HOME,'platform-tools',process.platform==='win32'?'adb.exe':'adb');
 const adb=(...args)=>{const r=spawnSync(adbExe,['-s',serial,...args],{encoding:'utf8',windowsHide:true,timeout:120000});if(r.status!==0)throw Error(r.stderr||r.stdout||String(r.error));return r.stdout.trim();};
-assert.equal(adb('shell','getprop','ro.kernel.qemu'),'1');assert.equal(adb('emu','avd','name').split('\n')[0].trim(),receipt.avd);
+assert.equal(adb('shell','getprop','ro.kernel.qemu'),'1');
+const guestAvd=adb('shell','getprop','ro.boot.qemu.avd_name')||adb('shell','getprop','ro.kernel.qemu.avd_name');
+assert.equal(guestAvd||adb('emu','avd','name').split('\n')[0].trim(),receipt.avd);
 const directory=fs.mkdtempSync(path.join(os.tmpdir(),'rhfiles-preview-native-'));
-const fixture=spawn(path.resolve(python),['-u',path.resolve('scripts/testing/protocol-fixtures.py'),directory],{windowsHide:true,stdio:['pipe','pipe','pipe']});
+const relayHost=process.env.RHFILES_TEST_FIXTURE_RELAY;
+if(relayHost&&relayHost!=='nuc')throw Error('Only the explicitly selected nuc test relay is admitted');
+const fixture=spawn(path.resolve(python),['-u',path.resolve('scripts/testing/protocol-fixtures.py'),directory],{windowsHide:true,stdio:['pipe','pipe','pipe'],env:{...process.env,...(relayHost?{RHFILES_FIXTURE_FTP_PASV_START:'45080'}:{})}});
 let output='',fixtureErrors='';fixture.stdout.on('data',b=>output+=b);fixture.stderr.on('data',b=>fixtureErrors+=b);
-let phone,desktop,groupId;const connections=[];let checks=0;
+let phone,desktop,headless,groupId;const connections=[];let checks=0;
+const relays=[];
+async function relay(ports){
+  if(!relayHost)return;
+  const args=['-T','-o','BatchMode=yes','-o','ExitOnForwardFailure=yes','-o','ServerAliveInterval=15','-o','ServerAliveCountMax=2',...ports.flatMap(port=>['-R',`127.0.0.1:${port}:127.0.0.1:${port}`]),relayHost,'echo RHFILES_QA_RELAY_READY; exec sleep 900'];
+  const child=spawn('ssh',args,{windowsHide:true});relays.push(child);let out='',error='';child.stdout.on('data',b=>out+=b);child.stderr.on('data',b=>error+=b);
+  await until(()=>{if(child.exitCode!==null)throw Error('Owned fixture relay ended: '+error);return out.includes('RHFILES_QA_RELAY_READY');},'owned loopback fixture relay',15000);
+}
 let streamBytes=0,slowStarted=false;
 const streaming=http.createServer((req,res)=>{
   res.writeHead(200,{'Content-Type':'text/plain','Content-Length':8*1024*1024});
@@ -38,14 +58,24 @@ const data={json:'{"名字":"真实网络预览","items":[1,2]}',md:'# 网络 Ma
 fs.writeFileSync(path.join(directory,'测试.json'),data.json);fs.writeFileSync(path.join(directory,'说明.md'),data.md);fs.writeFileSync(path.join(directory,'large.log'),data.large);
 fs.writeFileSync(path.join(directory,'utf16.txt'),Buffer.concat([Buffer.from([255,254]),Buffer.from('中文 UTF16 😀','utf16le')]));
 fs.writeFileSync(path.join(directory,'binary.json'),Buffer.from([80,75,3,4,0,0,1,2]));fs.writeFileSync(path.join(directory,'broken.apk'),'not an apk');
-const longApk='中文'.repeat(50)+'.apk';fs.copyFileSync(apk,path.join(directory,longApk));
+// Windows permits names whose UTF-8 representation exceeds a Linux component.
+const longApk='中文'.repeat(process.platform==='win32'?50:38)+'.apk';fs.copyFileSync(apk,path.join(directory,longApk));
 // Solid-color PNGs generated solely for this synthetic gallery.
-const drawing=`Add-Type -AssemblyName System.Drawing\nforeach($pair in @(@('a.png','Teal'),@('b.png','CornflowerBlue'),@('c.png','Coral'))){$bitmap=[System.Drawing.Bitmap]::new(400,650);$graphics=[System.Drawing.Graphics]::FromImage($bitmap);$graphics.Clear([System.Drawing.Color]::FromName($pair[1]));$bitmap.Save([IO.Path]::Combine($env:RHFILES_QA_FIXTURE,$pair[0]),[System.Drawing.Imaging.ImageFormat]::Png);$graphics.Dispose();$bitmap.Dispose()}`;
-const generated=spawnSync('pwsh',['-NoProfile','-Command',drawing],{encoding:'utf8',windowsHide:true,env:{...process.env,RHFILES_QA_FIXTURE:directory}});assert.equal(generated.status,0,generated.stderr);
+const drawing=`import os,struct,zlib,binascii,pathlib
+root=pathlib.Path(os.environ['RHFILES_QA_FIXTURE'])
+def chunk(kind,data):
+ return struct.pack('>I',len(data))+kind+data+struct.pack('>I',binascii.crc32(kind+data)&0xffffffff)
+for name,color in [('a.png',(0,128,128)),('b.png',(100,149,237)),('c.png',(255,127,80))]:
+ pixels=(b'\\0'+bytes(color)*400)*650
+ image=b'\\x89PNG\\r\\n\\x1a\\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',400,650,8,2,0,0,0))+chunk(b'IDAT',zlib.compress(pixels,9))+chunk(b'IEND',b'')
+ (root/name).write_bytes(image)`;
+const generated=spawnSync(path.resolve(python),['-c',drawing],{encoding:'utf8',windowsHide:true,env:{...process.env,RHFILES_QA_FIXTURE:directory}});assert.equal(generated.status,0,generated.stderr);
 const sourceHash=createHash('sha256').update(fs.readFileSync(apk)).digest('hex');
+const sourceHashes=new Map(fs.readdirSync(directory).map(name=>[name,createHash('sha256').update(fs.readFileSync(path.join(directory,name))).digest('hex')]));
 try{
   await listenBrowserLoopback(streaming);
   const ports=await until(()=>output.includes('\n')&&JSON.parse(output.split(/\r?\n/)[0]),'loopback protocol fixtures');
+  await relay([ports.webdav,ports.ftp,...(ports.ftpPasv||[]),streaming.address().port]);
   console.log('Attaching to the foreground owned emulator');
   phone=await androidSession(serial,{attachOnly:true});const evaluate=phone.evaluate;
   const native=(command,args={})=>evaluate(`api.native(${JSON.stringify(command)},${JSON.stringify(args)})`);
@@ -59,14 +89,23 @@ try{
   const profiles=[{type:'webdav',name:'Preview QA DAV',url:`http://10.0.2.2:${ports.webdav}/dav/`,username:'rhfiles-qa',password:'owned-fixture-only',insecure:true},{type:'ftp',name:'Preview QA FTP',host:'10.0.2.2',port:ports.ftp,username:'rhfiles-qa',password:'owned-fixture-only',insecure:true}];
   const locations=[];
   for(const profile of profiles){const id=await native('connection.save',profile);connections.push(id);locations.push({name:profile.type,path:'remote://'+id+'/'});}
-  desktop=await launchApp({desktopId:'preview-native-owned'});
-  const windows=(command,args={})=>desktop.evaluate(`call(${JSON.stringify(command)},${JSON.stringify(args)})`);
-  await windows('lan_service_start',{config:{port:0,shares:[{name:'Files',path:directory}]}});
-  groupId=await windows('device_groups',{command:'create',args:{name:'Remote preview QA',deviceName:'Preview QA PC'}});
-  await windows('device_groups',{command:'configure',args:{id:groupId,enabled:true,permissions:{write:false,delete:false}}});
+  let service,windows,peer;
+  if(process.env.RHFILES_TEST_HEADLESS_SERVICE){
+    headless=await startPreviewService(process.env.RHFILES_TEST_HEADLESS_SERVICE,directory);
+    service=headless.service;groupId=service.group;peer=service.peer;
+  }else{
+    desktop=await launchApp({desktopId:'preview-native-owned'});
+    windows=(command,args={})=>desktop.evaluate(`call(${JSON.stringify(command)},${JSON.stringify(args)})`);
+    service=await windows('lan_service_start',{config:{port:0,shares:[{name:'Files',path:directory}]}});
+    groupId=await windows('device_groups',{command:'create',args:{name:'Remote preview QA',deviceName:'Preview QA PC'}});
+    await windows('device_groups',{command:'configure',args:{id:groupId,enabled:true,permissions:{write:false,delete:false}}});
+    peer=(await windows('device_groups',{command:'state',args:{}})).deviceId;
+  }
+  await relay([service.port]);
   const request=await native('groups.request',{deviceName:'Owned emulator preview QA'});
-  const approval=await windows('device_groups',{command:'approve',args:{id:groupId,uri:request.uri,canInvite:false}});
+  const approval=headless?await headless.approve(request.uri):await windows('device_groups',{command:'approve',args:{id:groupId,uri:request.uri,canInvite:false}});
   await native('groups.join',{uri:approval.uri,confirmed:true});
+  if(relayHost||headless){const result=await native('groups.connect',{id:groupId,peer,endpoint:'https://10.0.2.2:'+service.port});assert.equal(result.outcome,'connected');}
   const roots=await native('roots');let groupRoot;
   for(const location of roots.filter(r=>r.path?.startsWith('remote://'))){const id=location.path.split('/')[2],c=await native('connection.get',{id});if(c.groupId===groupId)groupRoot=location.path;}
   assert.ok(groupRoot,'test group publishes a storage root');const groupEntries=(await native('list',{path:groupRoot})).entries;
@@ -110,14 +149,18 @@ try{
   check(true,'completed remote APK hands off to Android system installation confirmation');adb('shell','input','keyevent','4');await pause(400);
   const rh=locations.find(l=>l.name==='RHFiles group');await call('navigation.open',{path:rh.path});await call('files.open',{path:rh.entries.find(e=>e.name===longApk).path});await until(installerVisible,'default group APK click handoff',120000);
   check(true,'normal opening of a RHFiles-device APK caches and directly opens system installation confirmation');await phone.screenshot('remote-apk-system-confirmation');adb('shell','input','keyevent','4');await pause(300);
-  assert.equal(createHash('sha256').update(fs.readFileSync(path.join(directory,longApk))).digest('hex'),sourceHash);check(true,'all previews and cache operations leave source files unchanged');
-  fs.writeFileSync(path.join(phone.artifactDir,'summary.json'),JSON.stringify({pass:true,checks,version:manifest.version,protocols:locations.map(l=>l.name),intermediateApkProgressObserved:progress,sourceHash},null,2));
-  console.log(JSON.stringify({pass:true,checks,artifactDir:phone.artifactDir,desktopArtifacts:desktop.artifactDir,intermediateApkProgressObserved:progress}));
+  assert.deepEqual(fs.readdirSync(directory).sort(),[...sourceHashes.keys()].sort());
+  for(const [name,digest]of sourceHashes)assert.equal(createHash('sha256').update(fs.readFileSync(path.join(directory,name))).digest('hex'),digest,name+' remains unchanged');
+  check(true,'all previews and cache operations leave source files unchanged');
+  fs.writeFileSync(path.join(phone.artifactDir,'summary.json'),JSON.stringify({pass:true,checks,version:manifest.version,emulator:receipt.avd,abi:adb('shell','getprop','ro.product.cpu.abi'),remoteHost:receipt.remoteHost||null,protocols:locations.map(l=>l.name),intermediateApkProgressObserved:progress,sourceHash,sourceFilesChecked:sourceHashes.size},null,2));
+  console.log(JSON.stringify({pass:true,checks,artifactDir:phone.artifactDir,desktopArtifacts:desktop?.artifactDir||null,headlessService:!!headless,intermediateApkProgressObserved:progress}));
 }catch(error){if(phone){await phone.screenshot('failure').catch(()=>{});console.error(await phone.evaluate(`JSON.stringify({text:document.body.innerText.slice(-4000),frames:[...document.querySelectorAll('iframe.file-pane')].map(f=>({preview:f.contentWindow.androidTextPreview?.state(),gallery:f.contentWindow.androidGallery?.state(),text:f.contentDocument.body.innerText.slice(-2000)}))})`).catch(()=>''));}throw error;}
 finally{
   if(phone){for(const id of connections)await phone.evaluate(`api.native('connection.delete',{id:${JSON.stringify(id)}})`).catch(()=>{});if(groupId)await phone.evaluate(`api.native('groups.forget',{id:${JSON.stringify(groupId)},confirmed:true})`).catch(()=>{});phone.close();}
   if(desktop){await desktop.evaluate("call('lan_service_stop',{})").catch(()=>{});await desktop.close();}
+  if(headless)await headless.close();
   fixture.stdin.end();fixture.kill();
+  for(const relay of relays)relay.kill();
   assert.equal(path.dirname(path.resolve(directory)),path.resolve(os.tmpdir()));assert.ok(path.basename(directory).startsWith('rhfiles-preview-native-'));
   fs.rmSync(directory,{recursive:true,force:true});
   streaming.closeAllConnections();await new Promise(resolve=>streaming.close(resolve));

@@ -165,9 +165,14 @@ threading.Thread(target=accept_ssh, daemon=True).start()
 authorizer = DummyAuthorizer(); authorizer.add_user(USER, PASSWORD, str(ROOT), perm="elradfmwMT")
 class Ftp(FTPHandler): pass
 Ftp.authorizer = authorizer
+pasv_start = int(os.environ.get("RHFILES_FIXTURE_FTP_PASV_START", "0"))
+if pasv_start:
+    if not 1024 <= pasv_start <= 65527:
+        raise ValueError("Invalid test-only passive port range")
+    Ftp.passive_ports = range(pasv_start, pasv_start + 8)
 ftp = FTPServer(("127.0.0.1", 0), Ftp)
 threading.Thread(target=ftp.serve_forever, kwargs={"timeout": 0.2}, daemon=True).start()
 dav = ThreadingHTTPServer(("127.0.0.1", 0), Dav)
 threading.Thread(target=dav.serve_forever, daemon=True).start()
-print(json.dumps({"sftp": ssh.getsockname()[1], "ftp": ftp.socket.getsockname()[1], "webdav": dav.server_address[1]}), flush=True)
+print(json.dumps({"sftp": ssh.getsockname()[1], "ftp": ftp.socket.getsockname()[1], "webdav": dav.server_address[1], **({"ftpPasv": list(Ftp.passive_ports)} if pasv_start else {})}), flush=True)
 sys.stdin.read()
