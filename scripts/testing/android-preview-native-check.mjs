@@ -46,11 +46,14 @@ async function relay(ports){
   const child=spawn('ssh',args,{windowsHide:true});relays.push(child);let out='',error='';child.stdout.on('data',b=>out+=b);child.stderr.on('data',b=>error+=b);
   await until(()=>{if(child.exitCode!==null)throw Error('Owned fixture relay ended: '+error);return out.includes('RHFILES_QA_RELAY_READY');},'owned loopback fixture relay',15000);
 }
-let streamBytes=0,slowStarted=false;
+let streamBytes=0,slowStarted=false;const streamRequests=[];
 const streaming=http.createServer((req,res)=>{
+  if(req.method!=='GET'||!['/dav/large.txt','/dav/slow.txt'].includes(req.url)){res.writeHead(404,{'Content-Length':0});res.end();return;}
+  const record={method:req.method,path:req.url,bytes:0,started:Date.now(),closed:false};streamRequests.push(record);
+  res.on('close',()=>{record.closed=true;record.elapsedMs=Date.now()-record.started;});
   res.writeHead(200,{'Content-Type':'text/plain','Content-Length':8*1024*1024});
   if(req.url.endsWith('/slow.txt')){slowStarted=true;res.write('waiting\n');return;}
-  const timer=setInterval(()=>{streamBytes+=4096;res.write(Buffer.alloc(4096,120));if(streamBytes>=8*1024*1024){clearInterval(timer);res.end();}},4);
+  const timer=setInterval(()=>{streamBytes+=4096;record.bytes+=4096;res.write(Buffer.alloc(4096,120));if(record.bytes>=8*1024*1024){clearInterval(timer);res.end();}},4);
   res.on('close',()=>clearInterval(timer));
 });
 const check=(test,label)=>{assert.ok(test,label);console.log('ok '+(++checks)+' - '+label);};
@@ -131,7 +134,8 @@ try{
   check((await native('jobs')).length===jobsBefore,'text viewing creates no transfer/download jobs');
   const streamId=await native('connection.save',{type:'webdav',name:'Bounded stream QA',url:`http://10.0.2.2:${streaming.address().port}/dav/`,insecure:true});connections.push(streamId);
   const streamed=await call('preview.text.read',{path:`remote://${streamId}/large.txt`,maxBytes:32768});assert.equal(streamed.bytesRead,32768);assert.equal(streamed.truncated,true);await pause(250);
-  check(streamBytes<256*1024,'bounded HTTP preview closes the stream well before the eight MB source finishes');
+  console.log('Bounded HTTP source receipt: '+JSON.stringify(streamRequests));
+  check(streamBytes<256*1024,'bounded HTTP preview closes the stream well before the eight MB source finishes: '+JSON.stringify(streamRequests));
   const cancellation=native('text.preview',{path:`remote://${streamId}/slow.txt`,requestId:'owned-cancellation-049',maxBytes:262144}).then(()=>({unexpected:true}),error=>({error:error.message}));
   await until(()=>slowStarted,'real stalled HTTP read');const cancelAt=Date.now();await native('text.preview.cancel',{requestId:'owned-cancellation-049'});const cancelled=await cancellation;
   check(cancelled.error&&Date.now()-cancelAt<4000,'cancel interrupts the pending network read: '+JSON.stringify({elapsedMs:Date.now()-cancelAt,...cancelled}));
