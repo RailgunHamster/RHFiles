@@ -122,6 +122,10 @@ Android 文件列表提供 `files.scroll.state`（是否可滚动、当前位置
 
 ## English
 
+图片定位：Windows `media.viewer.seek {index}`、Android `gallery.seek {index}`（零基序号）。拖动进度条只预览，提交后定位，使用当前队列原有排序；查看器首尾循环。Windows `media.viewer.window.state` 可核对最大化／全屏状态。
+
+Android `files.createDirectory {name}` 和 `files.createFile {name}` 在当前实际目录中创建，UI 与 API 共用同一路径、权限和冲突规则；远程创建失败不会自动重放。
+
 Android exposes `files.scroll.state` and `files.scroll.to {ratio:0..1}` for the same virtualized list scroll used by its touch handle. Continuous image auto-scrolling exposes `gallery.auto.start/pause` and `gallery.auto.speed.set {speed}` on Android, or `media.viewer.auto.start/pause` and `media.viewer.auto.speed.set {speed}` on Windows. Speed is 10–600 pixels/second; viewer state includes its running state and speed, and reaching the end stops the loop.
 
 RHFiles exposes a versioned JSON action registry for desktop and Android. Use Node.js 22+ and `scripts/rhfiles-api.mjs`; discover available actions and parameter schemas with `list` and `describe`.

@@ -89,6 +89,9 @@ class NativeStorage(val context: Context) {
   }
   fun create(parent: String, name: String, dir: Boolean): String {
     SafeFiles.name(name)
+    // MKCOL/MKD/SMB mkdir and the RHFiles API reject existing targets at the
+    // server. A complete network directory scan is neither atomic nor needed.
+    if (isRemote(parent)&&dir) return remote.create(parent,name,true)
     require(list(parent).none { it.name == name }) { "目标已存在：$name；未覆盖" }
     if (isRemote(parent)) return remote.create(parent,name,dir)
     if (isDocument(parent)) return (Docs.createDocument(context.contentResolver,document(parent),

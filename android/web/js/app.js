@@ -140,7 +140,7 @@
     $('copy-to-pane').disabled=$('move-to-pane').disabled=blocked();
     $('filelist').classList.toggle('selecting', count > 0);
     $('browse-actions').hidden = !isList() || count > 0 || !!pending;
-    $('btn-new').disabled = route.screen !== 'folder' || blocked() || state.busy;
+    $('btn-new').disabled = !currentDirectory() || blocked() || state.busy || !!state.staleError;
     $('list-status').hidden = !isList() || state.busy;
     if(state.staleError&&isList())$('list-status').textContent='未刷新 · 显示上次列表，请刷新后再修改文件';
     $('btn-search').hidden = route.screen === 'tool';
@@ -740,16 +740,24 @@
       ui.toast('已重命名');
     });
   }
+  async function createEntry(name,directory=true){
+    const parent=currentDirectory(),start={...state.route},position=captureListPosition();
+    if(!parent)throw Error('请先打开一个实际文件夹');
+    if(state.busy||state.staleError)throw Error('请先成功读取当前文件夹');
+    if(blocked()||(paneHost()&&!paneHost().acquire(window,'正在创建')))throw Error('请等待当前文件任务完成');
+    state.task={label:'正在创建'};renderShell();
+    try{
+      const path=await(directory?api.createDirectory:api.createFile)({parent,name});
+      if(sameRoute(state.route,start))await go(start,{replace:true,position});
+      ui.toast((directory?'已创建文件夹：':'已创建文件：')+name);return {path,parent,name,directory};
+    }finally{state.task=null;paneHost()?.release(window);renderShell();}
+  }
   function newMenu() {
-    const parent = state.route.path;
-    if (state.route.screen !== 'folder') return;
+    if (!currentDirectory() || state.busy || blocked() || state.staleError) return;
     const create = async (folder) => {
       const name = await ui.prompt(folder ? '新建文件夹' : '新建文件', folder ? '新建文件夹' : '新建文件.txt', '创建');
       if (!name) return;
-      await task('正在创建', async () => {
-        await (folder ? api.createDirectory : api.createFile)({ parent, name });
-        if (state.route.screen === 'folder' && state.route.path === parent) await go(state.route, { replace: true });
-      });
+      await createEntry(name,folder);
     };
     ui.openSheet('新建', [action('文件夹','folder',()=>create(true)), action('文件','document',()=>create(false))]);
   }
@@ -814,6 +822,7 @@
   }
   function moreMenu() {
     const options = [action('扫码','scan',()=>api.native('qr.scan')),action('设置','settings',()=>go({screen:'tool',tool:'settings'}))];
+    if(currentDirectory()&&!blocked()&&!state.busy&&!state.staleError)options.unshift(action('新建','folder',newMenu));
     if(paneHost())options.unshift({...action('分屏布局','layoutColumns',()=>paneHost().openLayout(window)),id:'pane-layout'});
     if (isList()) options.unshift(action('显示方式','grid',viewMenu), action('排序','sort',sortMenu), ...((state.route.screen==='library'&&!state.route.folder&&state.route.category!=='recent')?[]:[action('全选','copy',()=>{ state.selected = new Set(currentEntries().map(e=>e.path)); paintSelection(); })]));
     if (currentDirectory()) {const path=currentDirectory();const root=rootFor(path);options.unshift(action('分析当前文件夹','chart',()=>go({screen:'tool',tool:'usage',path})),action(state.favorites.some(e=>e.path===path)?'取消收藏此文件夹':'收藏此文件夹','star',()=>favorite({path,name:state.route.label||folderDisplayName(path),isDir:true})));if(root?.protocol==='rhfiles'||(path.startsWith('remote://')&&mobileList.sharedDriveLetters(deviceRootEntries.get(root?.path||'')).length))options.unshift(action('跳转电脑路径','computer',()=>promptDeviceWindowsPath(root?.path)));if(state.route.screen==='library')options.unshift(action('打开实际文件夹','folder',()=>go(folderRoute(path))));}
@@ -967,7 +976,7 @@
     androidUpdates.init({go,error});
     window.rhfilesHandleBack = () => state.permissions ? back() : true;
     window.rhfilesPane={snapshot:()=>({route:{...state.route},busy:state.busy,ready:bootReady}),refresh:()=>refreshCurrent().catch(error)};
-    androidAutomation.install({state,go,back,ready:()=>bootReady,refresh:refreshCurrent,refreshLocations,refreshGroupDevices,paintSelection,activate,setClipboard,paste,remove,rename,currentDirectory,search:runSearch,setSort,refreshServer,startServer,stopServer,chooseServerRoots,jumpToDeviceWindowsPath});
+    androidAutomation.install({state,go,back,ready:()=>bootReady,refresh:refreshCurrent,refreshLocations,refreshGroupDevices,paintSelection,activate,setClipboard,paste,remove,rename,currentDirectory,createEntry,search:runSearch,setSort,refreshServer,startServer,stopServer,chooseServerRoots,jumpToDeviceWindowsPath});
     window.addEventListener('rhfiles-panes-changed',renderShell);
     window.addEventListener('rhfiles-clipboard',event=>{state.clipboard=event.detail;renderList();renderShell();});
     window.addEventListener('rhfiles-pane-task',event=>{peerTask=event.detail;renderShell();});

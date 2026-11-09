@@ -5,6 +5,18 @@ const androidGallery=(()=>{
   function state(){return active?{open:true,mode:active.mode,...active.state()}:{open:false,mode:mode()};}
   function control(command){if(!active)throw Error('图片浏览器未打开');const action=active.controls[command];if(!action)throw Error('未知图片操作');action();return state();}
   function auto(command,value){if(!active?.auto)throw Error('请先打开连续图片浏览');if(command==='start')active.controls.fit();return command==='speed'?active.auto.setSpeed(value):active.auto[command]();}
+  function seek(at){if(!active||!Number.isInteger(at)||at<0||at>=active.state().count)throw Error('图片位置无效');active.seek(at);return state();}
+  function progress(panel,images,getIndex,go,pause,signal){
+    const row=ui.el('div','gallery-progress'),bar=ui.el('input'),label=ui.el('span','gallery-progress-label');let dragging=false;
+    bar.type='range';bar.min='0';bar.max=String(images.length-1);bar.step='1';bar.disabled=images.length<2;bar.setAttribute('aria-label','图片浏览进度');bar.title='拖动快速跳转';row.append(bar,label);panel.append(row);
+    function show(at){const text=(at+1)+' / '+images.length+' · '+images[at].name;label.textContent=text;label.title=text;bar.setAttribute('aria-valuetext',text);}
+    function update(at){if(!dragging){bar.value=String(at);show(at);}}
+    RHFilesUI.listen(bar,'pointerdown',()=>{dragging=true;pause();},{signal},'android.gallery.progress.start');
+    RHFilesUI.listen(bar,'input',()=>{dragging=true;pause();show(Number(bar.value));},{signal},'android.gallery.progress.preview');
+    RHFilesUI.listen(bar,'change',()=>{dragging=false;go(Number(bar.value));update(getIndex());},{signal},'android.gallery.progress.commit');
+    RHFilesUI.listen(bar,'pointercancel',()=>{dragging=false;update(getIndex());},{signal},'android.gallery.progress.cancel');
+    update(getIndex());return {update,preview:()=>dragging?Number(bar.value):null};
+  }
   function setMode(value){
     if(!['paged','continuous'].includes(value))throw Error('图片浏览模式无效');
     localStorage.setItem('rhfiles.imageBrowseMode',value);
@@ -27,13 +39,15 @@ const androidGallery=(()=>{
     const transform=()=>{if(currentImage)currentImage.style.transform=`translate(${x}px,${y}px) scale(${zoom}) rotate(${rotation}deg)`;};
     const controls={previous:()=>animate(-1),next:()=>animate(1),zoomOut:()=>{zoom=Math.max(.25,zoom/1.4);transform();},fit:()=>{zoom=1;x=y=0;transform();},rotate:()=>{rotation=(rotation+90)%360;transform();},zoomIn:()=>{zoom=Math.min(8,zoom*1.4);transform();}};
     toolbar.append(previous,icon('缩小','zoomOut',controls.zoomOut),icon('适应','fit',controls.fit),icon('旋转','rotate',controls.rotate),icon('放大','zoomIn',controls.zoomIn),next);
-    const clearView=register({mode:'paged',entry:()=>images[index],entries,app,controls,state:()=>({path:images[index].path,index,count:images.length,position:index,zoom,rotation})});
+    info.hidden=true;const progressBar=progress(panel,images,()=>index,at=>seekAt(at),()=>{},signal);
+    const clearView=register({mode:'paged',entry:()=>images[index],entries,app,controls,seek:seekAt,state:()=>({path:images[index].path,index,count:images.length,position:index,zoom,rotation,previewIndex:progressBar.preview()})});
+    function seekAt(at){clearTimeout(settleTimer);settling=sliding=false;points.clear();origin=null;index=at;render();}
     function source(item){const key=JSON.stringify([item.path,item.modifiedMs,item.size]);if(!cache.has(key)){if(cache.size>=5)cache.delete(cache.keys().next().value);cache.set(key,api.imageUrl(item));}return cache.get(key);}
     function render(){
       const token=++epoch;currentImage=null;track.replaceChildren();track.style.transition='none';track.style.transform='translateX(0px)';dx=dy=0;zoom=1;x=y=0;rotation=0;
-      title.textContent=images[index].name;info.textContent=(index+1)+' / '+images.length;previous.disabled=index===0;next.disabled=index===images.length-1;
-      for(const relative of [0,1,-1]){
-        const item=images[index+relative];if(!item)continue;
+      title.textContent=images[index].name;info.textContent=(index+1)+' / '+images.length;previous.disabled=next.disabled=images.length<2;progressBar.update(index);
+      for(const relative of images.length<2?[0]:[0,1,-1]){
+        const item=images[((index+relative)%images.length+images.length)%images.length];
         const page=ui.el('div','gallery-page');page.style.left=relative*100+'%';page.dataset.relative=relative;
         const image=new Image();image.className='full-media';image.alt=relative===0?item.name:'';image.decoding='async';image.draggable=false;
         const status=ui.el('div','gallery-load-state','正在读取图片…');page.append(image,status);track.append(page);if(relative===0)currentImage=image;
@@ -43,10 +57,10 @@ const androidGallery=(()=>{
     }
     function animate(delta){
       if(settling||signal.aborted)return;
-      if(index+delta<0||index+delta>=images.length)delta=0;
+      if(images.length<2)delta=0;
       settling=true;sliding=false;const duration=matchMedia('(prefers-reduced-motion: reduce)').matches?0:220;
       track.style.transition=`transform ${duration}ms cubic-bezier(.2,.7,.3,1)`;track.style.transform=`translateX(${-delta*viewport.clientWidth}px)`;
-      settleTimer=setTimeout(()=>{settling=false;if(delta){index+=delta;render();}else{track.style.transition='none';dx=dy=0;}},duration+20);
+      settleTimer=setTimeout(()=>{settling=false;if(delta){index=((index+delta)%images.length+images.length)%images.length;render();}else{track.style.transition='none';dx=dy=0;}},duration+20);
     }
     RHFilesUI.listen(viewport,'pointerdown',event=>{
       if(settling)return;points.set(event.pointerId,[event.clientX,event.clientY]);try{viewport.setPointerCapture(event.pointerId);}catch{}
@@ -60,7 +74,7 @@ const androidGallery=(()=>{
       if(zoom>1){x=origin[2]+dx;y=origin[3]+dy;transform();return;}
       const now=performance.now();samples.push([event.clientX,now]);if(samples.length>32)samples.shift();
       if(Math.abs(dx)>8&&Math.abs(dx)>Math.abs(dy)*1.25)sliding=true;
-      if(sliding){const edge=(index===0&&dx>0)||(index===images.length-1&&dx<0);track.style.transition='none';track.style.transform=`translateX(${edge?dx*.22:dx}px)`;}
+      if(sliding){track.style.transition='none';track.style.transform=`translateX(${images.length<2?dx*.22:dx}px)`;}
     },{signal},"android.web.js.gallery.open.1cd6d22ede11");
     RHFilesUI.listen(viewport,'pointerup',event=>{
       if(!points.has(event.pointerId))return;
@@ -75,9 +89,9 @@ const androidGallery=(()=>{
     RHFilesUI.listen(viewport,'click',()=>{if(moved||settling)return;clearTimeout(tapTimer);tapTimer=setTimeout(()=>panel.classList.toggle('chrome-hidden'),230);},{signal},"android.web.js.gallery.open.f057c1e4f451");
     RHFilesUI.listen(viewport,'dblclick',()=>{clearTimeout(tapTimer);zoom=zoom===1?2:1;x=y=0;transform();},{signal},"android.web.js.gallery.open.ecc9bd5c139a");
     RHFilesUI.listen(viewport,'wheel',event=>{event.preventDefault();zoom=Math.max(.25,Math.min(8,zoom*(event.deltaY>0?.9:1.1)));transform();},{passive:false,signal},"android.web.js.gallery.open.eb6ce9fd7939");
-    RHFilesUI.listen(document,'keydown',event=>{if(event.key==='ArrowRight')animate(1);if(event.key==='ArrowLeft')animate(-1);},{signal},"android.web.js.gallery.open.ea5a60ea371d");
+    RHFilesUI.listen(document,'keydown',event=>{if(/INPUT|SELECT|TEXTAREA/.test(event.target.tagName))return;if(event.key==='ArrowRight')animate(1);if(event.key==='ArrowLeft')animate(-1);if(event.key==='Home')seekAt(0);if(event.key==='End')seekAt(images.length-1);},{signal},"android.web.js.gallery.open.ea5a60ea371d");
     ui.onClosed(()=>{clearView();controller.abort();clearTimeout(tapTimer);clearTimeout(settleTimer);epoch++;for(const image of track.querySelectorAll('img'))image.removeAttribute('src');cache.clear();});
     render();
   }
-  return {open,mode,setMode,state,control,auto};
+  return {open,mode,setMode,state,control,auto,seek,progress};
 })();

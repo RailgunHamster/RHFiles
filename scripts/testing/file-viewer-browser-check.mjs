@@ -10,7 +10,7 @@ await context.addInitScript(()=>{
   const sizes=[[6000,4000],[4000,6000],[10000,1000],[40,30]];
   const entries=['a.jpg','b.jpg','c.jpg','d.jpg'].map((name,index)=>({name,path:'D:\\QA\\'+name,width:sizes[index][0],height:sizes[index][1]}));
   const s=window.__viewerQA={generation:1,selection:1,index:1,kind:'image',mode:'paged',entries,calls:[],fullscreen:false,events:{}};
-  localStorage.setItem('rhfiles-settings',JSON.stringify({language:'zh'}));
+  localStorage.setItem('rhfiles-settings',JSON.stringify({language:'en'}));localStorage.setItem('rhfiles-lang','zh');
   window.__TAURI__={core:{
     convertFileSrc:path=>{
       const entry=entries.find(entry=>entry.path===path);
@@ -49,7 +49,15 @@ async function fits(label){
 }
 try{
   await page.goto(fixture.url+'/file-viewer.html');await loaded();
+  check(await page.locator('#system').textContent()==='系统应用'&&await page.locator('#close').getAttribute('title')==='关闭','viewer uses the actual main language instead of a stale settings copy');
+  await page.evaluate(()=>{localStorage.setItem('rhfiles-lang','en');dispatchEvent(new StorageEvent('storage',{key:'rhfiles-lang'}));});check(await page.locator('#fit').textContent()==='Fit window'&&await page.locator('#image-seek').getAttribute('aria-label')==='Image progress: drag to jump','visible labels, tooltips and progress accessibility labels switch to English');
+  await page.evaluate(()=>{localStorage.setItem('rhfiles-lang','zh');dispatchEvent(new StorageEvent('storage',{key:'rhfiles-lang'}));});
   check((await call('media.viewer.state')).mode==='paged','Windows viewer defaults to paged images');
+  await call('media.viewer.seek',{index:3});await call('media.viewer.next');check((await call('media.viewer.state')).index===0,'next at the last image wraps to the first');await call('media.viewer.previous');check((await call('media.viewer.state')).index===3,'previous at the first wraps to the last');await call('media.viewer.seek',{index:1});
+  const requests=await page.evaluate(()=>__viewerQA.calls.filter(c=>c.action==='select').length);
+  await page.locator('#image-seek').evaluate(e=>{e.value='3';e.dispatchEvent(new Event('input',{bubbles:true}));});check((await call('media.viewer.state')).index===1&&(await call('media.viewer.state')).progress.previewIndex===3&&await page.evaluate(()=>__viewerQA.calls.filter(c=>c.action==='select').length)===requests,'progress dragging previews its target without loading files');
+  await page.locator('#image-seek').dispatchEvent('change');await page.waitForFunction(()=>document.getElementById('title').textContent==='d.jpg');check((await call('media.viewer.state')).index===3,'releasing progress jumps to the selected image');
+  await Promise.all([call('media.viewer.seek',{index:0}),call('media.viewer.seek',{index:2}),call('media.viewer.seek',{index:1})]);check((await call('media.viewer.state')).index===1,'rapid seeks are serialized and retain the final requested target');
   await fits('large portrait fits on first open');
   await page.locator('#next').click();await page.waitForFunction(()=>document.getElementById('title').textContent==='c.jpg');
   check((await call('media.viewer.state')).index===2,'physical next button follows directory order');
@@ -63,7 +71,7 @@ try{
   await page.waitForTimeout(600);assert.equal((await call('media.viewer.state')).position,state.position);
   check(await page.locator('.image-page').count()<=32,'only a bounded visible image neighborhood stays mounted');
   await loaded();
-  const gaps=await page.evaluate(()=>{const images=[...document.querySelectorAll('.image-page img')].sort((a,b)=>Number(a.parentElement.dataset.index)-Number(b.parentElement.dataset.index)).map(image=>{const r=image.getBoundingClientRect(),w=Math.min(r.width,r.height*image.naturalWidth/image.naturalHeight);return {left:r.left+(r.width-w)/2,right:r.left+(r.width+w)/2};});return images.slice(1).map((image,i)=>image.left-images[i].right);});
+  const gaps=await page.evaluate(()=>{const images=[...document.querySelectorAll('.image-page img')].sort((a,b)=>Number(a.parentElement.dataset.slot??a.parentElement.dataset.index)-Number(b.parentElement.dataset.slot??b.parentElement.dataset.index)).map(image=>{const r=image.getBoundingClientRect(),w=Math.min(r.width,r.height*image.naturalWidth/image.naturalHeight);return {left:r.left+(r.width-w)/2,right:r.left+(r.width+w)/2};});return images.slice(1).map((image,i)=>image.left-images[i].right);});
   check(gaps.length>0&&gaps.every(gap=>Math.abs(gap)<1),'actual fitted picture edges meet, including portrait letterboxing');
   await call('media.viewer.auto.speed.set',{speed:120});await call('media.viewer.auto.start');await page.waitForTimeout(250);check((await call('media.viewer.state')).position>state.position,'continuous images auto-scroll at the selected speed');
   await page.locator('#auto-scroll').click();const paused=await call('media.viewer.state');await page.waitForTimeout(200);check(!paused.autoScroll.running&&(await call('media.viewer.state')).position===paused.position,'physical pause button stops automatic movement');
@@ -90,7 +98,9 @@ try{
       }
     }
   }
-  await page.screenshot({path:'test-artifacts/windows-image-fit-browser.png'});
+  await page.evaluate(()=>{__viewerQA.entries.reverse();__viewerQA.index=3;__viewerQA.generation++;__viewerQA.selection++;__viewerQA.events['file-viewer-changed']();});await page.waitForFunction(()=>document.getElementById('title').textContent==='a.jpg');await call('media.viewer.next');check((await call('media.viewer.state')).path.endsWith('d.jpg'),'looping follows the supplied reversed queue instead of sorting names again');
+  await page.screenshot({path:'test-artifacts/windows-viewer-119-progress.png'});
+  await page.evaluate(()=>{__viewerQA.entries=__viewerQA.entries.slice(0,1);__viewerQA.index=0;__viewerQA.generation++;__viewerQA.selection++;__viewerQA.events['file-viewer-changed']();});await page.waitForFunction(()=>document.getElementById('image-seek').disabled);check(await page.locator('#next').isDisabled()&&await page.locator('#previous').isDisabled(),'a single image disables paging and progress seeking');
   check(errors.length===0,'no unhandled viewer errors');
   console.log('PASS '+checks+' Windows viewer UI checks (native decoding tested separately)');
 }finally{await context.close();await fixture.close();}

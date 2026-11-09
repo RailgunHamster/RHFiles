@@ -11,19 +11,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("Only an explicitly created preview fixture under the system temporary directory is allowed".into());
     }
     let data = tempfile::Builder::new().prefix("rhfiles-preview-service-").tempdir()?;
+    let write = match std::env::args().nth(2).as_deref(){None=>false,Some("--write-fixture")=>true,Some(_)=>return Err("Unknown fixture option".into())};
     let service = Service::start(data.path(), vec![ShareConfig{name:"Files".into(),path:root}], "127.0.0.1:0".parse()?)?;
     let groups = service.groups();
-    let group = groups.create("Remote preview QA", "Preview QA PC", Permissions::default())?;
-    groups.configure(&group, true, Permissions::default())?;
+    let permissions = Permissions{write,delete:false};
+    let group = groups.create("Remote preview QA", "Preview QA PC", permissions.clone())?;
+    groups.configure(&group, true, permissions)?;
     service.advertise_group_host()?;
     let mut output = io::BufWriter::new(io::stdout().lock());
-    writeln!(output,"{}",json!({"port":service.status().port,"group":group,"peer":groups.device_id(),"readOnly":true}))?;
+    writeln!(output,"{}",json!({"port":service.status().port,"group":group,"peer":groups.device_id(),"readOnly":!write}))?;
     output.flush()?;
     for line in io::stdin().lock().lines() {
         let line = line?;
         if line.len() > 360000 { return Err("Oversized fixture control request".into()); }
         let request:Value = serde_json::from_str(&line)?;
         let result = (|| -> Result<Value,Box<dyn std::error::Error>> {
+            if request["action"]=="permissions" {
+                if !write{return Err("Writable fixture was not explicitly enabled".into());}
+                let enabled=request["write"].as_bool().ok_or("Missing fixture write setting")?;
+                groups.configure(&group,true,Permissions{write:enabled,delete:false})?;
+                return Ok(json!({"write":enabled}));
+            }
             let uri = request["uri"].as_str().ok_or("Missing group request URI")?.trim();
             let encoded = uri.strip_prefix("rhfiles-group-request:v1:").ok_or("Not a group request")?;
             let signed:Signed = serde_json::from_slice(&URL_SAFE_NO_PAD.decode(encoded)?)?;

@@ -199,6 +199,7 @@ button:focus-visible,[role=option]:focus-visible { outline:3px solid var(--accen
 .gallery-auto-controls label { display:flex; flex:1; flex-direction:column; min-width:0; gap:4px; }
 .gallery-auto-controls input { width:100%; min-height:32px; accent-color:#9abfff; }
 .viewer.chrome-hidden .gallery-auto-controls { opacity:0; pointer-events:none; }
+.gallery-progress{position:absolute;z-index:3;left:0;right:0;bottom:calc(72px + env(safe-area-inset-bottom));display:flex;align-items:center;gap:10px;min-height:44px;padding:4px 16px;background:#0009;border-top:1px solid #ffffff20;transition:opacity 160ms}.gallery-progress input{flex:1;min-width:0;min-height:36px;margin:0;accent-color:#9abfff}.gallery-progress-label{max-width:38%;font-size:12px;white-space:nowrap;text-overflow:ellipsis;overflow:hidden;font-variant-numeric:tabular-nums;color:#d3dbea}.chrome-hidden .gallery-progress{opacity:0;pointer-events:none}.gallery-auto-controls{bottom:calc(126px + env(safe-area-inset-bottom))}
 .filelist.has-fast-scroll { padding-right:44px; scrollbar-width:none; }
 .filelist.has-fast-scroll::-webkit-scrollbar { display:none; }
 .file-fast-scroll { position:absolute; z-index:4; right:0; top:4px; bottom:4px; width:44px; pointer-events:none; }

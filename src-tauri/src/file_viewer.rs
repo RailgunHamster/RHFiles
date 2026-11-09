@@ -14,7 +14,7 @@ static OPEN:tokio::sync::Mutex<()>=tokio::sync::Mutex::const_new(());
 struct Entry {path:String,name:String}
 #[derive(Clone,Serialize)]
 #[serde(rename_all="camelCase")]
-struct Session {generation:u64,selection:u64,index:usize,kind:String,mode:String,entries:Vec<Entry>}
+struct Session {generation:u64,selection:u64,index:usize,kind:String,mode:String,language:String,entries:Vec<Entry>}
 fn next()->Result<u64,String>{let n=SEQUENCE.fetch_add(1,Ordering::SeqCst)+1;if n>9_007_199_254_740_991{return Err("查看器身份已耗尽，请重启应用".into())}Ok(n)}
 fn kind(path:&str)->Option<&'static str>{
     let ext=path.rsplit('.').next()?.to_ascii_lowercase();
@@ -49,16 +49,19 @@ async fn dispatch(app:AppHandle,action:String,args:Value)->Result<Value,String>{
             let media_kind=kind(&entries[index].path).unwrap();if entries.iter().any(|e|kind(&e.path)!=Some(media_kind)){return Err("媒体列表不能混合图片与视频".into())}
             let mode=args["mode"].as_str().unwrap_or("paged");if !["paged","continuous"].contains(&mode){return Err("图片浏览模式无效".into())}
             let _open=OPEN.lock().await;stop_video();
-            let generation=next()?;let state=Session{generation,selection:next()?,index,kind:media_kind.into(),mode:mode.into(),entries};
+            let language=args["language"].as_str().filter(|v|["zh","en"].contains(v)).unwrap_or("").to_owned();
+            let generation=next()?;let state=Session{generation,selection:next()?,index,kind:media_kind.into(),mode:mode.into(),language,entries};
             *SESSION.lock().map_err(|_|"查看器状态不可用")?=Some(state.clone());
             let window=if let Some(window)=app.get_webview_window(LABEL){window}else{
-                let window=crate::rhvideo::client_window(app.clone(),LABEL,"file-viewer.html","RHFiles · 媒体查看器",(1120.,780.),(500.,360.)).await?;
+                let title=if state.language=="en"{"RHFiles · Media viewer"}else{"RHFiles · 媒体查看器"};
+                let window=crate::rhvideo::client_window(app.clone(),LABEL,"file-viewer.html",title,(1120.,780.),(500.,360.)).await?;
                 let epoch=WINDOW.fetch_add(1,Ordering::SeqCst)+1;
                 window.on_window_event(move|event|if matches!(event,WindowEvent::Destroyed)&&WINDOW.compare_exchange(epoch,epoch+1,Ordering::SeqCst,Ordering::SeqCst).is_ok(){if let Ok(mut s)=SESSION.lock(){*s=None;}stop_video();});window
             };
-            window.set_title(&format!("{} · RHFiles",state.entries[state.index].name)).map_err(|e|e.to_string())?;window.emit("file-viewer-changed",json!({"generation":generation})).map_err(|e|e.to_string())?;window.show().map_err(|e|e.to_string())?;window.set_focus().map_err(|e|e.to_string())?;Ok(json!(state))
+            window.set_title(&format!("{} · RHFiles",state.entries[state.index].name)).map_err(|e|e.to_string())?;window.maximize().map_err(|e|e.to_string())?;window.emit("file-viewer-changed",json!({"generation":generation})).map_err(|e|e.to_string())?;window.show().map_err(|e|e.to_string())?;window.set_focus().map_err(|e|e.to_string())?;Ok(json!(state))
         }
         "state"=>Ok(SESSION.lock().map_err(|_|"查看器状态不可用")?.as_ref().map(|s|json!(s)).unwrap_or(json!({"opened":false}))),
+        "window.state"=>{current(&args)?;let w=app.get_webview_window(LABEL).ok_or("查看器已关闭")?;Ok(json!({"maximized":w.is_maximized().map_err(|e|e.to_string())?,"fullscreen":w.is_fullscreen().map_err(|e|e.to_string())?}))}
         "select"=>{let mut s=current(&args)?;let prior=s.selection;let index=args["index"].as_u64().filter(|v|(*v as usize)<s.entries.len()).ok_or("媒体索引无效")? as usize;s.index=index;s.selection=next()?;{let mut slot=SESSION.lock().map_err(|_|"查看器状态不可用")?;if slot.as_ref().map(|v|v.selection)!=Some(prior){return Err("查看内容已改变".into())}*slot=Some(s.clone());}stop_video();if let Some(window)=app.get_webview_window(LABEL){window.set_title(&format!("{} · RHFiles",s.entries[s.index].name)).map_err(|e|e.to_string())?;}Ok(json!(s))}
         "mode"=>{let mut s=current(&args)?;let mode=args["mode"].as_str().filter(|v|["paged","continuous"].contains(v)).ok_or("图片浏览模式无效")?;s.mode=mode.into();{let mut slot=SESSION.lock().map_err(|_|"查看器状态不可用")?;if !slot.as_ref().is_some_and(|v|v.generation==s.generation&&v.selection==s.selection){return Err("查看内容已改变".into())}*slot=Some(s.clone());}app.emit("file-viewer-preference",json!({"imageBrowseMode":mode})).map_err(|e|e.to_string())?;Ok(json!(s))}
         "close"=>{current(&args)?;if let Some(w)=app.get_webview_window(LABEL){w.close().map_err(|e|e.to_string())?;}Ok(json!({"closed":true}))}

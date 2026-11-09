@@ -22,3 +22,13 @@ test('many narrow pictures cover the viewport while huge albums keep a bounded v
   const s=create(50000);s.resize(412,700);for(let i=24950;i<25050;i++)s.measure(i,100,700);
   const frames=s.layout(25000.2);assert.ok(frames.length<=32&&frames.length>3);assert.ok(frames[0].left<0&&frames.at(-1).left+frames.at(-1).width>412);
 });
+test('looped strips join last and first in either direction with unequal image sizes',()=>{
+  const s=create(3,{loop:true});s.resize(1000,700);[[100,700],[1000,600],[350,800]].forEach(([w,h],i)=>s.measure(i,w,h));
+  for(const p of [-Number.MIN_VALUE,Number.MIN_VALUE,-3.8,-.6,0,2.8,3.1,8.7]){assert.ok(Number.isFinite(s.offset(p)));const frames=s.layout(p);assert.ok(frames.length<=32);for(let i=1;i<frames.length;i++)assert.ok(Math.abs(frames[i-1].left+frames[i-1].width-frames[i].left)<1e-6);assert.ok(frames.every(f=>f.index>=0&&f.index<3));}
+  fc.assert(fc.property(fc.double({min:-100,max:100,noNaN:true}),fc.integer({min:-5000,max:5000}),(p,delta)=>{assert.ok(Math.abs(s.offset(s.move(p,delta))-s.offset(p)-delta)<1e-6);assert.ok(s.normalize(s.move(p,delta))>=0&&s.normalize(s.move(p,delta))<3);}));
+  assert.equal(s.item(-1),2);assert.equal(s.item(3),0);
+});
+test('a two-picture loop renders neighbors on both sides, while a single picture stays stationary',()=>{
+  const a=create(2,{loop:true});a.resize(600,800);a.measure(0,100,800);a.measure(1,200,800);assert.ok(a.layout(0).some(f=>f.slot<0&&f.index===1));assert.ok(a.layout(1).some(f=>f.slot===2&&f.index===0));
+  const one=create(1,{loop:true});assert.equal(one.move(0,10000),0);assert.equal(one.layout(0).length,1);
+});

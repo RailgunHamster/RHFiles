@@ -60,6 +60,13 @@ class RemoteStorageTest {
       assertEquals(6,bytes);assertEquals("你好",server.takeRequest(5,TimeUnit.SECONDS)!!.body.readUtf8())
     }
   }
+  @Test fun webdavDirectoryCreationUsesEncodedConditionalMkcolAndKeepsPermissionErrors(){
+    MockWebServer().use{server->server.start();val store=RemoteStorage(context){JSONObject().put("type","webdav").put("url",server.url("/dav/").toString())}
+      server.enqueue(MockResponse().setResponseCode(201));assertTrue(store.create("remote://test/","新建 中文",true).contains("%"));val request=server.takeRequest(5,TimeUnit.SECONDS)!!;assertEquals("MKCOL",request.method);assertEquals("*",request.getHeader("If-None-Match"));assertTrue(request.path!!.contains("%20"))
+      for(status in listOf(403,405)){server.enqueue(MockResponse().setResponseCode(status));try{store.create("remote://test/","新建 中文",true);fail("Rejected MKCOL succeeded")}catch(e:Exception){assertTrue(e.message!!.contains(status.toString()))};assertEquals("MKCOL",server.takeRequest(5,TimeUnit.SECONDS)!!.method)}
+      assertEquals(3,server.requestCount)
+    }
+  }
   @Test fun ftpListsStreamsRenamesAndDeletesAgainstRealLocalServer() {
     val root=Files.createTempDirectory("rhfiles-ftp-test-").toFile()
     val factory=FtpServerFactory();val listener=ListenerFactory().apply{port=0}.createListener();factory.addListener("default",listener)
@@ -70,6 +77,8 @@ class RemoteStorageTest {
       File(root,"existing.txt").writeText("original")
       val store=RemoteStorage(context){JSONObject().put("type","ftp").put("host","127.0.0.1").put("port",port).put("username","test").put("password","test")}
       assertEquals("existing.txt",store.list("remote://test/").single().name)
+      val folder=store.create("remote://test/","新建 中文",true);assertTrue(File(root,"新建 中文").isDirectory);File(root,"新建 中文/marker.txt").writeText("keep")
+      try{store.create("remote://test/","新建 中文",true);fail("Duplicate directory accepted")}catch(_:Exception){};assertEquals("keep",File(root,"新建 中文/marker.txt").readText())
       val file=store.create("remote://test/","copy.txt",false);var bytes=0L
       store.write(file,ByteArrayInputStream("copied".toByteArray())){bytes+=it}
       assertEquals(6,bytes);assertEquals("copied",store.input(file).bufferedReader().use{it.readText()})

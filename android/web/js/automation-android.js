@@ -16,6 +16,7 @@ const androidAutomation=(()=>{
     register('preview.text.read',apiSchema({path:string,maxBytes:{type:'integer',minimum:1,maximum:1048576}},['path']),p=>api.readTextPreview(p),'read','Bounded, content-probed local/network/device-group text read; creates no download task');
     register('preview.text.open',apiSchema({path:string,name:string},['path','name']),p=>androidTextPreview.open(p));
     register('gallery.state',apiSchema(),()=>androidGallery.state(),'read');
+    register('gallery.seek',apiSchema({index:{type:'integer',minimum:0,maximum:49999}},['index']),p=>androidGallery.seek(p.index));
     register('files.scroll.state',apiSchema(),()=>androidFileScroll.state(),'read');
     register('files.scroll.to',apiSchema({ratio:{type:'number',minimum:0,maximum:1}},['ratio']),p=>androidFileScroll.to(p.ratio));
     register('gallery.mode.set',apiSchema({mode:{type:'string',enum:['paged','continuous']}},['mode']),p=>androidGallery.setMode(p.mode),'settings');
@@ -58,6 +59,8 @@ const androidAutomation=(()=>{
     register('navigation.category',apiSchema({category:{type:'string',enum:['image','video','audio','document','archive','apk','recent']},folder:string},['category']),async p=>{await app.go({screen:'library',category:p.category,...(p.folder?{folder:p.folder}:{})});return snapshot();});
     register('navigation.tool',apiSchema({tool:{type:'string',enum:['remote','providers','apps','tasks','trash','history','nearby','server','usage','settings']}},['tool']),async p=>{await app.go({screen:'tool',tool:p.tool});return snapshot();});
     register('files.list',apiSchema({offset:integer,limit:{type:'integer',minimum:1,maximum:2000}}),p=>{available();const offset=p.offset??0;return {route:{...state.route},total:state.entries.length,offset,entries:state.entries.slice(offset,offset+(p.limit??500)).map(e=>({name:e.name,path:e.path,kind:e.kind??null,isDirectory:!!e.isDir,size:e.size??0,modifiedMs:e.modifiedMs??null}))};},'read');
+    register('files.createDirectory',apiSchema({name:{type:'string',minLength:1,maxLength:255}},['name']),p=>{fresh();return app.createEntry(p.name,true);},'write','Create one folder inside the current local, provider or network directory; server permissions and no-overwrite rules apply');
+    register('files.createFile',apiSchema({name:{type:'string',minLength:1,maxLength:255}},['name']),p=>{fresh();return app.createEntry(p.name,false);},'write');
     register('selection.set',apiSchema({paths,mode:{type:'string',enum:['replace','add','remove']}},['paths']),p=>{available();p.paths.forEach(entry);const next=p.mode==='replace'||!p.mode?new Set():new Set(state.selected);for(const path of p.paths){if(entry(path).libraryAlbum)reject('INVALID_SELECTION','Category group headers are not file selections');p.mode==='remove'?next.delete(path):next.add(path);}state.selected=next;app.paintSelection();return snapshot();});
     register('selection.clear',apiSchema(),()=>{state.selected.clear();app.paintSelection();return snapshot();});
     register('selection.get',apiSchema(),()=>[...state.selected],'read');
