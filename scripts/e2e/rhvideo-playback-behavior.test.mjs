@@ -617,13 +617,14 @@ test('single-video smart rotation toggles back, preserves pause/time/rate, and p
     }
     const image=await s.app.readNativeFrame({expectedInput:state.inputId});assert.equal(path.dirname(image.path),s.app.directory,'only this fixture working directory may receive diagnostic files');
     const data=fs.readFileSync(image.path);assert.equal(data.subarray(0,2).toString(),'BM');const width=data.readInt32LE(18),height=-data.readInt32LE(22);assert.equal(data.length,54+width*height*4);
-    const saved=path.join(s.app.artifactDir,name+'.png');execFileSync(process.env.FFMPEG||'ffmpeg',['-hide_banner','-loglevel','error','-i',image.path,'-frames:v','1',saved],{windowsHide:true,timeout:10000});
+    const saved=path.join(s.app.artifactDir,name+'.png');
     const sw=360,sh=640,quarter=state.rotation===90,dw=quarter?sh:sw,dh=quarter?sw:sh,scale=Math.min(width/dw,height/dh),left=(width-dw*scale)/2,top=(height-dh*scale)/2,colors=[];
     for(let corner=0;corner<4;corner++){
       const x=corner%2?310:50,y=corner<2?50:590,px=Math.round(left+(quarter?sh-y:x)*scale),py=Math.round(top+(quarter?x:y)*scale),offset=54+(py*width+px)*4;
       const [b,g,r]=data.subarray(offset,offset+3);colors.push([r,g,b]);
       assert(corner===0?r>160&&g<90&&b<90:corner===1?g>160&&r<90&&b<90:corner===2?b>160&&r<90&&g<90:r>160&&g>160&&b<90,`actual ${state.renderer} corner ${corner} at ${state.rotation} degrees: ${r},${g},${b}; canvas ${width}x${height}`);
     }
+    execFileSync(process.env.FFMPEG||'ffmpeg',['-hide_banner','-loglevel','error','-i',image.path,'-frames:v','1',saved],{windowsHide:true,timeout:30000});
     console.log(JSON.stringify({nativeRotationScreenshot:saved,width,height,colors}));
   };
   try{
