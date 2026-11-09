@@ -61,6 +61,7 @@ const data={json:'{"名字":"真实网络预览","items":[1,2]}',md:'# 网络 Ma
 fs.writeFileSync(path.join(directory,'测试.json'),data.json);fs.writeFileSync(path.join(directory,'说明.md'),data.md);fs.writeFileSync(path.join(directory,'large.log'),data.large);
 fs.writeFileSync(path.join(directory,'utf16.txt'),Buffer.concat([Buffer.from([255,254]),Buffer.from('中文 UTF16 😀','utf16le')]));
 fs.writeFileSync(path.join(directory,'binary.json'),Buffer.from([80,75,3,4,0,0,1,2]));fs.writeFileSync(path.join(directory,'broken.apk'),'not an apk');
+for(let i=0;i<250;i++)fs.writeFileSync(path.join(directory,'fastscroll-'+String(i).padStart(4,'0')+'.txt'),'Owned synthetic scroll fixture '+i);
 // Windows permits names whose UTF-8 representation exceeds a Linux component.
 const longApk='中文'.repeat(process.platform==='win32'?50:38)+'.apk';fs.copyFileSync(apk,path.join(directory,longApk));
 // Solid-color PNGs generated solely for this synthetic gallery.
@@ -68,9 +69,9 @@ const drawing=`import os,struct,zlib,binascii,pathlib
 root=pathlib.Path(os.environ['RHFILES_QA_FIXTURE'])
 def chunk(kind,data):
  return struct.pack('>I',len(data))+kind+data+struct.pack('>I',binascii.crc32(kind+data)&0xffffffff)
-for name,color in [('a.png',(0,128,128)),('b.png',(100,149,237)),('c.png',(255,127,80))]:
- pixels=(b'\\0'+bytes(color)*400)*650
- image=b'\\x89PNG\\r\\n\\x1a\\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',400,650,8,2,0,0,0))+chunk(b'IDAT',zlib.compress(pixels,9))+chunk(b'IEND',b'')
+for name,color,width,height in [('a.png',(0,128,128),400,650),('b.png',(100,149,237),180,650),('c.png',(255,127,80),900,500)]:
+ pixels=(b'\\0'+bytes(color)*width)*height
+ image=b'\\x89PNG\\r\\n\\x1a\\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',width,height,8,2,0,0,0))+chunk(b'IDAT',zlib.compress(pixels,9))+chunk(b'IEND',b'')
  (root/name).write_bytes(image)`;
 const generated=spawnSync(path.resolve(python),['-c',drawing],{encoding:'utf8',windowsHide:true,env:{...process.env,RHFILES_QA_FIXTURE:directory}});assert.equal(generated.status,0,generated.stderr);
 const sourceHash=createHash('sha256').update(fs.readFileSync(apk)).digest('hex');
@@ -85,7 +86,7 @@ try{
   const call=(name,args={})=>evaluate(`(RHFilesAPI.forPane?RHFilesAPI.forPane('left'):RHFilesAPI).invoke(${JSON.stringify(name)},${JSON.stringify(args)})`);
   const view=expression=>evaluate(`(()=>{const f=[...document.querySelectorAll('iframe.file-pane')].map(e=>e.contentWindow).find(w=>w.document.querySelector('#sheet-panel.text-preview,#sheet-panel.image-viewer'));const w=f||window;return (${expression})(w,w.document);})()`);
   const version=adb('shell','dumpsys','package','com.railgunhamster.rhfiles');check(version.includes('versionName='+manifest.version)&&version.includes('versionCode='+manifest.bundle.android.versionCode),'installed formal APK matches the Android source version');
-  for(const file of ['js/text-preview.js','js/text-preview-worker.js','js/gallery.js','js/gallery-continuous.js','js/api.js','js/app.js','vendor/text-preview/purify.min.js']){
+  for(const file of ['js/text-preview.js','js/text-preview-worker.js','js/gallery.js','js/gallery-continuous.js','js/image-strip.js','js/file-scroll.js','js/api.js','js/app.js','vendor/text-preview/purify.min.js']){
     // Windows-built APKs contain checkout CRLFs. Canonicalize only those line
     // endings; all other source content and the APK binary hash stay strict.
     const loaded=await evaluate(`fetch(${JSON.stringify(file)}).then(r=>r.text())`),canonical=value=>createHash('sha256').update(value.replace(/\r\n/g,'\n')).digest('hex');
@@ -151,7 +152,16 @@ try{
   const before=await call('gallery.state');await phone.swipe(box.x+box.width*.7,box.y+box.height*.5,box.x+box.width*.7-65,box.y+box.height*.5);await pause(900);const after=await call('gallery.state');
   check(after.position>before.position&&after.position<before.position+.99&&after.position%1>.01,'trusted short touch moves the continuous remote canvas and does not snap');
   await pause(850);assert.equal((await call('gallery.state')).position,after.position);check(await view('(w,d)=>d.querySelectorAll(".gallery-page").length<=3'),'continuous remote rendering stays bounded after inertia ends');await phone.screenshot('remote-continuous-gallery');
+  const gaps=await view('(w,d)=>{const images=[...d.querySelectorAll(".gallery-page img")].sort((a,b)=>Number(a.parentElement.dataset.imageIndex)-Number(b.parentElement.dataset.imageIndex)).map(image=>{const r=image.getBoundingClientRect(),width=Math.min(r.width,r.height*image.naturalWidth/image.naturalHeight);return {left:r.left+(r.width-width)/2,right:r.left+(r.width+width)/2};});return images.slice(1).map((image,i)=>image.left-images[i].right);}');
+  check(gaps.length&&gaps.every(gap=>Math.abs(gap)<1),'actual decoded remote picture edges meet without black padding');
+  await call('gallery.auto.speed.set',{speed:120});await call('gallery.auto.start');await pause(250);check((await call('gallery.state')).position>after.position,'native continuous auto-scroll advances at the configured speed');await call('gallery.auto.pause');const autoPaused=await call('gallery.state');await pause(200);assert.equal((await call('gallery.state')).position,autoPaused.position);check(!autoPaused.autoScroll.running,'native auto-scroll pause retains the exact free position');
   await call('gallery.control',{command:'zoomIn'});assert.ok((await call('gallery.state')).zoom>1);await call('gallery.control',{command:'fit'});await call('gallery.mode.set',{mode:'paged'});assert.equal((await call('gallery.state')).mode,'paged');await call('navigation.back');assert.equal((await call('gallery.state')).open,false);
+  await until(async()=>(await call('files.scroll.state')).visible,'native long-folder fast scroll');
+  await call('files.scroll.to',{ratio:0});
+  const handle=await evaluate(`(()=>{const f=[...document.querySelectorAll('iframe.file-pane')].find(f=>!f.contentDocument.getElementById('filelist')?.hidden),d=f?.contentDocument||document,t=d.querySelector('.file-fast-scroll-thumb').getBoundingClientRect(),r=d.querySelector('.file-fast-scroll').getBoundingClientRect(),b=f?.getBoundingClientRect()||{x:0,y:0};return {x:t.x+b.x+t.width/2,y:t.y+b.y+t.height/2,travel:r.height-t.height,width:t.width,height:t.height};})()`);
+  assert.ok(handle.width>=44&&handle.height>=56);await phone.swipe(handle.x,handle.y,handle.x,handle.y+handle.travel*.6);
+  const scrolled=await call('files.scroll.state');check(scrolled.ratio>.5&&(await call('selection.get')).length===0,'native finger-sized file handle scrolls the real remote folder without selecting files');await phone.screenshot('remote-folder-fast-scroll');
+  await call('files.scroll.to',{ratio:1});assert.ok((await call('files.scroll.state')).ratio>.99);await call('navigation.open',{path:groupRoot});await until(async()=>!(await call('files.scroll.state')).visible,'native single-page folder hides its fast scroll');check(true,'native fast scroll reaches the last file and hides for one-page folders');
   const cache=await call('files.cacheApk',{path:entry(longApk).path});let progress=false;
   const cached=await until(async()=>{const j=await native('job.status',{id:cache.jobId});if(j.bytes>0&&j.bytes<j.total)progress=true;if(j.state==='failed')throw Error(j.message);return j.state==='completed'&&j;},'native remote APK cache',120000);
   assert.equal(cached.bytes,fs.statSync(apk).size);assert.equal(cached.outputs.length,1);assert.ok(cached.outputs[0].includes('/cache/exports/open-cache/')&&cached.outputs[0].endsWith('/package.apk'));
