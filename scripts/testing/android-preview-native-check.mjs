@@ -46,15 +46,20 @@ async function relay(ports){
   const child=spawn('ssh',args,{windowsHide:true});relays.push(child);let out='',error='';child.stdout.on('data',b=>out+=b);child.stderr.on('data',b=>error+=b);
   await until(()=>{if(child.exitCode!==null)throw Error('Owned fixture relay ended: '+error);return out.includes('RHFILES_QA_RELAY_READY');},'owned loopback fixture relay',15000);
 }
+const streamGate=256*1024,streamTotal=8*1024*1024;
 let streamBytes=0,slowStarted=false;const streamRequests=[];
 const streaming=http.createServer((req,res)=>{
   if(req.method!=='GET'||!['/dav/large.txt','/dav/slow.txt'].includes(req.url)){res.writeHead(404,{'Content-Length':0});res.end();return;}
   const record={method:req.method,path:req.url,bytes:0,started:Date.now(),closed:false};streamRequests.push(record);
   res.on('close',()=>{record.closed=true;record.elapsedMs=Date.now()-record.started;});
-  res.writeHead(200,{'Content-Type':'text/plain','Content-Length':8*1024*1024});
+  res.writeHead(200,{'Content-Type':'text/plain','Content-Length':streamTotal});
   if(req.url.endsWith('/slow.txt')){slowStarted=true;res.write('waiting\n');return;}
-  const timer=setInterval(()=>{streamBytes+=4096;record.bytes+=4096;res.write(Buffer.alloc(4096,120));if(record.bytes>=8*1024*1024){clearInterval(timer);res.end();}},4);
-  res.on('close',()=>clearInterval(timer));
+  // Never finish this source. A full-body reader must remain blocked, whereas
+  // a bounded reader can return and cancel independently of socket buffering.
+  // Respect backpressure and cap the fixture's own queued output as well.
+  let timer;const schedule=()=>{if(!res.destroyed&&record.bytes<streamGate)timer=setTimeout(send,4);};
+  const send=()=>{if(res.destroyed||record.bytes>=streamGate)return;streamBytes+=4096;record.bytes+=4096;if(res.write(Buffer.alloc(4096,120)))schedule();else res.once('drain',schedule);};
+  schedule();res.on('close',()=>{clearTimeout(timer);res.off('drain',schedule);});
 });
 const check=(test,label)=>{assert.ok(test,label);console.log('ok '+(++checks)+' - '+label);};
 const data={json:'{"名字":"真实网络预览","items":[1,2]}',md:'# 网络 Markdown\n\n**中文粗体**\n\n| A | B |\n|---|---|\n|一|二|\n\n<script>globalThis.__previewPwn=true</script>\n<img src="https://example.invalid/private" onerror="globalThis.__previewPwn=true">',large:'中文日志与 emoji 😀\n'.repeat(120000)};
@@ -163,9 +168,11 @@ try{
   }
   check((await native('jobs')).length===jobsBefore,'text viewing creates no transfer/download jobs');
   const streamId=await native('connection.save',{type:'webdav',name:'Bounded stream QA',url:`http://10.0.2.2:${streaming.address().port}/dav/`,insecure:true});connections.push(streamId);
-  const streamed=await call('preview.text.read',{path:`remote://${streamId}/large.txt`,maxBytes:32768});assert.equal(streamed.bytesRead,32768);assert.equal(streamed.truncated,true);await pause(250);
+  const streamed=await call('preview.text.read',{path:`remote://${streamId}/large.txt`,maxBytes:32768});assert.equal(streamed.bytesRead,32768);assert.equal(streamed.truncated,true);
+  await until(()=>streamRequests.find(row=>row.path==='/dav/large.txt')?.closed,'bounded preview actively closes a source which has not sent EOF',4000);
   console.log('Bounded HTTP source receipt: '+JSON.stringify(streamRequests));
-  check(streamBytes<256*1024,'bounded HTTP preview closes the stream well before the eight MB source finishes: '+JSON.stringify(streamRequests));
+  assert.equal(streamRequests.filter(row=>row.path==='/dav/large.txt').length,1,'Viewing a prefix must not replay the download');
+  check(streamBytes<=streamGate&&streamBytes<streamTotal,'bounded HTTP preview returns without source EOF and actively closes its stream: '+JSON.stringify(streamRequests));
   const cancellation=native('text.preview',{path:`remote://${streamId}/slow.txt`,requestId:'owned-cancellation-049',maxBytes:262144}).then(()=>({unexpected:true}),error=>({error:error.message}));
   await until(()=>slowStarted,'real stalled HTTP read');const cancelAt=Date.now();await native('text.preview.cancel',{requestId:'owned-cancellation-049'});const cancelled=await cancellation;
   check(cancelled.error&&Date.now()-cancelAt<4000,'cancel interrupts the pending network read: '+JSON.stringify({elapsedMs:Date.now()-cancelAt,...cancelled}));
