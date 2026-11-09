@@ -698,7 +698,7 @@ async function checkForUpdates(manual, checked) {
     const beforeApply=await updateReadiness(automatic);
     if(!beforeApply?.ready){
       if(automatic)await deferAutomaticUpdate(offered,beforeApply);
-      else showNotice(t('update.busy'));
+      else {try{await call('defer_update',{});}catch(_){}showNotice(t('update.busy'));}
       return;
     }
     updateDownloadProgress({phase:'applying',version,percentage:100});
@@ -708,11 +708,13 @@ async function checkForUpdates(manual, checked) {
     }
     await call('apply_update', {source, proxy, appearance:updateTransitionAppearance(),targetVersion:version,automatic});
   } catch (error) {
-    if(automatic&&offered&&/\[update_(?:busy|deferred)\]/.test(String(error))){
+    const deferred=/\[update_(?:busy|deferred)\]/.test(String(error));
+    if(automatic&&offered&&deferred){
       await deferAutomaticUpdate(offered,{retryAfterMs:5000});return;
     }
+    if(deferred){try{await call('defer_update',{});}catch(_){}}
     if (String(error).includes('[update_other_instances]')) error = t('update.otherInstances');
-    else if (String(error).includes('[update_busy]')) error = t('update.busy');
+    else if (deferred) error = t('update.busy');
     updateDownloadProgress({phase:'failed',message:String(error)});
     if (manual) showNotice(t('update.failed', {error: String(error)}));
   } finally {

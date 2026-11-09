@@ -348,7 +348,9 @@ pub async fn sftp_download(
     local_path: String,
     user: String,
     pass: String,
+    cancel: tauri::State<'_, CancelFlag>,
 ) -> Result<(), String> {
+    let _operation=cancel.begin("sftp-download")?;
     let tcp =
         std::net::TcpStream::connect((host.as_str(), port)).map_err(|e| format!("TCP: {}", e))?;
     let mut sess = ssh2::Session::new().map_err(|e| format!("SSH: {}", e))?;
@@ -376,7 +378,9 @@ pub async fn sftp_upload(
     remote_path: String,
     user: String,
     pass: String,
+    cancel: tauri::State<'_, CancelFlag>,
 ) -> Result<(), String> {
+    let _operation=cancel.begin("sftp-upload")?;
     let tcp =
         std::net::TcpStream::connect((host.as_str(), port)).map_err(|e| format!("TCP: {}", e))?;
     let mut sess = ssh2::Session::new().map_err(|e| format!("SSH: {}", e))?;
@@ -404,7 +408,9 @@ pub async fn sftp_delete(
     is_dir: bool,
     user: String,
     pass: String,
+    cancel: tauri::State<'_, CancelFlag>,
 ) -> Result<(), String> {
+    let _operation=cancel.begin("sftp-delete")?;
     let tcp =
         std::net::TcpStream::connect((host.as_str(), port)).map_err(|e| format!("TCP: {}", e))?;
     let mut sess = ssh2::Session::new().map_err(|e| format!("SSH: {}", e))?;
@@ -430,7 +436,9 @@ pub async fn sftp_mkdir(
     remote_path: String,
     user: String,
     pass: String,
+    cancel: tauri::State<'_, CancelFlag>,
 ) -> Result<(), String> {
+    let _operation=cancel.begin("sftp-mkdir")?;
     let tcp =
         std::net::TcpStream::connect((host.as_str(), port)).map_err(|e| format!("TCP: {}", e))?;
     let mut sess = ssh2::Session::new().map_err(|e| format!("SSH: {}", e))?;
@@ -453,7 +461,9 @@ pub async fn sftp_rename(
     new_path: String,
     user: String,
     pass: String,
+    cancel: tauri::State<'_, CancelFlag>,
 ) -> Result<(), String> {
+    let _operation=cancel.begin("sftp-rename")?;
     let tcp =
         std::net::TcpStream::connect((host.as_str(), port)).map_err(|e| format!("TCP: {}", e))?;
     let mut sess = ssh2::Session::new().map_err(|e| format!("SSH: {}", e))?;
