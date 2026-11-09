@@ -65,7 +65,7 @@
       for(const frame of visible){let node=markers.get(frame.slot);if(!node){node=document.createElement('div');node.className='image-loop-seam';node.append(badge(labels.label));markers.set(frame.slot,node);layer.append(node);}node.style.left=frame.left+'px';}
     }
     function clear(){clearTimeout(timer);timer=null;cycle=null;notice.hidden=true;for(const node of markers.values())node.remove();markers.clear();}
-    return {update,notify,clear,relabel:()=>{for(const node of markers.values())node.replaceChildren(badge(labels.label));if(!notice.hidden)notice.replaceChildren(badge(direction>0?labels.first:labels.last));},state:()=>({visible:markers.size>0,notice:notice.hidden?'':notice.textContent}),destroy:()=>{clear();layer.remove();notice.remove();}};
+    return {update,notify,clear,relabel:()=>{for(const node of markers.values())node.replaceChildren(badge(labels.label));if(!notice.hidden)notice.replaceChildren(badge(direction>0?labels.first:labels.last));},state:()=>({visible:markers.size>0&&!viewport.classList.contains('image-zoomed'),notice:notice.hidden?'':notice.textContent}),destroy:()=>{clear();layer.remove();notice.remove();}};
   }
   return {create,autoScroll,boundaryLayer};
 });

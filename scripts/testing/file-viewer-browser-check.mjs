@@ -103,6 +103,7 @@ try{
   await viewport.dispatchEvent('wheel',{deltaX:seamDelta,deltaY:0});await page.locator('.image-loop-seam').waitFor();
   const seam=await page.locator('.image-loop-seam').boundingBox(),view=await viewport.boundingBox();check(Math.abs(seam.x-(view.x+view.width/2))<2,'only the final-to-first joint has a viewport-aligned seam overlay');
   check(await page.locator('.image-loop-seam').textContent()==='末张 · 首张'&&(await call('media.viewer.state')).loopBoundary.visible,'the seam is visible and exposed by the viewer state API');
+  await call('media.viewer.zoomIn');check(!(await call('media.viewer.state')).loopBoundary.visible,'zooming hides the seam in both UI and API');await call('media.viewer.fit');
   await page.screenshot({path:'test-artifacts/windows-viewer-120-loop-seam.png'});
   await page.evaluate(()=>dispatchEvent(new StorageEvent('storage',{key:'rhfiles-lang',newValue:'en'})));check(await page.locator('.image-loop-seam').textContent()==='Last · First','the visible seam follows viewer language changes');
   await page.evaluate(()=>dispatchEvent(new StorageEvent('storage',{key:'rhfiles-lang',newValue:'zh'})));
