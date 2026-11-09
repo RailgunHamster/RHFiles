@@ -7,7 +7,7 @@ pub(crate) fn stop(){
     EPOCH.fetch_add(1,Ordering::SeqCst);
     if let Ok(mut slot)=FILE_ENGINE.lock(){if let Some(engine)=slot.take(){tauri::async_runtime::spawn_blocking(move||release_surface(engine));}}
 }
-pub(crate) fn paint(hwnd:HWND){if let Ok(slot)=FILE_ENGINE.try_lock(){if let Some(engine)=slot.as_ref().filter(|e|e.child==hwnd.0 as usize&&e.surface.current()){engine.frame.render();}}}
+pub(crate) fn paint(hwnd:HWND)->bool{if let Ok(slot)=FILE_ENGINE.try_lock(){if let Some(engine)=slot.as_ref().filter(|e|e.child==hwnd.0 as usize&&e.surface.current()){return !engine.compatibility||engine.frame.render();}}false}
 pub(crate) async fn open(app:AppHandle,url:String,title:String,generation:u64,selection:u64)->Result<Value,String>{
     let epoch=EPOCH.fetch_add(1,Ordering::SeqCst)+1;
     let old=FILE_ENGINE.lock().map_err(|_|"播放器状态不可用")?.take();

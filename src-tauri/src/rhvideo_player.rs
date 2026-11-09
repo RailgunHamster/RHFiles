@@ -325,7 +325,35 @@ mod surface_cleanup_tests {
         unsafe{SendMessageW(hwnd,message,Some(WPARAM(window.0.generation)),Some(LPARAM((std::process::id()^0x80000000) as isize)));}
         assert!(unsafe{IsWindow(Some(hwnd))}.as_bool());window.0.close();dispatch_close(hwnd);assert!(!unsafe{IsWindow(Some(hwnd))}.as_bool());
     }
+    #[test]
+    fn deferred_paint_expires_and_stale_timer_messages_cannot_restart_it(){
+        let window=owned_message_surface();let hwnd=HWND(window.0.child as Ptr);let key=(window.0.child,window.0.generation);
+        finish_paint(hwnd,false);assert!(REPAINT_UNTIL.lock().unwrap().contains_key(&key));
+        REPAINT_UNTIL.lock().unwrap().insert(key,std::time::Instant::now()-std::time::Duration::from_secs(1));
+        unsafe{SendMessageW(hwnd,WM_TIMER,Some(WPARAM(REPAINT_TIMER)),Some(LPARAM(0)));}
+        assert!(!REPAINT_UNTIL.lock().unwrap().contains_key(&key));
+        unsafe{SendMessageW(hwnd,WM_TIMER,Some(WPARAM(REPAINT_TIMER)),Some(LPARAM(0)));}
+        assert!(!REPAINT_UNTIL.lock().unwrap().contains_key(&key),"a queued old timer cannot create a new retry budget");
+        finish_paint(hwnd,false);finish_paint(hwnd,true);assert!(!REPAINT_UNTIL.lock().unwrap().contains_key(&key));
+    }
 }
+const REPAINT_TIMER:usize=0x52485046;
+static REPAINT_UNTIL:std::sync::LazyLock<Mutex<std::collections::HashMap<(usize,usize),std::time::Instant>>>=std::sync::LazyLock::new(||Mutex::new(std::collections::HashMap::new()));
+fn paint_surface(hwnd:HWND)->bool{
+    for slot in [&PLAYER,&PRESENTATION]{
+        if let Ok(player)=slot.try_lock(){if let Some(player)=player.as_ref().filter(|p|p.child==hwnd.0 as usize&&p.surface.current()){return !player.compatibility||player.frame.render();}}
+    }
+    if let Ok(grid)=GRID.try_lock(){if let Some(player)=grid.players.iter().find(|p|p.child==hwnd.0 as usize&&p.surface.current()){return !player.compatibility||player.frame.render();}}
+    shared_media::paint(hwnd)||file_player::paint(hwnd)
+}
+fn finish_paint(hwnd:HWND,painted:bool){unsafe{
+    let key=(hwnd.0 as usize,GetWindowLongPtrW(hwnd,GWLP_USERDATA) as usize);
+    let _=KillTimer(Some(hwnd),REPAINT_TIMER);
+    let mut retries=REPAINT_UNTIL.lock().unwrap_or_else(|e|e.into_inner());
+    if painted||key.1==0{retries.remove(&key);return;}
+    let until=*retries.entry(key).or_insert_with(||std::time::Instant::now()+std::time::Duration::from_secs(2));
+    if std::time::Instant::now()<until{let _=SetTimer(Some(hwnd),REPAINT_TIMER,16,None);}else{retries.remove(&key);}
+}}
 unsafe extern "system" fn surface_proc(
     hwnd: HWND,
     message: u32,
@@ -345,11 +373,16 @@ unsafe extern "system" fn surface_proc(
         // destroys them normally; asynchronous cleanup must carry its lease.
         if message==WM_CLOSE{return LRESULT(0);}
         if message==WM_NCHITTEST&&shared_media::owns_surface(hwnd.0 as usize){return LRESULT(HTTRANSPARENT as isize);}
-        if message==WM_NCDESTROY{SetWindowLongPtrW(hwnd,GWLP_USERDATA,0);if let Ok(mut at)=INPUT_AT.lock(){at.remove(&(hwnd.0 as usize));}}
+        if message==WM_NCDESTROY{let _=KillTimer(Some(hwnd),REPAINT_TIMER);if let Ok(mut paints)=REPAINT_UNTIL.lock(){paints.remove(&(hwnd.0 as usize,GetWindowLongPtrW(hwnd,GWLP_USERDATA) as usize));}SetWindowLongPtrW(hwnd,GWLP_USERDATA,0);if let Ok(mut at)=INPUT_AT.lock(){at.remove(&(hwnd.0 as usize));}}
         if message==WM_LBUTTONDOWN&&surface_binding(hwnd.0 as usize).is_some_and(|binding|binding.0!=LIBRARY_LABEL){let _=SetFocus(Some(hwnd));}
         let modified=matches!(message,WM_KEYDOWN|WM_MOUSEWHEEL|WM_MOUSEHWHEEL)&&[VK_CONTROL,VK_SHIFT,VK_MENU].iter().any(|key|GetKeyState(key.0 as i32)<0);
         if let Some(intent)=surface_intent(message,wparam.0,lparam.0,modified){if emit_surface_input(hwnd.0 as usize,intent){return LRESULT(0);}}
         if message==WM_CONTEXTMENU{return LRESULT(0);}
+        if message==WM_TIMER&&wparam.0==REPAINT_TIMER{
+            let key=(hwnd.0 as usize,GetWindowLongPtrW(hwnd,GWLP_USERDATA) as usize);
+            let pending=REPAINT_UNTIL.lock().is_ok_and(|v|v.get(&key).is_some_and(|until|std::time::Instant::now()<*until));
+            finish_paint(hwnd,!pending||paint_surface(hwnd));return LRESULT(0);
+        }
         if message == WM_ERASEBKGND {
             return LRESULT(1);
         }
@@ -360,27 +393,10 @@ unsafe extern "system" fn surface_proc(
             // before try_lock: MoveWindow may synchronously deliver WM_PAINT
             // while layout still owns the engine lock, leaving a black canvas.
             let _ = EndPaint(hwnd, &paint);
-            if let Ok(player) = PLAYER.try_lock() {
-                if let Some(player) = player.as_ref() {
-                    if player.child == hwnd.0 as usize&&player.surface.generation==GetWindowLongPtrW(hwnd,GWLP_USERDATA) as usize {
-                        player.frame.render();
-                    }
-                }
-            }
-            if let Ok(grid) = GRID.try_lock() {
-                for player in &grid.players {
-                    if player.child == hwnd.0 as usize&&player.surface.generation==GetWindowLongPtrW(hwnd,GWLP_USERDATA) as usize {
-                        player.frame.render();
-                    }
-                }
-            }
-            if let Ok(Some(player)) = PRESENTATION.try_lock().as_deref() {
-                if player.child == hwnd.0 as usize&&player.surface.generation==GetWindowLongPtrW(hwnd,GWLP_USERDATA) as usize {
-                    player.frame.render();
-                }
-            }
-            shared_media::paint(hwnd);
-            file_player::paint(hwnd);
+            // A re-entrant paint may run while layout/control owns an engine
+            // lock. Repaint on a later GUI turn, bounded to two seconds. A
+            // paused decoder produces no new frame to repair a missed paint.
+            finish_paint(hwnd,paint_surface(hwnd));
             return LRESULT(0);
         }
         DefWindowProcW(hwnd, message, wparam, lparam)
@@ -1639,7 +1655,13 @@ pub async fn single_bounds(app:AppHandle,args:Value)->Result<Value,String>{
         let viewport=library_surface_geometry(&view,&host,player.surface,opacity,visible)?;player.rotation_viewport=viewport;
         // Layout owns PLAYER, so a nested WM_PAINT cannot redraw it. Repaint
         // the retained paused frame now, after the final size/alpha is applied.
-        if visible&&player.compatibility{player.frame.render();}
+        if visible&&player.compatibility{
+            player.frame.render();
+            // Showing a layered child may invalidate its backing canvas on a
+            // later GUI turn. Repaint once after that turn even when the first
+            // immediate BLT succeeded; locks/initial frames use the same budget.
+            finish_paint(HWND(player.child as Ptr),false);
+        }
         drop(slot);
         let mut current=SINGLE_HOST.lock().map_err(|_|"播放宿主状态不可用")?;if !current.as_ref().is_some_and(|value|value.lease==lease){return Err("播放面板已改变".to_owned());}host.viewport=viewport;*current=Some(host);
         Ok(json!({"visible":visible,"inputId":expected,"hostLease":lease,"width":viewport.0,"height":viewport.1}))

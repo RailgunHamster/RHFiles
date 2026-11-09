@@ -74,16 +74,17 @@ pub(crate) fn stop_generation(generation: u64) {
         release_surface(engine);
     }
 }
-pub(super) fn paint(hwnd: HWND) {
+pub(super) fn paint(hwnd: HWND)->bool {
     if let Ok(slots) = SLOTS.try_lock() {
         for slot in slots.values() {
             if let Some(engine) = &slot.engine {
                 if engine.child == hwnd.0 as usize {
-                    engine.frame.render();
+                    return !engine.compatibility||engine.frame.render();
                 }
             }
         }
     }
+    false
 }
 pub(super) fn owns_surface(child: usize) -> bool {
     SLOTS.try_lock().is_ok_and(|slots| {

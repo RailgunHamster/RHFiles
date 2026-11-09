@@ -5,8 +5,28 @@ function Get-RHFilesGithubPublicRelease([string]$Repository,[string]$Tag,[string
     $path=if($Tag -eq 'latest'){'latest'}else{'tags/'+$Tag}
     $headers=@{Accept='application/vnd.github+json'}
     if($env:GH_TOKEN){$headers.Authorization='Bearer '+$env:GH_TOKEN}
-    $options=@{Headers=$headers;TimeoutSec=45};if($Proxy){$options.Proxy=$Proxy}
-    try { Invoke-RestMethod "https://api.github.com/repos/$Repository/releases/$path" @options }
+    $options=@{Headers=$headers;TimeoutSec=45;MaximumRedirection=0};if($Proxy){$options.Proxy=$Proxy}
+    $clock=[Diagnostics.Stopwatch]::StartNew()
+    try {
+        for($attempt=0;$attempt -lt 3;$attempt++){
+            $options.TimeoutSec=[Math]::Max(1,[int][Math]::Ceiling(45-$clock.Elapsed.TotalSeconds))
+            try { return Invoke-RestMethod "https://api.github.com/repos/$Repository/releases/$path" @options }
+            catch {
+                $responseProperty=$_.Exception.PSObject.Properties['Response']
+                $response=if($responseProperty){$responseProperty.Value}else{$null}
+                $status=if($null -ne $response){[int]$response.StatusCode}else{0}
+                $transient=$status -in 408,429,500,502,503,504 -or ($status -eq 0 -and ($_.Exception -is [Net.Http.HttpRequestException] -or $_.Exception -is [TimeoutException] -or $_.Exception -is [Threading.Tasks.TaskCanceledException] -or $_.Exception -is [Net.WebException]))
+                if(-not $transient -or $attempt -ge 2){throw}
+                $delay=$attempt+1
+                $retryAfter=if($null -ne $response){$response.Headers.RetryAfter}else{$null}
+                if($null -ne $retryAfter -and $null -ne $retryAfter.Delta){$delay=[Math]::Max($delay,[Math]::Ceiling($retryAfter.Delta.TotalSeconds))}
+                elseif($null -ne $retryAfter -and $null -ne $retryAfter.Date){$delay=[Math]::Max($delay,[Math]::Ceiling(($retryAfter.Date-[DateTimeOffset]::UtcNow).TotalSeconds))}
+                if($clock.Elapsed.TotalSeconds+$delay -ge 45){throw}
+                Write-Warning "GitHub release metadata temporarily unavailable (HTTP $status); bounded read retry $($attempt+2)/3 in $delay seconds."
+                Start-Sleep -Seconds $delay
+            }
+        }
+    }
     finally {$headers.Clear()}
 }
 function Read-RHFilesGithubPublicAsset {

@@ -4,10 +4,7 @@ $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'release-policy.ps1')
 . (Join-Path $PSScriptRoot 'github-public-assets.ps1')
 if($Repository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' -or $Version -notmatch '^\d+\.\d+\.\d+$'){throw 'Invalid release repository or version'}
-$headers=@{Accept='application/vnd.github+json'}
-if($env:GH_TOKEN){$headers.Authorization='Bearer '+$env:GH_TOKEN}
-$api="https://api.github.com/repos/$Repository/releases/tags/v$Version"
-try{$release=Invoke-RestMethod $api -Headers $headers -TimeoutSec 45}catch{
+try{$release=Get-RHFilesGithubPublicRelease -Repository $Repository -Tag "v$Version"}catch{
     if([int]$_.Exception.Response.StatusCode -ne 404){throw}
     if($env:GITHUB_OUTPUT){'published=false' >> $env:GITHUB_OUTPUT}
     Write-Host "Version $Version has not been published; packaging is required."
