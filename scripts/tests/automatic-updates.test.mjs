@@ -125,3 +125,9 @@ test('manual update cannot restart an actively transferring server and does not 
   const f=fixture({confirm:true,readiness:()=>({ready:false,retryAfterMs:5000})});await f.c.checkForUpdates(true);
   assert.deepEqual(f.calls.map(([name])=>name),['check_updates']);assert.equal(f.timers.size,0);assert(!f.c.G._automaticUpdatePending);
 });
+
+for(const phase of [1,2])test('disabling auto-install during native readiness '+phase+' stops the next automatic step',async()=>{
+  let count=0;const f=fixture({readiness:async()=>{if(++count===phase)f.c.G.settings.autoInstallUpdates=false;return {ready:true};}});
+  await f.c.checkForUpdates(false);assert(!f.calls.some(([name])=>name==='apply_update'));
+  assert.equal(f.calls.filter(([name])=>name==='download_update').length,phase===1?0:1);assert.equal(f.timers.size,0);assert.equal(f.c.G._automaticUpdatePending,false);
+});

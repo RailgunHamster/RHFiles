@@ -419,6 +419,7 @@ async function updateReadiness(automatic){
 }
 
 async function deferAutomaticUpdate(checked,readiness){
+  if(!isAutomaticUpdateInstallEnabled()){clearAutomaticUpdateDefer();return;}
   clearTimeout(G._automaticUpdateTimer);
   G._automaticUpdatePending=true;G._automaticUpdateChecked=checked;
   if(checked.status.pendingRestart){
@@ -665,6 +666,7 @@ async function checkForUpdates(manual, checked) {
     automatic = !manual && isAutomaticUpdateInstallEnabled();
     offered={source,proxy,status};
     const readiness=await updateReadiness(automatic);
+    if(automatic&&(!isAutomaticUpdateInstallEnabled()||source!==getUpdateSource()||proxy!==getUpdateProxy()))return;
     if (!readiness?.ready) {
       if(automatic)await deferAutomaticUpdate(offered,readiness);
       if (manual) showNotice(t('update.busy'));
@@ -696,6 +698,7 @@ async function checkForUpdates(manual, checked) {
     }
     if(automatic && (!isAutomaticUpdateInstallEnabled()||source!==getUpdateSource()||proxy!==getUpdateProxy()))return;
     const beforeApply=await updateReadiness(automatic);
+    if(automatic&&(!isAutomaticUpdateInstallEnabled()||source!==getUpdateSource()||proxy!==getUpdateProxy()))return;
     if(!beforeApply?.ready){
       if(automatic)await deferAutomaticUpdate(offered,beforeApply);
       else {try{await call('defer_update',{});}catch(_){}showNotice(t('update.busy'));}
