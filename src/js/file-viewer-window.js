@@ -5,6 +5,7 @@
   const pages=new Map(),sources=new Map();let strip=null,stripFrames=new Map(),auto=null,autoSpeed=60,closing=false;
   let zh=true;
   const text=(cn,en)=>zh?cn:en,scope=()=>({generation:state.generation,selection:state.selection}),index=()=>state.kind==='image'?strip.item(Math.round(position)):Math.max(0,Math.min(state.entries.length-1,Math.round(position))),clock=ms=>{const seconds=Math.max(0,Math.floor((ms||0)/1000));return Math.floor(seconds/60)+':'+String(seconds%60).padStart(2,'0');};
+  const boundary=RHFilesImageStrip.boundaryLayer($('viewport'),{get label(){return text('末张 · 首张','Last · First');},get first(){return text('已回到第一张','Back to the first image');},get last(){return text('已回到最后一张','Back to the last image');}});
   function applyLanguage(preferred){
     let language=preferred;
     if(!language)try{language=localStorage.getItem('rhfiles-lang')||JSON.parse(localStorage.getItem('rhfiles-settings')||'{}').language;}catch{}
@@ -14,7 +15,7 @@
     $('mode').options[0].textContent=text('逐张翻页','Paged');$('mode').options[1].textContent=text('连续滚动','Continuous');$('system').textContent=text('系统应用','System app');$('fit').textContent=text('适应窗口','Fit window');
     paintAuto(auto?.state()||{running:false,speed:autoSpeed});
     for(const page of pages.values()){const status=page.querySelector('.image-error');if(status)status.textContent=status.dataset.failed?text('图片无法解码，可使用系统应用打开','Cannot decode this image. Try the system app.'):text('正在读取图片…','Loading image…');}
-    if(state)header();
+    boundary.relabel();if(state)header();
   }
   function imageProgress(preview){
     if(state?.kind!=='image')return;const at=preview??index(),label=(at+1)+' / '+state.entries.length+' · '+state.entries[at].name;
@@ -28,7 +29,7 @@
   function header(){if(!state)return;const i=index();$('title').textContent=state.entries[i].name;document.title=state.entries[i].name+' · RHFiles';$('counter').textContent=(i+1)+' / '+state.entries.length;$('previous').disabled=state.kind==='image'?state.entries.length<2:i===0;$('next').disabled=state.kind==='image'?state.entries.length<2:i===state.entries.length-1;$('mode').value=state.mode;imageProgress();}
   async function source(entry){const key=entry.path;if(!sources.has(key)){if(sources.size>=32)sources.delete(sources.keys().next().value);sources.set(key,key.startsWith('rhfiles-device:')?core.invoke('device_fs',{action:'resource',args:{path:key}}).then(v=>v.url):Promise.resolve(core.convertFileSrc(key)));}return sources.get(key);}
   function transform(){
-    const quarter=angle%180!==0,w=$('viewport').clientWidth,h=$('viewport').clientHeight;
+    const quarter=angle%180!==0,w=$('viewport').clientWidth,h=$('viewport').clientHeight;$('viewport').classList.toggle('image-zoomed',zoom>1);
     for(const [at,page]of pages){
       const image=page.querySelector('img'),active=at===Math.round(position),frame=state.mode==='continuous'?stripFrames.get(at):null;
       image.style.width=frame?frame.imageWidth+'px':quarter?h+'px':'100%';
@@ -61,15 +62,17 @@
       const frame=stripFrames.get(at);page.dataset.active=String(at===center);page.style.left=frame?frame.left+'px':(at-center)*100+'%';page.style.width=frame?frame.width+'px':'100%';
     }
     $('track').style.transform=continuous?'':`translateX(${-(position-center)*$('viewport').clientWidth}px)`;transform();
+    boundary.update(continuous?[...stripFrames.values()]:wanted.map(at=>({slot:at,index:strip.item(at),left:(at-position)*$('viewport').clientWidth})),{width:$('viewport').clientWidth,count:state.entries.length,zoom,...(continuous?{cycle:Math.floor(Math.round(position)/state.entries.length)}:{})});
   }
-  function clear(){auto?.pause();auto=null;++epoch;clearTimeout(poll);video=null;rendered=false;pointer=null;imageSeeking=false;zoom=1;angle=x=y=0;for(const p of pages.values())p.querySelector('img').removeAttribute('src');pages.clear();sources.clear();$('track').replaceChildren();$('track').style.transform='';$('message').textContent='';}
+  function clear(){boundary.clear();auto?.pause();auto=null;++epoch;clearTimeout(poll);video=null;rendered=false;pointer=null;imageSeeking=false;zoom=1;angle=x=y=0;for(const p of pages.values())p.querySelector('img').removeAttribute('src');pages.clear();sources.clear();$('track').replaceChildren();$('track').style.transform='';$('message').textContent='';}
   async function select(at){
     if(!state)return;if(closing)throw Error(text('查看器正在关闭','The viewer is closing'));const generation=state.generation;
     if(selectionTask){await selectionTask.catch(()=>{});if(generation!==state.generation)throw Error(text('查看内容已改变','The viewed content changed'));return select(at);}
+    const wrapped=state.kind==='image'&&state.entries.length>1&&(at<0||at>=state.entries.length)?Math.sign(at):0;
     at=state.kind==='image'?strip.item(at):Math.max(0,Math.min(state.entries.length-1,at));
     const token=++epoch;loading=true;
     const task=(async()=>{const result=await native('select',{...scope(),index:at});if(token===epoch)await activate(result);})();selectionTask=task;
-    try{await task;return snapshot();}finally{if(selectionTask===task){selectionTask=null;loading=false;}}
+    try{await task;if(wrapped&&generation===state.generation&&state.index===at)boundary.notify(wrapped);return snapshot();}finally{if(selectionTask===task){selectionTask=null;loading=false;}}
   }
   async function seekImage(at){if(state?.kind!=='image'||!Number.isInteger(at)||at<0||at>=state.entries.length)throw Error(text('图片位置无效','Invalid image index'));auto?.pause();imageSeeking=false;pointer=null;return select(at);}
   async function videoControl(command,value){if(!video?.opened)throw Error(text('播放器尚未就绪','Player is not ready'));const token=epoch,input=video.inputId,result=await native('video.control',{...scope(),expectedInput:input,command,...(value===undefined?{}:{value})});if(token===epoch)video=result;return result;}
@@ -78,7 +81,7 @@
   async function activate(result){const fresh=result.generation!==state?.generation;clear();state=result;position=state.index;strip=RHFilesImageStrip.create(state.entries.length,{loop:state.kind==='image'});if(fresh){closing=false;applyLanguage(state.language);}header();$('image-progress').hidden=state.kind!=='image';$('mode').hidden=state.kind!=='image';$('image-controls').hidden=state.kind!=='image';$('video-controls').hidden=state.kind!=='video';if(state.kind==='image'){auto=RHFilesImageStrip.autoScroll({speed:autoSpeed,move:delta=>{if(document.hidden||state.mode!=='continuous')return false;position=strip.move(position,delta);images();return state.entries.length>1;},changed:paintAuto});paintAuto(auto.state());images();return;}const token=epoch;$('message').textContent=text('正在准备视频…','Opening video…');try{const result=await native('video.open',scope());if(token!==epoch)return;video=result;await pollVideo(token);}catch(e){if(token===epoch)error(e);}}
   async function refresh(){const result=await native('state');if(result.generation&&result.generation!==state?.generation)await activate(result);}
   async function mode(value){if(!['paged','continuous'].includes(value))throw Error(text('图片浏览模式无效','Invalid image mode'));const result=await native('mode',{...scope(),mode:value});state=result;if(value==='paged'){auto?.pause();position=index();}images();return snapshot();}
-  function snapshot(){return state?{opened:true,...state,index:index(),path:state.entries[index()].path,position:state.kind==='image'?strip.normalize(position):position,zoom,angle,rendered,language:zh?'zh':'en',progress:{index:index(),total:state.entries.length,previewIndex:imageSeeking?Number($('image-seek').value):null},autoScroll:auto?.state()||{running:false,speed:autoSpeed},video:video?{...video}:null}:{opened:false};}
+  function snapshot(){return state?{opened:true,...state,index:index(),path:state.entries[index()].path,position:state.kind==='image'?strip.normalize(position):position,zoom,angle,rendered,language:zh?'zh':'en',progress:{index:index(),total:state.entries.length,previewIndex:imageSeeking?Number($('image-seek').value):null},loopBoundary:boundary.state(),autoScroll:auto?.state()||{running:false,speed:autoSpeed},video:video?{...video}:null}:{opened:false};}
   async function close(run){const generation=state.generation;closing=true;auto?.pause();try{if(selectionTask)await selectionTask.catch(()=>{});if(state.generation!==generation)throw Error(text('查看内容已改变','The viewed content changed'));const args=scope();clear();return await native('close',{...args,...(run?{_automationRun:run}:{})});}catch(error){if(state.generation===generation)closing=false;throw error;}}
   async function systemOpen(){const path=state.entries[index()].path;return path.startsWith('rhfiles-device:')?core.invoke('device_transfer',{action:'open',args:{path,command:'open_file'}}):core.invoke('open_file',{path});}
   const actions={next:()=>select(index()+1),previous:()=>select(index()-1),fit:()=>{auto?.pause();zoom=1;x=y=0;transform();},zoomIn:()=>{auto?.pause();zoom=Math.min(8,zoom*1.4);transform();},zoomOut:()=>{auto?.pause();zoom=Math.max(.25,zoom/1.4);transform();},rotate:()=>{auto?.pause();angle=(angle+90)%360;images();},close,systemOpen,fullscreen:async()=>windowApi.setFullscreen(!await windowApi.isFullscreen())};

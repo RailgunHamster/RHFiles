@@ -333,9 +333,7 @@ pub(crate) async fn request(
                                 );
                             }
                         }
-                        if engine.compatibility {
-                            engine.frame.render();
-                        }
+                        if row["visible"]!=false{repaint_after_layout(engine);}
                     }
                     Ok::<_, String>(json!({"updated":true}))
                 })();

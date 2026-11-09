@@ -67,6 +67,7 @@ pub(super) async fn bounds(app:AppHandle,args:Value)->Result<Value,String>{
             // layout request was sent; old UI state must not re-hide it.
             let state=engine.state();let alpha=if state["restoringPausedFrame"]==true||(state["renderedFrames"].as_u64().unwrap_or(0)==0&&state["freshSurfaceInput"]!=true){0}else{255};
             unsafe{let hwnd=HWND(engine.child as Ptr);if cell.visible&&x<size.width as i32&&y<size.height as i32{MoveWindow(hwnd,x,y,width.min(size.width as i32-x).max(1),height.min(size.height as i32-y).max(1),true).map_err(|e|e.to_string())?;SetLayeredWindowAttributes(hwnd,windows::Win32::Foundation::COLORREF(0),alpha,LWA_ALPHA).map_err(|e|e.to_string())?;SetWindowPos(hwnd,Some(HWND_TOP),0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE|SWP_SHOWWINDOW).map_err(|e|e.to_string())?;}else{let _=ShowWindow(hwnd,SW_HIDE);}}
+            if cell.visible&&x<size.width as i32&&y<size.height as i32{repaint_after_layout(engine);}
         }drop(grid);drop(reservations);Ok::<_,String>(json!({"laidOut":true,"host":host.value(),"expectedInputs":inputs}))
     })();let _=tx.send(result);}).map_err(|e|e.to_string())?;rx.await.map_err(|_|"媒体库已关闭")?
 }

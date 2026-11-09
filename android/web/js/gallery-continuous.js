@@ -10,6 +10,7 @@ const androidContinuousGallery=(()=>{
     const controller=new AbortController(),signal=controller.signal,points=new Map(),pages=new Map(),cache=new Map();
     const viewport=ui.el('div','media-viewport'),track=ui.el('div','gallery-track'),header=ui.el('header','viewer-topbar'),title=ui.el('div','viewer-filename'),toolbar=ui.el('div','viewer-toolbar'),info=ui.el('div','viewer-info');
     title.id='viewer-filename';viewport.append(track);panel.append(viewport,header,toolbar,info);
+    const boundary=RHFilesImageStrip.boundaryLayer(viewport,{label:'末张 · 首张',first:'已回到第一张',last:'已回到最后一张'});
     function icon(label,name,fn){const b=app.button('',name,fn,'media-icon-btn');b.setAttribute('aria-label',label);b.title=label;b.querySelector('span')?.remove();return b;}
     function stop(){cancelAnimationFrame(frame);frame=0;velocity=0;}
     const autoPanel=ui.el('div','gallery-auto-controls'),autoToggle=ui.el('button','','开始'),speedLabel=ui.el('label'),speed=ui.el('input'),speedText=ui.el('span','', '速度 1.0×');
@@ -18,7 +19,7 @@ const androidContinuousGallery=(()=>{
     RHFilesUI.listen(autoToggle,'click',()=>{zoom=1;x=y=0;auto.toggle();},undefined,'android.gallery.auto.toggle');
     RHFilesUI.listen(speed,'input',()=>auto.setSpeed(Number(speed.value)),undefined,'android.gallery.auto.speed');
     RHFilesUI.listen(document,'visibilitychange',()=>{if(document.hidden)auto.pause();},{signal},'android.gallery.auto.visibility');
-    function transform(){for(const [at,page]of pages){const image=page.querySelector('img'),f=stripFrames.get(at),active=at===Math.round(position);if(!f)continue;image.style.width=f.imageWidth+'px';image.style.height=f.imageHeight+'px';image.style.transform=`translate(-50%,-50%) translate(${active?x:0}px,${active?y:0}px) scale(${active?zoom:1}) rotate(${rotation}deg)`;}}
+    function transform(){viewport.classList.toggle('image-zoomed',zoom>1);for(const [at,page]of pages){const image=page.querySelector('img'),f=stripFrames.get(at),active=at===Math.round(position);if(!f)continue;image.style.width=f.imageWidth+'px';image.style.height=f.imageHeight+'px';image.style.transform=`translate(-50%,-50%) translate(${active?x:0}px,${active?y:0}px) scale(${active?zoom:1}) rotate(${rotation}deg)`;}}
     function render(){
       if(signal.aborted)return;
       const previousIndex=index;index=strip.item(Math.round(position));
@@ -38,10 +39,10 @@ const androidContinuousGallery=(()=>{
         }
         const f=stripFrames.get(at);page.style.left=f.left+'px';page.style.width=f.width+'px';page.dataset.relative=String(at-index);
       }
-      track.style.transform='';transform();
+      track.style.transform='';transform();boundary.update([...stripFrames.values()],{width:viewport.clientWidth,count:images.length,zoom,cycle:Math.floor(Math.round(position)/images.length)});
     }
     function put(value){position=images.length<2?0:value;render();}
-    function jump(delta){stop();auto.pause();points.clear();origin=null;zoom=1;x=y=0;rotation=0;put(strip.item(index+delta));transform();}
+    function jump(delta){stop();auto.pause();points.clear();origin=null;zoom=1;x=y=0;rotation=0;put(Math.round(position)+delta);transform();}
     const controls={previous:()=>jump(-1),next:()=>jump(1),fit:()=>{stop();auto.pause();zoom=1;x=y=0;transform();},rotate:()=>{stop();auto.pause();rotation=(rotation+90)%360;render();},zoomOut:()=>{stop();auto.pause();zoom=Math.max(.25,zoom/1.4);transform();},zoomIn:()=>{stop();auto.pause();zoom=Math.min(8,zoom*1.4);transform();}};
     header.append(icon('返回文件列表','back',()=>ui.closeSheet()),title,icon('逐张翻页','paged',()=>androidGallery.setMode('paged')),icon('分享图片','share',()=>images[index].path.startsWith('remote://')?ui.toast('网络图片可先保存到本机，再使用系统分享'):api.shareFile(images[index].path)));
     header.insertBefore(icon('自动滚动','play',()=>{autoPanel.hidden=false;zoom=1;x=y=0;auto.toggle();}),header.lastChild);
@@ -49,7 +50,7 @@ const androidContinuousGallery=(()=>{
     toolbar.append(previous,icon('缩小','zoomOut',controls.zoomOut),icon('适应','fit',controls.fit),icon('旋转','rotate',controls.rotate),icon('放大','zoomIn',controls.zoomIn),next);
     info.hidden=true;const progressBar=androidGallery.progress(panel,images,()=>index,at=>seekAt(at),()=>{stop();auto.pause();},signal);
     function seekAt(at){stop();auto.pause();points.clear();origin=null;zoom=1;x=y=0;rotation=0;put(at);}
-    const clearView=register({mode:'continuous',entry:()=>images[index],entries,app,controls,auto,seek:seekAt,state:()=>({path:images[index].path,index,count:images.length,position:strip.normalize(position),zoom,rotation,previewIndex:progressBar.preview(),autoScroll:auto.state()})});
+    const clearView=register({mode:'continuous',entry:()=>images[index],entries,app,controls,auto,seek:seekAt,state:()=>({path:images[index].path,index,count:images.length,position:strip.normalize(position),zoom,rotation,previewIndex:progressBar.preview(),loopBoundary:boundary.state(),autoScroll:auto.state()})});
     function momentum(now){
       if(signal.aborted)return;const dt=Math.min(40,Math.max(0,now-lastTime));lastTime=now;
       const nextPosition=strip.move(position,velocity*dt);put(nextPosition);velocity*=Math.exp(-dt/130);
@@ -85,7 +86,7 @@ const androidContinuousGallery=(()=>{
     RHFilesUI.listen(document,'keydown',event=>{if(/INPUT|SELECT|TEXTAREA/.test(event.target.tagName))return;if(event.key==='Home')seekAt(0);if(event.key==='End')seekAt(images.length-1);if(event.key==='ArrowRight'){event.preventDefault();jump(1);}if(event.key==='ArrowLeft'){event.preventDefault();jump(-1);}},{signal},'android.gallery.continuous.keys');
     let viewportSize='';
     const resize=new ResizeObserver(()=>{const size=viewport.clientWidth+':'+viewport.clientHeight;if(viewportSize&&size!==viewportSize){stop();points.clear();origin=null;}viewportSize=size;render();});resize.observe(viewport);
-    ui.onClosed(()=>{clearView();controller.abort();stop();auto.pause();clearTimeout(tapTimer);resize.disconnect();for(const page of pages.values())page.querySelector('img').removeAttribute('src');pages.clear();cache.clear();});
+    ui.onClosed(()=>{boundary.destroy();clearView();controller.abort();stop();auto.pause();clearTimeout(tapTimer);resize.disconnect();for(const page of pages.values())page.querySelector('img').removeAttribute('src');pages.clear();cache.clear();});
     render();
   }
   return {open};

@@ -53,5 +53,19 @@
     function setSpeed(value){if(!Number.isFinite(value)||value<10||value>600)throw Error('自动滚动速度必须介于 10 和 600 像素/秒');speed=value;changed(state());return state();}
     return {state,start,pause,setSpeed,toggle:()=>running?pause():start()};
   }
-  return {create,autoScroll};
+  function boundaryLayer(viewport,labels){
+    const layer=document.createElement('div'),notice=document.createElement('div'),markers=new Map();let timer=null,cycle=null,direction=1;
+    layer.className='image-loop-boundaries';layer.setAttribute('aria-hidden','true');notice.className='image-loop-notice';notice.hidden=true;notice.setAttribute('role','status');viewport.append(layer,notice);
+    function badge(text){const span=document.createElement('span'),icon=document.createElementNS('http://www.w3.org/2000/svg','svg'),path=document.createElementNS('http://www.w3.org/2000/svg','path');span.className='image-loop-badge';icon.setAttribute('viewBox','0 0 24 24');icon.setAttribute('aria-hidden','true');path.setAttribute('d','M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1');icon.append(path);span.append(icon,document.createTextNode(text));return span;}
+    function notify(value){direction=value;clearTimeout(timer);notice.replaceChildren(badge(direction>0?labels.first:labels.last));notice.hidden=false;timer=setTimeout(()=>{notice.hidden=true;timer=null;},1500);}
+    function update(frames,{width,count,zoom=1,cycle:nextCycle}){
+      if(nextCycle!==undefined){if(cycle!==null&&nextCycle!==cycle&&count>1)notify(Math.sign(nextCycle-cycle));cycle=nextCycle;}
+      const visible=zoom<=1&&count>1?frames.filter(frame=>frame.index===0&&frame.left>8&&frame.left<width-8):[];
+      const wanted=new Set(visible.map(frame=>frame.slot));for(const [key,node]of markers)if(!wanted.has(key)){node.remove();markers.delete(key);}
+      for(const frame of visible){let node=markers.get(frame.slot);if(!node){node=document.createElement('div');node.className='image-loop-seam';node.append(badge(labels.label));markers.set(frame.slot,node);layer.append(node);}node.style.left=frame.left+'px';}
+    }
+    function clear(){clearTimeout(timer);timer=null;cycle=null;notice.hidden=true;for(const node of markers.values())node.remove();markers.clear();}
+    return {update,notify,clear,relabel:()=>{for(const node of markers.values())node.replaceChildren(badge(labels.label));if(!notice.hidden)notice.replaceChildren(badge(direction>0?labels.first:labels.last));},state:()=>({visible:markers.size>0,notice:notice.hidden?'':notice.textContent}),destroy:()=>{clear();layer.remove();notice.remove();}};
+  }
+  return {create,autoScroll,boundaryLayer};
 });

@@ -53,7 +53,7 @@ try{
   await page.evaluate(()=>{localStorage.setItem('rhfiles-lang','en');dispatchEvent(new StorageEvent('storage',{key:'rhfiles-lang'}));});check(await page.locator('#fit').textContent()==='Fit window'&&await page.locator('#image-seek').getAttribute('aria-label')==='Image progress: drag to jump','visible labels, tooltips and progress accessibility labels switch to English');
   await page.evaluate(()=>{localStorage.setItem('rhfiles-lang','zh');dispatchEvent(new StorageEvent('storage',{key:'rhfiles-lang'}));});
   check((await call('media.viewer.state')).mode==='paged','Windows viewer defaults to paged images');
-  await call('media.viewer.seek',{index:3});await call('media.viewer.next');check((await call('media.viewer.state')).index===0,'next at the last image wraps to the first');await call('media.viewer.previous');check((await call('media.viewer.state')).index===3,'previous at the first wraps to the last');await call('media.viewer.seek',{index:1});
+  await call('media.viewer.seek',{index:3});await call('media.viewer.next');check((await call('media.viewer.state')).index===0,'next at the last image wraps to the first');check((await call('media.viewer.state')).loopBoundary.notice==='已回到第一张','forward wrapping displays the first-image cue');await call('media.viewer.previous');check((await call('media.viewer.state')).index===3,'previous at the first wraps to the last');check((await call('media.viewer.state')).loopBoundary.notice==='已回到最后一张','backward wrapping displays the last-image cue');await call('media.viewer.seek',{index:1});
   const requests=await page.evaluate(()=>__viewerQA.calls.filter(c=>c.action==='select').length);
   await page.locator('#image-seek').evaluate(e=>{e.value='3';e.dispatchEvent(new Event('input',{bubbles:true}));});check((await call('media.viewer.state')).index===1&&(await call('media.viewer.state')).progress.previewIndex===3&&await page.evaluate(()=>__viewerQA.calls.filter(c=>c.action==='select').length)===requests,'progress dragging previews its target without loading files');
   await page.locator('#image-seek').dispatchEvent('change');await page.waitForFunction(()=>document.getElementById('title').textContent==='d.jpg');check((await call('media.viewer.state')).index===3,'releasing progress jumps to the selected image');
@@ -61,7 +61,7 @@ try{
   await fits('large portrait fits on first open');
   await page.locator('#next').click();await page.waitForFunction(()=>document.getElementById('title').textContent==='c.jpg');
   check((await call('media.viewer.state')).index===2,'physical next button follows directory order');
-  await call('media.viewer.previous');await call('media.viewer.mode.set',{mode:'continuous'});
+  await call('media.viewer.previous');await call('media.viewer.mode.set',{mode:'continuous'});await loaded();
   const viewport=page.locator('#viewport');
   await viewport.dispatchEvent('pointerdown',{pointerId:7,pointerType:'touch',button:0,clientX:700,clientY:300});
   await viewport.dispatchEvent('pointermove',{pointerId:7,pointerType:'touch',clientX:620,clientY:300});
@@ -98,9 +98,17 @@ try{
       }
     }
   }
+  await call('media.viewer.mode.set',{mode:'continuous'});await call('media.viewer.seek',{index:3});await loaded();
+  const seamDelta=await page.evaluate(()=>Number(document.querySelector('.image-page[data-slot="4"]').style.left.slice(0,-2))-document.getElementById('viewport').clientWidth/2);
+  await viewport.dispatchEvent('wheel',{deltaX:seamDelta,deltaY:0});await page.locator('.image-loop-seam').waitFor();
+  const seam=await page.locator('.image-loop-seam').boundingBox(),view=await viewport.boundingBox();check(Math.abs(seam.x-(view.x+view.width/2))<2,'only the final-to-first joint has a viewport-aligned seam overlay');
+  check(await page.locator('.image-loop-seam').textContent()==='末张 · 首张'&&(await call('media.viewer.state')).loopBoundary.visible,'the seam is visible and exposed by the viewer state API');
+  await page.screenshot({path:'test-artifacts/windows-viewer-120-loop-seam.png'});
+  await page.evaluate(()=>dispatchEvent(new StorageEvent('storage',{key:'rhfiles-lang',newValue:'en'})));check(await page.locator('.image-loop-seam').textContent()==='Last · First','the visible seam follows viewer language changes');
+  await page.evaluate(()=>dispatchEvent(new StorageEvent('storage',{key:'rhfiles-lang',newValue:'zh'})));
   await page.evaluate(()=>{__viewerQA.entries.reverse();__viewerQA.index=3;__viewerQA.generation++;__viewerQA.selection++;__viewerQA.events['file-viewer-changed']();});await page.waitForFunction(()=>document.getElementById('title').textContent==='a.jpg');await call('media.viewer.next');check((await call('media.viewer.state')).path.endsWith('d.jpg'),'looping follows the supplied reversed queue instead of sorting names again');
   await page.screenshot({path:'test-artifacts/windows-viewer-119-progress.png'});
-  await page.evaluate(()=>{__viewerQA.entries=__viewerQA.entries.slice(0,1);__viewerQA.index=0;__viewerQA.generation++;__viewerQA.selection++;__viewerQA.events['file-viewer-changed']();});await page.waitForFunction(()=>document.getElementById('image-seek').disabled);check(await page.locator('#next').isDisabled()&&await page.locator('#previous').isDisabled(),'a single image disables paging and progress seeking');
+  await page.evaluate(()=>{__viewerQA.entries=__viewerQA.entries.slice(0,1);__viewerQA.index=0;__viewerQA.generation++;__viewerQA.selection++;__viewerQA.events['file-viewer-changed']();});await page.waitForFunction(()=>document.getElementById('image-seek').disabled);check(await page.locator('#next').isDisabled()&&await page.locator('#previous').isDisabled(),'a single image disables paging and progress seeking');check(!(await call('media.viewer.state')).loopBoundary.visible&&await page.locator('.image-loop-seam').count()===0,'one image has no artificial loop boundary');
   check(errors.length===0,'no unhandled viewer errors');
   console.log('PASS '+checks+' Windows viewer UI checks (native decoding tested separately)');
 }finally{await context.close();await fixture.close();}

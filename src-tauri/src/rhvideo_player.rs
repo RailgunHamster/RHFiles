@@ -354,6 +354,14 @@ fn finish_paint(hwnd:HWND,painted:bool){unsafe{
     let until=*retries.entry(key).or_insert_with(||std::time::Instant::now()+std::time::Duration::from_secs(2));
     if std::time::Instant::now()<until{let _=SetTimer(Some(hwnd),REPAINT_TIMER,16,None);}else{retries.remove(&key);}
 }}
+fn repaint_after_layout(player:&Engine){
+    if player.compatibility&&player.surface.current(){
+        // Geometry owns the engine lock, so nested WM_PAINT cannot acquire it.
+        // Redraw the retained frame now and after the layered backing commits.
+        player.frame.render();
+        finish_paint(HWND(player.child as Ptr),false);
+    }
+}
 unsafe extern "system" fn surface_proc(
     hwnd: HWND,
     message: u32,
@@ -1385,7 +1393,7 @@ pub async fn presentation_bounds(app: AppHandle, args: Value) -> Result<Value, S
             // The HWND may have been retired/reused while this job waited on
             // the main queue. Hold ownership across the actual window calls.
             let slot=PRESENTATION.lock().map_err(|_|"放映状态不可用")?;
-            if !slot.as_ref().is_some_and(|p|p.input_id==input&&p.child==child){return Ok(json!({"opened":false,"stale":true}));}
+            let Some(player)=slot.as_ref().filter(|p|p.input_id==input&&p.child==child)else{return Ok(json!({"opened":false,"stale":true}));};
             let hwnd = HWND(child as Ptr);
             unsafe {
                 if visible {
@@ -1417,6 +1425,7 @@ pub async fn presentation_bounds(app: AppHandle, args: Value) -> Result<Value, S
                     let _ = ShowWindow(hwnd, SW_HIDE);
                 }
             }
+            if visible{repaint_after_layout(player);}
             drop(slot);
             Ok::<_, String>(json!({"visible":visible,"inputId":input}))
         })();
@@ -1493,6 +1502,7 @@ fn layout_grid(window: &tauri::WebviewWindow) {
                         0,
                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
                     );
+                    repaint_after_layout(player);
                 }
             }
         }
@@ -1619,7 +1629,7 @@ fn resize(window: &tauri::WebviewWindow) {
     };
     layout(window, player.child);
     if let Ok(viewport)=window_viewport(window){player.rotation_viewport=viewport;}
-    player.frame.render();
+    repaint_after_layout(player);
 }
 fn window_viewport(window:&tauri::WebviewWindow)->Result<(u32,u32),String>{
     let size=window.inner_size().map_err(|e|e.to_string())?;let scale=window.scale_factor().map_err(|e|e.to_string())?;
@@ -1653,15 +1663,7 @@ pub async fn single_bounds(app:AppHandle,args:Value)->Result<Value,String>{
     app.run_on_main_thread(move||{let result=(||{
         host.ensure_open()?;let mut slot=PLAYER.lock().map_err(|_|"播放器不可用")?;let player=slot.as_mut().filter(|player|player.input_id==expected).ok_or("播放输入已改变，旧布局未执行")?;
         let viewport=library_surface_geometry(&view,&host,player.surface,opacity,visible)?;player.rotation_viewport=viewport;
-        // Layout owns PLAYER, so a nested WM_PAINT cannot redraw it. Repaint
-        // the retained paused frame now, after the final size/alpha is applied.
-        if visible&&player.compatibility{
-            player.frame.render();
-            // Showing a layered child may invalidate its backing canvas on a
-            // later GUI turn. Repaint once after that turn even when the first
-            // immediate BLT succeeded; locks/initial frames use the same budget.
-            finish_paint(HWND(player.child as Ptr),false);
-        }
+        if visible{repaint_after_layout(player);}
         drop(slot);
         let mut current=SINGLE_HOST.lock().map_err(|_|"播放宿主状态不可用")?;if !current.as_ref().is_some_and(|value|value.lease==lease){return Err("播放面板已改变".to_owned());}host.viewport=viewport;*current=Some(host);
         Ok(json!({"visible":visible,"inputId":expected,"hostLease":lease,"width":viewport.0,"height":viewport.1}))
