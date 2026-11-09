@@ -61,7 +61,12 @@ try{
   const state=await call('media.viewer.state');
   check(state.position>1&&state.position<2,'short continuous drag keeps a fractional position');
   await page.waitForTimeout(600);assert.equal((await call('media.viewer.state')).position,state.position);
-  check(await page.locator('.image-page').count()<=3,'only the current image and neighbors stay mounted');
+  check(await page.locator('.image-page').count()<=32,'only a bounded visible image neighborhood stays mounted');
+  await loaded();
+  const gaps=await page.evaluate(()=>{const images=[...document.querySelectorAll('.image-page img')].sort((a,b)=>Number(a.parentElement.dataset.index)-Number(b.parentElement.dataset.index)).map(image=>{const r=image.getBoundingClientRect(),w=Math.min(r.width,r.height*image.naturalWidth/image.naturalHeight);return {left:r.left+(r.width-w)/2,right:r.left+(r.width+w)/2};});return images.slice(1).map((image,i)=>image.left-images[i].right);});
+  check(gaps.length>0&&gaps.every(gap=>Math.abs(gap)<1),'actual fitted picture edges meet, including portrait letterboxing');
+  await call('media.viewer.auto.speed.set',{speed:120});await call('media.viewer.auto.start');await page.waitForTimeout(250);check((await call('media.viewer.state')).position>state.position,'continuous images auto-scroll at the selected speed');
+  await page.locator('#auto-scroll').click();const paused=await call('media.viewer.state');await page.waitForTimeout(200);check(!paused.autoScroll.running&&(await call('media.viewer.state')).position===paused.position,'physical pause button stops automatic movement');
   await call('media.viewer.zoomIn');check((await call('media.viewer.state')).zoom>1,'zoom controls expose semantic actions');
   await call('media.viewer.fit');await call('media.viewer.rotate');assert.equal((await call('media.viewer.state')).angle,90);
   await call('media.viewer.fullscreen');check(await page.evaluate(()=>__viewerQA.fullscreen),'fullscreen uses the application window');

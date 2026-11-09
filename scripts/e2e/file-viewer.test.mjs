@@ -17,7 +17,7 @@ test('filesystem media viewer: real images, continuous input, native video, inde
     const call=(name,args={})=>page.evaluate(`RHFilesAPI.invoke(${JSON.stringify(name)},${JSON.stringify(args)})`);
     await until(()=>page.evaluate('RHFilesAPI.snapshot().state.application?.ready'),'viewer action registry');await until(()=>page.evaluate('[...document.querySelectorAll(".image-page img")].every(i=>i.naturalWidth>0)'),'real local images');
     let state=await call('media.viewer.state');assert.equal(state.entries.length,3);assert.equal(state.entries[state.index].name,'b.png');assert.equal(state.mode,'paged');
-    for(const asset of ['js/file-viewer-window.js','css/file-viewer.css']){
+    for(const asset of ['js/file-viewer-window.js','js/image-strip.js','css/file-viewer.css']){
       const loaded=await page.evaluate(`fetch(${JSON.stringify(asset)}).then(response=>response.text())`);
       assert.equal(createHash('sha256').update(loaded).digest('hex'),hash(path.resolve('src',asset)),'formal executable contains current '+asset);
     }
@@ -45,6 +45,8 @@ test('filesystem media viewer: real images, continuous input, native video, inde
     const box=await page.evaluate('(()=>{const r=document.getElementById("viewport").getBoundingClientRect();return {x:r.x+700,y:r.y+r.height/2};})()');
     await page.send('Input.dispatchMouseEvent',{type:'mousePressed',...box,button:'left',buttons:1,clickCount:1});await page.send('Input.dispatchMouseEvent',{type:'mouseMoved',x:box.x-75,y:box.y,button:'left',buttons:1});await page.send('Input.dispatchMouseEvent',{type:'mouseReleased',x:box.x-75,y:box.y,button:'left',buttons:0,clickCount:1});
     state=await call('media.viewer.state');assert.ok(state.position>1&&state.position<2);await sleep(500);assert.equal((await call('media.viewer.state')).position,state.position);assert.ok(await page.evaluate('document.querySelectorAll(".image-page").length<=3'));
+    const gaps=await page.evaluate(`(()=>{const images=[...document.querySelectorAll('.image-page img')].sort((a,b)=>Number(a.parentElement.dataset.index)-Number(b.parentElement.dataset.index)).map(image=>{const r=image.getBoundingClientRect(),width=Math.min(r.width,r.height*image.naturalWidth/image.naturalHeight);return {left:r.left+(r.width-width)/2,right:r.left+(r.width+width)/2};});return images.slice(1).map((image,i)=>image.left-images[i].right);})()`);assert.ok(gaps.length&&gaps.every(gap=>Math.abs(gap)<1),'actual image edges meet without black intervals');
+    await call('media.viewer.auto.speed.set',{speed:120});await call('media.viewer.auto.start');await sleep(250);assert.ok((await call('media.viewer.state')).position>state.position);await call('media.viewer.auto.pause');const paused=(await call('media.viewer.state')).position;await sleep(200);assert.equal((await call('media.viewer.state')).position,paused);
     await call('media.viewer.zoomIn');assert.ok((await call('media.viewer.state')).zoom>1);await call('media.viewer.fit');await call('media.viewer.rotate');assert.equal((await call('media.viewer.state')).angle,90);await call('media.viewer.next');assert.equal((await call('media.viewer.state')).path,path.join(directory,'c.png'));
     fs.writeFileSync(path.join(app.artifactDir,'file-viewer-images.png'),Buffer.from((await page.send('Page.captureScreenshot',{format:'png'})).data,'base64'));
     await main('media.viewer.open',{path:path.join(directory,'sample.mkv')});await until(async()=>(await call('media.viewer.state')).kind==='video','filesystem video mode');

@@ -4,7 +4,7 @@ const fixture=await browserFixture(path.resolve('android/web')),context=await fi
 const errors=[],external=[];page.on('pageerror',error=>errors.push(error.message));page.on('request',request=>{if(/^https?:/.test(request.url())&&!request.url().startsWith(fixture.url))external.push(request.url());});
 let checks=0;const check=(value,label)=>{assert.ok(value,label);console.log('ok '+(++checks)+' - '+label);};
 await context.addInitScript(()=>{
-  const local='/storage/emulated/0',remote='remote://aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/',pixel='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="400" height="700"><rect width="400" height="700" fill="teal"/></svg>');
+  const local='/storage/emulated/0',remote='remote://aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/',pixel='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="150" height="700"><rect width="150" height="700" fill="teal"/></svg>');
   const entry=(name,kind,parent)=>({name,kind,path:parent+'/'+name,isDir:false,size:1024,modifiedMs:1});
   const m=window.__previewQA={calls:[],remote,local,job:null,jobReads:0,texts:{'settings.json':'{"名字":"测试","items":[1,2]}','notes.md':'# 中文标题\n\n**粗体**\n\n| A | B |\n|---|---|\n|一|二|\n\n<script>window.__pwn=true</script>\n<img src="https://example.invalid/probe" onerror="window.__pwn=true">','huge.log':'中文日志\n'.repeat(100000),'delayed.json':'{"late":true}'}};
   m.entries=['a.jpg','b.jpg','c.jpg','d.jpg','e.jpg','f.jpg'].map(name=>entry(name,'image',local));m.remoteEntries=Object.keys(m.texts).map(name=>entry(name,'document',remote.slice(0,-1))).concat(entry('sample.apk','apk',remote.slice(0,-1)));
@@ -48,8 +48,10 @@ try{
   async function drag(dx,dy=0,cancel=false){await viewport.dispatchEvent('pointerdown',{pointerId:7,pointerType:'touch',clientX:300,clientY:350,button:0});await viewport.dispatchEvent('pointermove',{pointerId:7,pointerType:'touch',clientX:300+dx,clientY:350+dy,button:0});await page.waitForTimeout(140);await viewport.dispatchEvent(cancel?'pointercancel':'pointerup',{pointerId:7,pointerType:'touch',clientX:300+dx,clientY:350+dy,button:0});}
   const before=await call('gallery.state');await drag(-75);const after=await call('gallery.state');await page.waitForTimeout(400);
   check(after.position>before.position&&after.position<before.position+1&&Math.abs(after.position-(await call('gallery.state')).position)<.001,'short continuous drags stop between pictures without snapping back');
-  const gap=await page.evaluate(()=>{const a=document.querySelector('.gallery-page[data-relative="0"]').getBoundingClientRect(),b=document.querySelector('.gallery-page[data-relative="1"]').getBoundingClientRect();return b.left-a.right;});check(Math.abs(gap)<1,'adjacent image pages meet with no gap');
-  check(await page.locator('.gallery-page').count()<=5,'continuous rendering keeps a bounded neighborhood');
+  const gap=await page.evaluate(()=>{const bounds=relative=>{const image=document.querySelector('.gallery-page[data-relative="'+relative+'"] img'),r=image.getBoundingClientRect(),width=Math.min(r.width,r.height*image.naturalWidth/image.naturalHeight);return {left:r.left+(r.width-width)/2,right:r.left+(r.width+width)/2};};return bounds(1).left-bounds(0).right;});check(Math.abs(gap)<1,'actual fitted image pixels meet with no black letterbox interval');
+  check(await page.locator('.gallery-page').count()<=32,'continuous rendering keeps a bounded visible neighborhood');
+  await call('gallery.auto.speed.set',{speed:120});const autoBefore=(await call('gallery.state')).position;await call('gallery.auto.start');await page.waitForTimeout(250);check((await call('gallery.state')).position>autoBefore,'continuous pictures auto-scroll using the chosen speed');
+  await call('gallery.auto.pause');const autoPaused=await call('gallery.state');await page.waitForTimeout(150);check(!autoPaused.autoScroll.running&&(await call('gallery.state')).position===autoPaused.position,'auto scroll pauses without snapping the image');
   await call('gallery.control',{command:'zoomIn'});const zoomed=await call('gallery.state');await drag(-80);check((await call('gallery.state')).position===zoomed.position,'zoomed continuous images pan without changing pages');await call('gallery.control',{command:'fit'});
   const pos=(await call('gallery.state')).position;await drag(0,100);check((await call('gallery.state')).position===pos,'vertical motion does not move the horizontal canvas');
   await drag(-40,0,true);const cancelled=(await call('gallery.state')).position;await page.waitForTimeout(800);check((await call('gallery.state')).position===cancelled,'canceling stops all inertia at the current continuous position');
@@ -58,5 +60,19 @@ try{
   await call('gallery.mode.set',{mode:'continuous'});await page.getByRole('button',{name:'返回文件列表',exact:true}).click();check(!(await call('gallery.state')).open,'closing clears the gallery session');
   await call('settings.open',{section:'display'});check(await page.locator('#image-browse-mode').inputValue()==='continuous','settings reflect the persisted gallery mode');
   check(await page.evaluate(()=>settingsData.snapshot(localStorage)['rhfiles.imageBrowseMode']==='continuous'),'full configuration backup includes image mode');await page.locator('#image-browse-mode').selectOption('paged');check(await page.evaluate(()=>localStorage.getItem('rhfiles.imageBrowseMode'))==='paged','settings can restore paged mode');
-  check(errors.length===0,'no unhandled browser errors: '+errors.join(';'));console.log('PASS '+checks+' preview / continuous gallery checks (native I/O mocked)');
+  await page.evaluate(()=>{__previewQA.entries=Array.from({length:10000},(_,i)=>({name:'file-'+String(i).padStart(5,'0')+'.jpg',path:__previewQA.local+'/file-'+i+'.jpg',isDir:false,kind:'image',size:1024,modifiedMs:1}));});
+  await call('navigation.open',{path:'/storage/emulated/0'});await page.locator('.file-fast-scroll-thumb').waitFor({state:'visible'});
+  const thumb=page.locator('.file-fast-scroll-thumb'),handle=await thumb.boundingBox(),rail=await page.locator('.file-fast-scroll').boundingBox(),cdp=await context.newCDPSession(page);
+  check(handle.width>=44&&handle.height>=56,'fast scroll provides a large finger-sized handle');
+  const x=handle.x+handle.width/2,y=handle.y+handle.height/2;
+  await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x,y}]});
+  await cdp.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x,y:y+(rail.height-handle.height)*.6}]});
+  await page.waitForTimeout(100);check((await call('files.scroll.state')).ratio>.55,'real touch dragging quickly reaches the middle of ten thousand files');
+  await page.screenshot({path:'test-artifacts/android-fast-scroll-browser.png'});
+  await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});await page.waitForTimeout(100);
+  check(await page.locator('#filelist [data-path]').count()<100&&(await call('selection.get')).length===0,'fast scroll keeps virtualization and does not select files');
+  await call('files.scroll.to',{ratio:1});check((await call('files.scroll.state')).ratio>.99,'scroll API reaches the final files');
+  await page.evaluate(()=>{__previewQA.entries=__previewQA.entries.slice(0,1);});await call('navigation.refresh');await page.waitForTimeout(100);
+  check(!(await call('files.scroll.state')).visible,'a single non-scrollable page hides the handle');
+  check(errors.length===0,'no unhandled browser errors: '+errors.join(';'));console.log('PASS '+checks+' preview / continuous gallery / fast scroll checks (native I/O mocked)');
 }catch(error){console.error(JSON.stringify({errors,state:await page.evaluate(()=>({gallery:androidGallery.state(),preview:androidTextPreview.state(),sheet:document.getElementById("sheet-panel").textContent,route:rhfilesPane.snapshot(),calls:__previewQA.calls.filter(row=>!["jobs","job.status"].includes(row.command)).slice(-15),job:__previewQA.job}))}));throw error;}finally{await context.close();await fixture.close();}

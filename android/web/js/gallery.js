@@ -4,6 +4,7 @@ const androidGallery=(()=>{
   function mode(){return localStorage.getItem('rhfiles.imageBrowseMode')==='continuous'?'continuous':'paged';}
   function state(){return active?{open:true,mode:active.mode,...active.state()}:{open:false,mode:mode()};}
   function control(command){if(!active)throw Error('图片浏览器未打开');const action=active.controls[command];if(!action)throw Error('未知图片操作');action();return state();}
+  function auto(command,value){if(!active?.auto)throw Error('请先打开连续图片浏览');if(command==='start')active.controls.fit();return command==='speed'?active.auto.setSpeed(value):active.auto[command]();}
   function setMode(value){
     if(!['paged','continuous'].includes(value))throw Error('图片浏览模式无效');
     localStorage.setItem('rhfiles.imageBrowseMode',value);
@@ -78,5 +79,5 @@ const androidGallery=(()=>{
     ui.onClosed(()=>{clearView();controller.abort();clearTimeout(tapTimer);clearTimeout(settleTimer);epoch++;for(const image of track.querySelectorAll('img'))image.removeAttribute('src');cache.clear();});
     render();
   }
-  return {open,mode,setMode,state,control};
+  return {open,mode,setMode,state,control,auto};
 })();

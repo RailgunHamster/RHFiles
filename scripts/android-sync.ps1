@@ -177,6 +177,7 @@ foreach($relative in @('css/rhvideo-mobile.css','js/rhvideo-mobile.js')){
 Sync-File -Source (Join-Path $repoRoot 'src\js\nearby-ui.js') -Target (Join-Path $repoRoot 'android\web\js\nearby-ui.js')
 Sync-File -Source (Join-Path $repoRoot 'src\js\device-groups-ui.js') -Target (Join-Path $repoRoot 'android\web\js\device-groups-ui.js')
 Sync-File -Source (Join-Path $repoRoot 'src\js\release-history.js') -Target (Join-Path $repoRoot 'android\web\js\release-history.js')
+Sync-File -Source (Join-Path $repoRoot 'src\js\image-strip.js') -Target (Join-Path $repoRoot 'android\web\js\image-strip.js')
 Sync-File -Source (Join-Path $repoRoot 'src\css\device-groups.css') -Target (Join-Path $repoRoot 'android\web\css\device-groups.css')
 Sync-File -Source (Join-Path $repoRoot 'src\js\automation-core.js') -Target (Join-Path $repoRoot 'android\web\js\automation-core.js')
 # Include the unmodified project license and source attribution in every APK.

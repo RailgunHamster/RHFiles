@@ -193,6 +193,20 @@ button:focus-visible,[role=option]:focus-visible { outline:3px solid var(--accen
 .gallery-track { position:absolute; inset:0; will-change:transform; }
 .gallery-page { position:absolute; top:0; width:100%; height:100%; display:grid; place-items:center; overflow:hidden; }
 .gallery-page .full-media { position:absolute; inset:0; }
+.continuous-viewer .gallery-page .full-media { inset:auto; left:50%; top:50%; max-width:none; max-height:none; }
+.gallery-auto-controls { position:absolute; z-index:5; left:16px; right:16px; bottom:80px; display:flex; align-items:center; gap:12px; padding:12px; border:1px solid #ffffff33; border-radius:16px; background:#181e28ed; color:white; }
+.gallery-auto-controls button { min-width:64px; min-height:44px; border:1px solid #ffffff33; border-radius:10px; background:#ffffff12; color:white; }
+.gallery-auto-controls label { display:flex; flex:1; flex-direction:column; min-width:0; gap:4px; }
+.gallery-auto-controls input { width:100%; min-height:32px; accent-color:#9abfff; }
+.viewer.chrome-hidden .gallery-auto-controls { opacity:0; pointer-events:none; }
+.filelist.has-fast-scroll { padding-right:44px; scrollbar-width:none; }
+.filelist.has-fast-scroll::-webkit-scrollbar { display:none; }
+.file-fast-scroll { position:absolute; z-index:4; right:0; top:4px; bottom:4px; width:44px; pointer-events:none; }
+.file-fast-scroll-thumb { position:absolute; right:0; top:0; width:44px; min-height:56px; border:0; padding:0; background:transparent; touch-action:none; pointer-events:auto; cursor:grab; user-select:none; }
+.file-fast-scroll-thumb::before { content:''; position:absolute; right:14px; top:8px; bottom:8px; width:10px; border-radius:8px; background:var(--accent); opacity:.65; }
+.file-fast-scroll-thumb:active { cursor:grabbing; }
+.file-fast-scroll-thumb:active::before,.file-fast-scroll-thumb:focus-visible::before { opacity:1; width:12px; }
+.file-fast-scroll-label { position:absolute; right:48px; top:50%; transform:translateY(-50%); padding:7px 12px; border-radius:12px; background:var(--accent); color:white; font-variant-numeric:tabular-nums; pointer-events:none; }
 .gallery-load-state { z-index:1; padding:24px; color:#cad0da; text-align:center; overflow-wrap:anywhere; pointer-events:none; }
 .sheet-panel.text-preview{height:92dvh;max-height:100%;display:flex;flex-direction:column;overflow:hidden;padding:16px}
 .text-preview-header{display:flex;align-items:center;gap:12px;flex:none}

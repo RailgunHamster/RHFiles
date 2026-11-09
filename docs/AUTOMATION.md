@@ -116,7 +116,13 @@ Windows 的 `media.preferences.get/set` 分别读取／修改 `imageOpenWith`、
 
 放映的当前项目通过 `rhvideo.viewer.state` 的 `current`、`favorite`、`loading` 查询；`rhvideo.viewer.favorite` 与界面收藏按钮调用同一动作。截图收藏作用于源视频，不会播放视频。切换未完成时拒绝收藏／标记，不把新索引误当作已经显示的内容。收藏放映的队列取自开启时的完整筛选结果，取消收藏不改变正在播放的快照；重新开启收藏放映从第一项开始。普通图片放映的进度记忆独立保留。
 
+Android 文件列表提供 `files.scroll.state`（是否可滚动、当前位置与比例）和 `files.scroll.to {ratio:0..1}`。拖动右侧触控滑块与接口使用同一滚动逻辑，保持虚拟列表；单屏列表自动隐藏滑块。
+
+连续图片自动滚动：Android 使用 `gallery.auto.start`、`gallery.auto.pause`、`gallery.auto.speed.set {speed}`；Windows 使用 `media.viewer.auto.start`、`media.viewer.auto.pause`、`media.viewer.auto.speed.set {speed}`。速度范围为 10–600 像素／秒，状态随图片查看器一起查询，到末尾停止，不循环。
+
 ## English
+
+Android exposes `files.scroll.state` and `files.scroll.to {ratio:0..1}` for the same virtualized list scroll used by its touch handle. Continuous image auto-scrolling exposes `gallery.auto.start/pause` and `gallery.auto.speed.set {speed}` on Android, or `media.viewer.auto.start/pause` and `media.viewer.auto.speed.set {speed}` on Windows. Speed is 10–600 pixels/second; viewer state includes its running state and speed, and reaching the end stops the loop.
 
 RHFiles exposes a versioned JSON action registry for desktop and Android. Use Node.js 22+ and `scripts/rhfiles-api.mjs`; discover available actions and parameter schemas with `list` and `describe`.
 
