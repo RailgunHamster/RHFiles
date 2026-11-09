@@ -118,15 +118,17 @@ Windows 的 `media.preferences.get/set` 分别读取／修改 `imageOpenWith`、
 
 Android 文件列表提供 `files.scroll.state`（是否可滚动、当前位置与比例）和 `files.scroll.to {ratio:0..1}`。拖动右侧触控滑块与接口使用同一滚动逻辑，保持虚拟列表；单屏列表自动隐藏滑块。
 
-连续图片自动滚动：Android 使用 `gallery.auto.start`、`gallery.auto.pause`、`gallery.auto.speed.set {speed}`；Windows 使用 `media.viewer.auto.start`、`media.viewer.auto.pause`、`media.viewer.auto.speed.set {speed}`。速度范围为 10–600 像素／秒，状态随图片查看器一起查询，到末尾停止，不循环。
-
-## English
+连续图片自动滚动：Android 使用 `gallery.auto.start`、`gallery.auto.pause`、`gallery.auto.speed.set {speed}`；Windows 使用 `media.viewer.auto.start`、`media.viewer.auto.pause`、`media.viewer.auto.speed.set {speed}`。速度范围为 10–600 像素／秒，状态随图片查看器一起查询，按当前队列首尾循环；单张图片不启动滚动，隐藏或关闭查看器时暂停。
 
 图片定位：Windows `media.viewer.seek {index}`、Android `gallery.seek {index}`（零基序号）。拖动进度条只预览，提交后定位，使用当前队列原有排序；查看器首尾循环。Windows `media.viewer.window.state` 可核对最大化／全屏状态。
 
 Android `files.createDirectory {name}` 和 `files.createFile {name}` 在当前实际目录中创建，UI 与 API 共用同一路径、权限和冲突规则；远程创建失败不会自动重放。
 
-Android exposes `files.scroll.state` and `files.scroll.to {ratio:0..1}` for the same virtualized list scroll used by its touch handle. Continuous image auto-scrolling exposes `gallery.auto.start/pause` and `gallery.auto.speed.set {speed}` on Android, or `media.viewer.auto.start/pause` and `media.viewer.auto.speed.set {speed}` on Windows. Speed is 10–600 pixels/second; viewer state includes its running state and speed, and reaching the end stops the loop.
+## English
+
+Image seeking uses `media.viewer.seek {index}` on Windows or `gallery.seek {index}` on Android. The zero-based index follows the current queue order, with circular navigation. Windows exposes `media.viewer.window.state` to verify maximized/fullscreen state. Android exposes `files.createDirectory {name}` and `files.createFile {name}` in the current directory, using the same permission and conflict checks as its UI without replaying failed writes.
+
+Android exposes `files.scroll.state` and `files.scroll.to {ratio:0..1}` for the same virtualized list scroll used by its touch handle. Continuous image auto-scrolling exposes `gallery.auto.start/pause` and `gallery.auto.speed.set {speed}` on Android, or `media.viewer.auto.start/pause` and `media.viewer.auto.speed.set {speed}` on Windows. Speed is 10–600 pixels/second; viewer state includes its running state and speed. It follows the circular queue, stays stopped for one image, and pauses when the viewer is hidden or closed.
 
 RHFiles exposes a versioned JSON action registry for desktop and Android. Use Node.js 22+ and `scripts/rhfiles-api.mjs`; discover available actions and parameter schemas with `list` and `describe`.
 
