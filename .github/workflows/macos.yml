@@ -2,9 +2,9 @@ name: macOS build and file business tests
 on:
   push:
     branches: [main]
-    paths: ['**', '!android/**', '!docs/**', '!README*', 'android/web/**']
+    paths: ['**', '!android/**', '!docs/**', '!README*', 'android/web/**', '!scripts/testing/android-preview-native-check.mjs', '!scripts/testing/android-preview-ci.sh']
   pull_request:
-    paths: ['**', '!android/**', '!docs/**', '!README*', 'android/web/**']
+    paths: ['**', '!android/**', '!docs/**', '!README*', 'android/web/**', '!scripts/testing/android-preview-native-check.mjs', '!scripts/testing/android-preview-ci.sh']
   workflow_dispatch:
 permissions:
   contents: read
