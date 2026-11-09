@@ -98,14 +98,16 @@ try{
   for(const profile of profiles){const id=await native('connection.save',profile);connections.push(id);locations.push({name:profile.type,path:'remote://'+id+'/'});}
   let service,windows,peer;
   if(process.env.RHFILES_TEST_HEADLESS_SERVICE){
-    headless=await startPreviewService(process.env.RHFILES_TEST_HEADLESS_SERVICE,directory);
+    // Write access applies only to this fresh synthetic share and generated
+    // group; existing groups, shares and user files are never consulted.
+    headless=await startPreviewService(process.env.RHFILES_TEST_HEADLESS_SERVICE,directory,{write:true});
     service=headless.service;groupId=service.group;peer=service.peer;
   }else{
     desktop=await launchApp({desktopId:'preview-native-owned'});
     windows=(command,args={})=>desktop.evaluate(`call(${JSON.stringify(command)},${JSON.stringify(args)})`);
     service=await windows('lan_service_start',{config:{port:0,shares:[{name:'Files',path:directory}]}});
     groupId=await windows('device_groups',{command:'create',args:{name:'Remote preview QA',deviceName:'Preview QA PC'}});
-    await windows('device_groups',{command:'configure',args:{id:groupId,enabled:true,permissions:{write:false,delete:false}}});
+    await windows('device_groups',{command:'configure',args:{id:groupId,enabled:true,permissions:{write:true,delete:false}}});
     peer=(await windows('device_groups',{command:'state',args:{}})).deviceId;
   }
   await relay([service.port]);
@@ -132,6 +134,33 @@ try{
     await assert.rejects(()=>call('preview.text.read',{path:byName('binary.json').path}),/二进制/);
     check(true,location.name+': real Unicode/UTF16, bounded large reads and binary rejection');
   }
+  for(const [number,location]of locations.entries()){
+    await call('navigation.open',{path:location.path});
+    const name='QA 新建 '+number,created=path.join(directory,name),nested=path.join(created,'子目录'),marker=path.join(created,'preserve.txt');
+    assert.ok(!fs.existsSync(created),'fresh synthetic creation target');
+    const result=await call('files.createDirectory',{name});
+    assert.equal(result.parent,location.path);assert.equal(result.name,name);assert.equal(result.directory,true);
+    assert.ok(fs.statSync(created).isDirectory());assert.ok(result.path.startsWith('remote://'));
+    fs.writeFileSync(marker,'Duplicate creation must preserve this owned marker');
+    await assert.rejects(()=>call('files.createDirectory',{name}));
+    assert.equal(fs.readFileSync(marker,'utf8'),'Duplicate creation must preserve this owned marker');
+    await assert.rejects(()=>call('files.createDirectory',{name:'../escape'}));
+    assert.ok(!fs.existsSync(path.join(directory,'escape')));
+    // A failed create must release both the busy flag and the pane lock.
+    await call('navigation.open',{path:result.path});
+    await call('files.createDirectory',{name:'子目录'});
+    assert.ok(fs.statSync(nested).isDirectory());
+    await call('navigation.open',{path:location.path});
+    fs.rmdirSync(nested);fs.unlinkSync(marker);fs.rmdirSync(created);
+    check(true,location.name+': current-folder API creates Chinese nested directories; duplicate and invalid names preserve existing contents');
+  }
+  if(headless){
+    const rh=locations.find(l=>l.name==='RHFiles group'),name='QA 拒绝写入';
+    await headless.permissions(false);await call('navigation.open',{path:rh.path});
+    await assert.rejects(()=>call('files.createDirectory',{name}),/403|权限|forbidden|permission|只读/i);
+    assert.ok(!fs.existsSync(path.join(directory,name)));
+    check(true,'real RHFiles service rejects folder creation after write permission is revoked');
+  }
   check((await native('jobs')).length===jobsBefore,'text viewing creates no transfer/download jobs');
   const streamId=await native('connection.save',{type:'webdav',name:'Bounded stream QA',url:`http://10.0.2.2:${streaming.address().port}/dav/`,insecure:true});connections.push(streamId);
   const streamed=await call('preview.text.read',{path:`remote://${streamId}/large.txt`,maxBytes:32768});assert.equal(streamed.bytesRead,32768);assert.equal(streamed.truncated,true);await pause(250);
@@ -155,7 +184,22 @@ try{
   const gaps=await view('(w,d)=>{const images=[...d.querySelectorAll(".gallery-page img")].sort((a,b)=>Number(a.parentElement.dataset.slot??a.parentElement.dataset.imageIndex)-Number(b.parentElement.dataset.slot??b.parentElement.dataset.imageIndex)).map(image=>{const r=image.getBoundingClientRect(),width=Math.min(r.width,r.height*image.naturalWidth/image.naturalHeight);return {left:r.left+(r.width-width)/2,right:r.left+(r.width+width)/2};});return images.slice(1).map((image,i)=>image.left-images[i].right);}');
   check(gaps.length&&gaps.every(gap=>Math.abs(gap)<1),'actual decoded remote picture edges meet without black padding');
   await call('gallery.auto.speed.set',{speed:120});await call('gallery.auto.start');await pause(250);check((await call('gallery.state')).position>after.position,'native continuous auto-scroll advances at the configured speed');await call('gallery.auto.pause');const autoPaused=await call('gallery.state');await pause(200);assert.equal((await call('gallery.state')).position,autoPaused.position);check(!autoPaused.autoScroll.running,'native auto-scroll pause retains the exact free position');
-  await call('gallery.control',{command:'zoomIn'});assert.ok((await call('gallery.state')).zoom>1);await call('gallery.control',{command:'fit'});await call('gallery.mode.set',{mode:'paged'});assert.equal((await call('gallery.state')).mode,'paged');await call('navigation.back');assert.equal((await call('gallery.state')).open,false);
+  await call('gallery.control',{command:'zoomIn'});assert.ok((await call('gallery.state')).zoom>1);await call('gallery.control',{command:'fit'});
+  const imageCount=(await call('gallery.state')).count;assert.equal(imageCount,3);
+  for(const mode of ['continuous','paged']){
+    await call('gallery.mode.set',{mode});await call('gallery.seek',{index:imageCount-1});
+    await call('gallery.control',{command:'next'});
+    await until(async()=>(await call('gallery.state')).index===0,mode+' last to first');
+    await call('gallery.control',{command:'previous'});
+    await until(async()=>(await call('gallery.state')).index===imageCount-1,mode+' first to last');
+    await view('(w,d)=>{const bar=d.querySelector(".gallery-progress input");bar.value="0";bar.dispatchEvent(new w.Event("input",{bubbles:true}));return true;}');
+    const preview=await call('gallery.state');assert.equal(preview.index,imageCount-1);assert.equal(preview.previewIndex,0);
+    assert.ok(await view('(w,d)=>d.querySelector(".gallery-progress-label").textContent.includes("1 / 3")'));
+    await view('(w,d)=>{d.querySelector(".gallery-progress input").dispatchEvent(new w.Event("change",{bubbles:true}));return true;}');
+    await until(async()=>(await call('gallery.state')).index===0,mode+' progress seek commit');
+    check(true,'native '+mode+' gallery wraps both ways and its progress bar previews before seeking');
+  }
+  await call('navigation.back');assert.equal((await call('gallery.state')).open,false);
   await until(async()=>(await call('files.scroll.state')).visible,'native long-folder fast scroll');
   await call('files.scroll.to',{ratio:0});
   const handle=await evaluate(`(()=>{const f=[...document.querySelectorAll('iframe.file-pane')].find(f=>!f.contentDocument.getElementById('filelist')?.hidden),d=f?.contentDocument||document,t=d.querySelector('.file-fast-scroll-thumb').getBoundingClientRect(),r=d.querySelector('.file-fast-scroll').getBoundingClientRect(),b=f?.getBoundingClientRect()||{x:0,y:0};return {x:t.x+b.x+t.width/2,y:t.y+b.y+t.height/2,travel:r.height-t.height,width:t.width,height:t.height};})()`);
