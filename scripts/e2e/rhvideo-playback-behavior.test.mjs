@@ -606,6 +606,15 @@ test('a delayed real video-card click cannot take over a newer clicked video or 
 test('single-video smart rotation toggles back, preserves pause/time/rate, and persists without rotating an already-fitting source',native,async()=>{
   const s=await setup({portraitIndices:[0],videoDuration:20,rotationMarkers:true,loginUsers:['preview','other']});let player;
   const capture=async(state,name)=>{
+    if(state.host?.kind==='library'){
+      // Exercise the actual paused resize path, whose synchronous WM_PAINT
+      // runs while PLAYER is locked. A missing redraw used to leave black.
+      const region=await player.evaluate('(()=>{const r=document.querySelector(".rhvideo-native-stage").getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};})()');
+      for(const width of [region.width-3,region.width]){
+        const result=await player.evaluate('window.__TAURI__.core.invoke("rhvideo_request",'+JSON.stringify({action:'player.bounds',args:{...region,width,_hostLease:state.host.lease,expectedInput:state.inputId,visible:true,opacity:1}})+')');
+        assert.equal(result.inputId,state.inputId);
+      }
+    }
     const image=await s.app.readNativeFrame({expectedInput:state.inputId});assert.equal(path.dirname(image.path),s.app.directory,'only this fixture working directory may receive diagnostic files');
     const data=fs.readFileSync(image.path);assert.equal(data.subarray(0,2).toString(),'BM');const width=data.readInt32LE(18),height=-data.readInt32LE(22);assert.equal(data.length,54+width*height*4);
     const saved=path.join(s.app.artifactDir,name+'.png');execFileSync(process.env.FFMPEG||'ffmpeg',['-hide_banner','-loglevel','error','-i',image.path,'-frames:v','1',saved],{windowsHide:true,timeout:10000});

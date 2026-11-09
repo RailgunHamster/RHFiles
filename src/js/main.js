@@ -400,8 +400,38 @@ function isAutomaticUpdateInstallEnabled() {
 
 function resumeAutomaticUpdate() {
   if(!G._automaticUpdatePending||G._updateCheckRunning||hasRunningFileTasks())return;
+  const checked=G._automaticUpdateChecked;
+  clearTimeout(G._automaticUpdateTimer);G._automaticUpdateTimer=null;
   G._automaticUpdatePending=false;
-  if(isAutomaticUpdateInstallEnabled())checkForUpdates(false);
+  G._automaticUpdateChecked=null;
+  if(isAutomaticUpdateInstallEnabled())return checkForUpdates(false,checked);
+}
+
+function clearAutomaticUpdateDefer(){
+  clearTimeout(G._automaticUpdateTimer);G._automaticUpdateTimer=null;
+  G._automaticUpdatePending=false;G._automaticUpdateChecked=null;
+}
+
+async function updateReadiness(automatic){
+  if(hasRunningFileTasks())return {ready:false,reasons:['file_tasks'],retryAfterMs:5000};
+  try{return await call('get_update_readiness',{automatic});}
+  catch(_){return {ready:false,reasons:['activity_unknown'],retryAfterMs:30000};}
+}
+
+async function deferAutomaticUpdate(checked,readiness){
+  clearTimeout(G._automaticUpdateTimer);
+  G._automaticUpdatePending=true;G._automaticUpdateChecked=checked;
+  if(checked.status.pendingRestart){
+    G._updateProgress={phase:'ready',version:checked.status.availableVersion,percentage:100};
+    try{await call('defer_update',{});}catch(_){} // Closing the helper is best effort; never restart busy files.
+  }
+  updateSettingsStatusText(checked.status);
+  // One local-only, bounded timer while an update is pending. Reuse the exact
+  // checked/downloaded version; do not repeatedly hit the update server.
+  if(G._automaticUpdatePending&&isAutomaticUpdateInstallEnabled()){
+    const delay=Math.max(5000,Math.min(60000,Number(readiness?.retryAfterMs)||5000));
+    G._automaticUpdateTimer=setTimeout(resumeAutomaticUpdate,delay);
+  }
 }
 
 function getUpdateProxy() {
@@ -613,7 +643,8 @@ async function checkForUpdates(manual, checked) {
   await refreshLastUpdateFailure();
   if (G._updateCheckRunning) return;
   G._updateCheckRunning = true;
-  G._automaticUpdatePending = false;
+  clearAutomaticUpdateDefer();
+  let automatic=false,offered;
   const button = document.getElementById('settings-check-update');
   if (button) button.disabled = true;
   try {
@@ -631,9 +662,11 @@ async function checkForUpdates(manual, checked) {
       if (manual) showNotice(t('update.noUpdate', {version: status.currentVersion || ''}));
       return;
     }
-    const automatic = !manual && isAutomaticUpdateInstallEnabled();
-    if (hasRunningFileTasks()) {
-      if(automatic){G._automaticUpdatePending=true;updateSettingsStatusText(status);}
+    automatic = !manual && isAutomaticUpdateInstallEnabled();
+    offered={source,proxy,status};
+    const readiness=await updateReadiness(automatic);
+    if (!readiness?.ready) {
+      if(automatic)await deferAutomaticUpdate(offered,readiness);
       if (manual) showNotice(t('update.busy'));
       return;
     }
@@ -659,16 +692,25 @@ async function checkForUpdates(manual, checked) {
     if (!status.pendingRestart) {
       updateDownloadProgress({phase:'downloading',version,percentage:0});
       await call('download_update', {source, proxy, appearance:updateTransitionAppearance(),targetVersion:version});
+      offered.status={...status,pendingRestart:true};G._updateStatus=offered.status;
     }
     if(automatic && (!isAutomaticUpdateInstallEnabled()||source!==getUpdateSource()||proxy!==getUpdateProxy()))return;
-    if(automatic && hasRunningFileTasks()){G._automaticUpdatePending=true;updateSettingsStatusText(status);return;}
+    const beforeApply=await updateReadiness(automatic);
+    if(!beforeApply?.ready){
+      if(automatic)await deferAutomaticUpdate(offered,beforeApply);
+      else showNotice(t('update.busy'));
+      return;
+    }
     updateDownloadProgress({phase:'applying',version,percentage:100});
     try { saveTabState(); } catch (error) {}
     if (hasRunningFileTasks()) {
       throw new Error(t('update.busy'));
     }
-    await call('apply_update', {source, proxy, appearance:updateTransitionAppearance(),targetVersion:version});
+    await call('apply_update', {source, proxy, appearance:updateTransitionAppearance(),targetVersion:version,automatic});
   } catch (error) {
+    if(automatic&&offered&&/\[update_(?:busy|deferred)\]/.test(String(error))){
+      await deferAutomaticUpdate(offered,{retryAfterMs:5000});return;
+    }
     if (String(error).includes('[update_other_instances]')) error = t('update.otherInstances');
     else if (String(error).includes('[update_busy]')) error = t('update.busy');
     updateDownloadProgress({phase:'failed',message:String(error)});
@@ -676,6 +718,5 @@ async function checkForUpdates(manual, checked) {
   } finally {
     G._updateCheckRunning = false;
     if (button) button.disabled = false;
-    if(G._automaticUpdatePending&&!hasRunningFileTasks())queueMicrotask(resumeAutomaticUpdate);
   }
 }

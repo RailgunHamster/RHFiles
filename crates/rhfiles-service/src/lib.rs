@@ -1,6 +1,7 @@
 //! Explicitly enabled HTTPS file service; JSON API and WebDAV share one core.
 //! Windows SMB/WebClient redirectors are never used for local shared roots.
 mod auth;
+mod activity;
 mod recycle;
 mod content;
 pub mod connection;
@@ -20,6 +21,7 @@ mod uploads;
 mod webdav_compat;
 
 pub use model::{Error, Permissions, Result, ShareConfig, Status};
+pub use activity::{UpdateActivity, UpdateReservation};
 use std::{
     net::{SocketAddr, TcpListener},
     path::Path,
@@ -385,6 +387,8 @@ impl Service {
     pub fn groups(&self) -> Arc<groups::Groups> {
         self.state.groups.clone()
     }
+    pub fn update_activity(&self,quiet:std::time::Duration)->UpdateActivity { self.state.activity.status(quiet) }
+    pub fn reserve_update(&self,quiet:std::time::Duration)->Result<UpdateReservation> { self.state.activity.reserve(quiet) }
     pub fn enable_webdav_compatibility(&self,domain:&str,port:u16,certificate:&Path,key:&Path)->Result<serde_json::Value>{
         if port==self.port{return Err(Error::new("invalid_request","兼容端口不能占用设备组原有端口"));}
         let mut slot=self.webdav.lock().unwrap();

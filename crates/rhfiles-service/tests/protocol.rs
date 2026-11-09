@@ -14,6 +14,54 @@ struct Fixture {
     password: String,
 }
 
+async fn wait_for_activity(f:&Fixture,active:bool){
+    tokio::time::timeout(std::time::Duration::from_secs(8),async{
+        while (f.service.update_activity(std::time::Duration::from_secs(30)).active_requests>0)!=active {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }).await.expect("HTTP work must release its update admission after completion or disconnect");
+}
+
+#[tokio::test]
+async fn streamed_webdav_and_native_downloads_block_updates_through_the_response_body(){
+    use futures_util::StreamExt;
+    let f=Fixture::new(true,true).await;
+    let file=std::fs::File::create(f.share.join("large.bin")).unwrap();file.set_len(64*1024*1024).unwrap();drop(file);
+    for url in ["/dav/Files/large.bin","/api/v1/content?path=/Files/large.bin"] {
+        let response=f.request("GET",url).send().await.unwrap();assert!(response.status().is_success());
+        let mut body=response.bytes_stream();assert!(!body.next().await.unwrap().unwrap().is_empty());
+        wait_for_activity(&f,true).await;
+        assert_eq!(f.service.reserve_update(std::time::Duration::ZERO).err().unwrap().code,"update_deferred");
+        drop(body);wait_for_activity(&f,false).await;
+        assert!(f.service.update_activity(std::time::Duration::from_secs(30)).quiet_remaining_ms>0);
+        assert!(f.service.reserve_update(std::time::Duration::from_secs(30)).is_err());
+    }
+    let reservation=f.service.reserve_update(std::time::Duration::ZERO).unwrap();
+    assert_eq!(f.request("PUT","/dav/Files/not-accepted.txt").body("must not be written").send().await.unwrap().status(),429);
+    assert!(!f.share.join("not-accepted.txt").exists());drop(reservation);
+    assert!(f.request("PUT","/dav/Files/after-aborted-update.txt").body("available again").send().await.unwrap().status().is_success());
+    assert_eq!(std::fs::read(f.share.join("after-aborted-update.txt")).unwrap(),b"available again");
+}
+
+#[tokio::test]
+async fn stalled_webdav_uploads_are_work_but_completed_tus_records_do_not_block_updates_forever(){
+    use futures_util::StreamExt;
+    let f=Fixture::new(true,true).await;
+    let stream=futures_util::stream::once(async{Ok::<_,std::io::Error>(bytes::Bytes::from_static(b"partial"))})
+        .chain(futures_util::stream::pending());
+    let request=f.request("PUT","/dav/Files/partial.bin").body(reqwest::Body::wrap_stream(stream));
+    let task=tokio::spawn(async move{request.send().await});wait_for_activity(&f,true).await;
+    assert!(f.service.reserve_update(std::time::Duration::ZERO).is_err());
+    task.abort();let _=task.await;wait_for_activity(&f,false).await;assert!(!f.share.join("partial.bin").exists());
+    let upload=f.request("POST","/api/v1/uploads").header("Tus-Resumable","1.0.0").header("Upload-Length","1").header("Upload-Metadata","path L0ZpbGVzL2RvbmUuYmlu").send().await.unwrap();
+    assert_eq!(upload.status(),201);let location=upload.headers()["Location"].to_str().unwrap().to_owned();
+    let response=f.request("PATCH",&location).header("Tus-Resumable","1.0.0").header("Content-Type","application/offset+octet-stream").header("Upload-Offset","0").body("x").send().await.unwrap();
+    assert_eq!(response.status(),204);drop(response);drop(upload);wait_for_activity(&f,false).await;
+    assert_eq!(std::fs::read(f.share.join("done.bin")).unwrap(),b"x");
+    assert!(f.service.status().active_uploads>0,"durable completed tus receipt remains available");
+    assert!(f.service.reserve_update(std::time::Duration::ZERO).is_ok(),"a completed upload receipt is not an active transfer");
+}
+
 #[tokio::test]
 async fn recycle_checks_permissions_revision_and_share_boundaries_before_touching_files() {
     for permitted in [false, true] {

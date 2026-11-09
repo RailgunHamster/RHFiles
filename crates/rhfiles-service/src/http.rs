@@ -86,7 +86,7 @@ pub struct State {
     dav: DavHandler<Access>,
     locks: Box<Locks>,
     mutations: tokio::sync::RwLock<()>,
-    requests: Arc<tokio::sync::Semaphore>,
+    pub(crate) activity: crate::activity::Activity,
     thumbnails: Arc<tokio::sync::Semaphore>,
     cache: Mutex<Cached>,
 }
@@ -124,7 +124,7 @@ impl State {
             dav,
             locks,
             mutations: tokio::sync::RwLock::new(()),
-            requests: Arc::new(tokio::sync::Semaphore::new(64)),
+            activity: Default::default(),
             thumbnails: Arc::new(tokio::sync::Semaphore::new(3)),
             cache: Mutex::new(HashMap::new()),
         })
@@ -258,7 +258,7 @@ fn idle_limited(body: Body) -> Body {
     ))
 }
 
-pub async fn dispatch(AxumState(state): AxumState<Arc<State>>, request: Request) -> Response {
+pub async fn dispatch(AxumState(state): AxumState<Arc<State>>, mut request: Request) -> Response {
     if let Some(peer) = request
         .extensions()
         .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
@@ -271,10 +271,18 @@ pub async fn dispatch(AxumState(state): AxumState<Arc<State>>, request: Request)
     } else {
         return Error::new("forbidden", "缺少连接来源").into_response();
     }
-    let permit = match state.requests.clone().try_acquire_owned() {
+    // Metadata polling must not indefinitely postpone an idle update. Actual
+    // content reads, uploads and filesystem mutations restart the quiet period.
+    let path=request.uri().path();
+    let transfer=if path=="/dav"||path.starts_with("/dav/") { !matches!(request.method().as_str(),"OPTIONS"|"PROPFIND"|"HEAD") }
+        else { matches!(path,"/api/v1/content"|"/api/v1/thumbnail")&&request.method()==Method::GET
+            || path.starts_with("/api/v1/uploads")&&!matches!(request.method().as_str(),"HEAD"|"OPTIONS")
+            || crate::operations::supported(path) };
+    let permit = match state.activity.begin(transfer) {
         Ok(p) => p,
-        Err(_) => return Error::new("busy", "连接过多，请稍后重试").into_response(),
+        Err(error) => return error.into_response(),
     };
+    request.extensions_mut().insert(permit.clone());
     let upload = request.uri().path().starts_with("/api/v1/uploads");
     let failure_path=request.uri().path().to_string();let failure_method=request.method().as_str().to_string();
     let destination=header(&request,"Destination").and_then(|v|v.parse::<axum::http::Uri>().ok());
@@ -282,9 +290,14 @@ pub async fn dispatch(AxumState(state): AxumState<Arc<State>>, request: Request)
     // Record only structural header information, never credentials or lock tokens.
     let conditionals=serde_json::json!({"ifMatch":request.headers().contains_key("If-Match"),"if":request.headers().contains_key("If"),"overwrite":request.headers().contains_key("Overwrite"),"destinationScheme":destination.as_ref().and_then(|v|v.scheme_str()),"destinationPort":destination.as_ref().and_then(|v|v.port_u16()),"hostPort":host.as_ref().and_then(|v|v.port_u16()),"sameHost":destination.as_ref().and_then(|v|v.host()).zip(host.as_ref().map(|v|v.host())).map(|(a,b)|a.eq_ignore_ascii_case(b))});
     let failure_state=state.clone();let mut failure_code="webdav_response";
-    let mut response = match handle(state, request).await {
-        Ok(r) => r,
-        Err(e) => {failure_code=e.code;e.into_response()},
+    // A disconnected client must not release update admission while its write
+    // or spawn_blocking filesystem operation is still finishing.
+    let work_permit=permit.clone();
+    let work=tokio::spawn(async move {let _permit=work_permit;handle(state,request).await});
+    let mut response = match work.await {
+        Ok(Ok(r)) => r,
+        Ok(Err(e)) => {failure_code=e.code;e.into_response()},
+        Err(_) => Error::new("internal","文件请求异常结束").into_response(),
     };
     if (failure_path=="/dav"||failure_path.starts_with("/dav/"))&&response.status().is_client_error()||failure_path.starts_with("/dav/")&&response.status().is_server_error(){
         let mut failures=failure_state.failures.lock().unwrap();if failures.len()>=64{failures.pop_front();}failures.push_back(serde_json::json!({"timeMs":now_ms(),"method":failure_method,"path":failure_path.chars().take(512).collect::<String>(),"status":response.status().as_u16(),"code":failure_code,"conditionals":conditionals}));
@@ -310,7 +323,7 @@ pub async fn dispatch(AxumState(state): AxumState<Arc<State>>, request: Request)
     Response::from_parts(parts, guarded)
 }
 fn async_stream_body(
-    permit: tokio::sync::OwnedSemaphorePermit,
+    permit: Arc<crate::activity::RequestActivity>,
     stream: &mut axum::body::BodyDataStream,
 ) -> Body {
     // Move the stream out so the response owns both stream and permit.
@@ -386,8 +399,10 @@ async fn handle(s: Arc<State>, r: Request) -> Result<Response> {
     let (receipt,fresh)=s.operations.submit(&id,&a.id,&digest)?;
     if fresh {
         let receipt=receipt.clone();
+        let activity=parts.extensions.get::<Arc<crate::activity::RequestActivity>>().cloned();
         // Own the execution independently of the HTTP request/connection.
         tokio::spawn(async move {
+            let _activity=activity;
             let work=tokio::spawn(async move {handle_direct(s,Request::from_parts(parts,Body::from(bytes))).await});
             let response=match work.await {Ok(Ok(r))=>r,Ok(Err(e))=>e.into_response(),Err(_)=>Error::new("internal","远端任务异常结束，请核对结果；未重放操作").into_response()};
             let status=response.status();

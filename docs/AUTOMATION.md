@@ -124,7 +124,11 @@ Android 文件列表提供 `files.scroll.state`（是否可滚动、当前位置
 
 Android `files.createDirectory {name}` 和 `files.createFile {name}` 在当前实际目录中创建，UI 与 API 共用同一路径、权限和冲突规则；远程创建失败不会自动重放。
 
+Windows `updates.readiness` 返回本机活动文件任务数、文件服务器活动请求数、阻塞原因和建议等待时间。自动安装等待复制、移动等任务、WebDAV／设备协议传输及后台变更结束，再持续空闲 30 秒；分块间隙不会视为已空闲。仅在有待处理更新时检查本机活动状态，沿用已检查的版本与已校验的包，不重复请求更新源。安装交接与服务器请求接收互斥，失败会解除暂停；历史 tus 上传回执不会永久阻止更新。`updates.autoInstall.set {enabled:false}` 同时清除待更新计时器。
+
 ## English
+
+Windows `updates.readiness` reports active local file tasks, active file-server requests, blocking reasons and a suggested delay. Automatic installation waits for local tasks, WebDAV/device transfers and detached mutations, then for 30 idle seconds across chunk gaps. Pending updates check local activity only and reuse their exact checked version and verified package. Final installation reserves request admission atomically; failure releases it. Durable completed tus receipts do not keep the server busy. Disabling auto-install also clears its deferred timer.
 
 Image seeking uses `media.viewer.seek {index}` on Windows or `gallery.seek {index}` on Android. The zero-based index follows the current queue order, with circular navigation. Windows exposes `media.viewer.window.state` to verify maximized/fullscreen state. Android exposes `files.createDirectory {name}` and `files.createFile {name}` in the current directory, using the same permission and conflict checks as its UI without replaying failed writes.
 

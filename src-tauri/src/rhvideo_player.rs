@@ -14,7 +14,7 @@ use windows::{
     core::w,
     Win32::{
         Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM,RECT},
-        Graphics::Gdi::{BeginPaint, EndPaint, PatBlt, BLACKNESS, PAINTSTRUCT},
+        Graphics::Gdi::{BeginPaint, EndPaint, PAINTSTRUCT},
         System::LibraryLoader::GetModuleHandleW,
         UI::{WindowsAndMessaging::*, Input::KeyboardAndMouse::{SetFocus,GetKeyState,VK_CONTROL,VK_SHIFT,VK_MENU}},
     },
@@ -356,9 +356,9 @@ unsafe extern "system" fn surface_proc(
         if message == WM_PAINT {
             let mut paint = PAINTSTRUCT::default();
             let _ = BeginPaint(hwnd, &mut paint);
-            let mut rect = windows::Win32::Foundation::RECT::default();
-            let _ = GetClientRect(hwnd, &mut rect);
-            let _ = PatBlt(paint.hdc, 0, 0, rect.right, rect.bottom, BLACKNESS);
+            // render() clears its own letterbox. Do not erase a paused frame
+            // before try_lock: MoveWindow may synchronously deliver WM_PAINT
+            // while layout still owns the engine lock, leaving a black canvas.
             let _ = EndPaint(hwnd, &paint);
             if let Ok(player) = PLAYER.try_lock() {
                 if let Some(player) = player.as_ref() {
@@ -1636,7 +1636,11 @@ pub async fn single_bounds(app:AppHandle,args:Value)->Result<Value,String>{
     let view=app.get_webview_window(LIBRARY_LABEL).ok_or("媒体库窗口已关闭")?;let(tx,rx)=tokio::sync::oneshot::channel();
     app.run_on_main_thread(move||{let result=(||{
         host.ensure_open()?;let mut slot=PLAYER.lock().map_err(|_|"播放器不可用")?;let player=slot.as_mut().filter(|player|player.input_id==expected).ok_or("播放输入已改变，旧布局未执行")?;
-        let viewport=library_surface_geometry(&view,&host,player.surface,opacity,visible)?;player.rotation_viewport=viewport;drop(slot);
+        let viewport=library_surface_geometry(&view,&host,player.surface,opacity,visible)?;player.rotation_viewport=viewport;
+        // Layout owns PLAYER, so a nested WM_PAINT cannot redraw it. Repaint
+        // the retained paused frame now, after the final size/alpha is applied.
+        if visible&&player.compatibility{player.frame.render();}
+        drop(slot);
         let mut current=SINGLE_HOST.lock().map_err(|_|"播放宿主状态不可用")?;if !current.as_ref().is_some_and(|value|value.lease==lease){return Err("播放面板已改变".to_owned());}host.viewport=viewport;*current=Some(host);
         Ok(json!({"visible":visible,"inputId":expected,"hostLease":lease,"width":viewport.0,"height":viewport.1}))
     })();let _=tx.send(result);}).map_err(|e|e.to_string())?;rx.await.map_err(|_|"播放区域任务已结束".to_owned())?

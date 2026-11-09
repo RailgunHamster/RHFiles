@@ -24,6 +24,8 @@ pub fn download_update() -> Result<String, String> {
     Err("macOS updates are installed from the macOS download, not Windows Update.exe. Signed automatic updates have not been configured.".into())
 }
 #[tauri::command]
+pub fn defer_update() {}
+#[tauri::command]
 pub fn apply_update() -> Result<(), String> {
     Err("Install the new RHFiles.app from the macOS release; user data stays in Application Support.".into())
 }

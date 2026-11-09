@@ -9,7 +9,9 @@ pub struct CancelState {
     cancelled: HashSet<String>,
     update_lock: Option<std::fs::File>,
     updating: bool,
+    last_activity: Option<std::time::Instant>,
 }
+pub(crate) const UPDATE_QUIET:std::time::Duration=std::time::Duration::from_secs(30);
 
 pub struct CancelFlag(pub Mutex<CancelState>);
 
@@ -77,16 +79,20 @@ impl CancelFlag {
         if let Ok(mut state) = self.0.lock() {
             let key = Self::key(operation_id);
             state.cancelled.remove(&key);
-            state.active.remove(&key);
+            if state.active.remove(&key) {state.last_activity=Some(std::time::Instant::now());}
             if state.active.is_empty() && !state.updating { state.update_lock = None; }
         }
     }
 
     pub fn begin_update(&self) -> Result<(), String> {
+        self.begin_update_with_quiet(std::time::Duration::ZERO)
+    }
+    pub fn begin_update_with_quiet(&self,quiet:std::time::Duration) -> Result<(), String> {
         let mut state = self.0.lock().map_err(|e| e.to_string())?;
         if !state.active.is_empty() || state.updating {
             return Err("[update_busy] Wait for all file tasks to finish before updating".into());
         }
+        if state.last_activity.is_some_and(|at|at.elapsed()<quiet){return Err("[update_deferred] 等待文件任务结束后的空闲时间 / Waiting for a quiet period after file tasks".into());}
         let lease = crate::profile::coordination_file("operations.lock")?;
         lease.try_lock().map_err(|_| "[update_busy] Another RHFiles instance is processing files")?;
         crate::profile::reserve_update()?;
@@ -104,6 +110,20 @@ impl CancelFlag {
             }
         }
     }
+}
+
+#[tauri::command]
+pub fn get_update_readiness(automatic:Option<bool>,cancel:tauri::State<'_,CancelFlag>)->Result<serde_json::Value,String>{
+    let quiet=if automatic.unwrap_or(true){UPDATE_QUIET}else{std::time::Duration::ZERO};
+    let (tasks,remaining,updating)={let state=cancel.0.lock().map_err(|e|e.to_string())?;(state.active.len(),state.last_activity.map(|at|quiet.saturating_sub(at.elapsed()).as_millis() as u64).unwrap_or(0),state.updating)};
+    let server=crate::lan_service::update_activity(quiet)?;
+    let mut reasons=Vec::new();
+    if tasks>0{reasons.push("file_tasks");}if updating{reasons.push("updating");}
+    if tasks==0&&!updating{let lease=crate::profile::coordination_file("operations.lock")?;if lease.try_lock().is_err(){reasons.push("other_instance_tasks");}}
+    if server.active_requests>0{reasons.push("server_requests");}
+    let remaining=remaining.max(server.quiet_remaining_ms);
+    if remaining>0{reasons.push("quiet_period");}
+    Ok(serde_json::json!({"ready":reasons.is_empty(),"reasons":reasons,"activeFileTasks":tasks,"activeServerRequests":server.active_requests,"retryAfterMs":remaining.max(5000)}))
 }
 
 #[cfg(test)]
@@ -152,6 +172,14 @@ mod cancel_flag_tests {
     fn update_reservation_prevents_new_operations() {
         let flag = CancelFlag(Mutex::new(CancelState { updating: true, ..Default::default() }));
         assert!(flag.reset(Some("copy")).unwrap_err().contains("[update_busy]"));
+    }
+    #[test]
+    fn automatic_update_waits_for_quiet_after_the_last_file_guard_finishes(){
+        let flag=CancelFlag(Mutex::new(CancelState::default()));
+        let operation=flag.begin("copy").unwrap();drop(operation);
+        assert!(flag.begin_update_with_quiet(UPDATE_QUIET).unwrap_err().contains("[update_deferred]"));
+        assert!(!flag.0.lock().unwrap().updating,"deferral must not reserve the updater or block more file work");
+        assert!(flag.begin("next-copy").is_ok());
     }
 }
 

@@ -338,7 +338,8 @@ pub fn run() {
             tray::set_tray_language,
 
             updates::check_updates, updates::get_last_update_failure, updates::get_release_history,
-            updates::download_update, updates::apply_update,
+            updates::download_update, updates::apply_update, updates::defer_update,
+            types::get_update_readiness,
         ])
         .on_window_event(|window, event| {
             if window.label() == "main"

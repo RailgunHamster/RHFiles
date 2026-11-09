@@ -8,6 +8,19 @@ use std::{
 
 static SERVICE: OnceLock<Mutex<Option<Service>>> = OnceLock::new();
 static STARTUP_ERROR: Mutex<Option<String>> = Mutex::new(None);
+static UPDATING:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
+pub(crate) struct UpdateReservation { _service:Option<rhfiles_service::UpdateReservation> }
+impl Drop for UpdateReservation {fn drop(&mut self){UPDATING.store(false,std::sync::atomic::Ordering::Release);}}
+pub(crate) fn reserve_update(quiet:std::time::Duration)->Result<UpdateReservation,String>{
+    let service=slot().lock().map_err(|_|"服务状态不可用")?;
+    if UPDATING.load(std::sync::atomic::Ordering::Acquire){return Err("[update_busy] 服务正在更新".into());}
+    let reservation=service.as_ref().map(|s|s.reserve_update(quiet)).transpose().map_err(|e|format!("[{}] {}",e.code,e.message))?;
+    UPDATING.store(true,std::sync::atomic::Ordering::Release);
+    Ok(UpdateReservation{_service:reservation})
+}
+pub(crate) fn update_activity(quiet:std::time::Duration)->Result<rhfiles_service::UpdateActivity,String>{
+    Ok(slot().lock().map_err(|_|"服务状态不可用")?.as_ref().map(|s|s.update_activity(quiet)).unwrap_or(rhfiles_service::UpdateActivity{active_requests:0,quiet_remaining_ms:0}))
+}
 
 #[tauri::command]
 pub fn lan_service_webdav_compatibility()->serde_json::Value{
@@ -129,6 +142,7 @@ fn save_config(path: &Path, config: &Config) -> Result<(), String> {
 }
 fn start(mut config: Config) -> Result<rhfiles_service::Status, String> {
     let mut service = slot().lock().map_err(|_| "服务状态不可用")?;
+    if UPDATING.load(std::sync::atomic::Ordering::Acquire){return Err("[update_busy] 请等待更新完成后启动文件服务".into());}
     if service.as_ref().is_some_and(|s| s.status().running) {
         return Err("请先停止文件服务，再更改共享或端口".into());
     }

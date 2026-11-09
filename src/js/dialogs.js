@@ -508,6 +508,7 @@ function openSettings() {
 
 function setAutoUpdateEnabled(enabled) {
   G.settings.autoUpdateEnabled = !!enabled;
+  if(!enabled)clearAutomaticUpdateDefer();
   saveSettings();
   const install=document.getElementById('settings-auto-install-update');if(install)install.disabled=!enabled;
   refreshUpdateSettingsStatus();
@@ -516,6 +517,7 @@ function setAutoUpdateEnabled(enabled) {
 
 function setAutoInstallUpdates(enabled) {
   G.settings.autoInstallUpdates = /Win/i.test(globalThis.navigator?.platform || '') && !!enabled;
+  if(!G.settings.autoInstallUpdates)clearAutomaticUpdateDefer();
   saveSettings();
   if(!enabled)G._automaticUpdatePending=false;
   refreshUpdateSettingsStatus();

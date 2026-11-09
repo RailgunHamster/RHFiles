@@ -76,6 +76,7 @@ struct UpdateProgress {
 static UPDATE_OPERATION: Mutex<()> = Mutex::new(());
 static UPDATE_WINDOW: LazyLock<Mutex<Option<crate::update_splash::Session>>> = LazyLock::new(|| Mutex::new(None));
 static APPLY_FILE: Mutex<Option<File>> = Mutex::new(None);
+static APPLY_SERVICE:Mutex<Option<crate::lan_service::UpdateReservation>>=Mutex::new(None);
 fn emit_update(app: &tauri::AppHandle, progress: UpdateProgress) {
     let _ = app.emit("update-progress", &progress);
     if let Ok(window) = UPDATE_WINDOW.lock() { if let Some(window) = window.as_ref() { window.send(&progress); } }
@@ -905,11 +906,15 @@ pub async fn download_update(
 }
 
 #[tauri::command]
+pub fn defer_update(){if let Ok(mut window)=UPDATE_WINDOW.lock(){window.take();}}
+
+#[tauri::command]
 pub fn apply_update(
     source: Option<String>,
     proxy: Option<String>,
     appearance: Option<crate::update_splash::Appearance>,
     target_version: Option<String>,
+    automatic: Option<bool>,
     app: tauri::AppHandle,
     cancel: tauri::State<'_, crate::types::CancelFlag>,
 ) -> Result<(), String> {
@@ -921,7 +926,9 @@ pub fn apply_update(
         .ok_or("[update_package] 没有已校验的更新包，请先下载 / Download and verify the update before installing")?;
     let pending = verified.asset;
     if target_version.as_ref().is_some_and(|expected|expected != &pending.Version) { return Err("[update_package] 待安装版本与本次确认不符，请重新检查 / Pending version differs from the confirmed target".into()); }
-    if let Err(error) = cancel.begin_update() { phase(&app,"failed",&pending.Version,&error); return Err(error); }
+    let quiet=if automatic.unwrap_or(false){crate::types::UPDATE_QUIET}else{Duration::ZERO};
+    let service=crate::lan_service::reserve_update(quiet)?;
+    cancel.begin_update_with_quiet(quiet)?;
     phase(&app,"applying",&pending.Version,"");
     let existing = UPDATE_WINDOW.lock().ok().and_then(|mut value|value.take()).and_then(|mut window| {
         let usable = window.alive() && window.prepare_apply(&UpdateProgress {
@@ -942,6 +949,7 @@ pub fn apply_update(
         return Err(error.to_string());
     }
     if let Ok(mut guard) = APPLY_FILE.lock() { *guard = Some(verified.file); }
+    *APPLY_SERVICE.lock().unwrap_or_else(|e|e.into_inner())=Some(service);
     if let Some(transition) = transition { transition.handoff(); }
     // Unlike Velopack's convenience method, AppHandle::exit lets Tauri destroy
     // its windows and WebView2 children before Update.exe replaces `current`.
