@@ -3,6 +3,8 @@ use super::*;
 use std::sync::atomic::{AtomicU64,Ordering};
 static FILE_ENGINE:Mutex<Option<Engine>>=Mutex::new(None);
 static EPOCH:AtomicU64=AtomicU64::new(0);
+static CLIP:Mutex<Option<(u64,i32,i32,i32,i32)>>=Mutex::new(None);
+pub(super) fn owns_surface(child:usize)->bool{FILE_ENGINE.try_lock().is_ok_and(|slot|slot.as_ref().is_some_and(|engine|engine.child==child&&engine.surface.current()))}
 pub(crate) fn stop(){
     EPOCH.fetch_add(1,Ordering::SeqCst);
     if let Ok(mut slot)=FILE_ENGINE.lock(){if let Some(engine)=slot.take(){tauri::async_runtime::spawn_blocking(move||release_surface(engine));}}
@@ -32,6 +34,15 @@ pub(crate) async fn request(app:AppHandle,action:&str,args:Value)->Result<Value,
             let slot=FILE_ENGINE.lock().map_err(|_|"播放器状态不可用")?;let Some(engine)=slot.as_ref().filter(|e|args["expectedInput"].as_u64()==Some(e.input_id))else{return Ok(json!({"stale":true}))};
             let mut r=[0i32;4];for(i,key)in["x","y","width","height"].iter().enumerate(){let n=args[*key].as_f64().filter(|v|v.is_finite()&&(0.0..=100000.).contains(v)).ok_or("媒体区域无效")?;r[i]=(n*scale).round() as i32;}
             r[0]=r[0].min(size.width.saturating_sub(1) as i32);r[1]=r[1].min(size.height.saturating_sub(1) as i32);r[2]=r[2].max(1).min(size.width as i32-r[0]);r[3]=r[3].max(1).min(size.height as i32-r[1]);
+            let clip=|key:&str|->Result<i32,String>{let value=args.get(key).and_then(Value::as_f64).unwrap_or(0.);if !value.is_finite()||!(0.0..=100000.).contains(&value){return Err("控制栏区域无效".into())}Ok((value*scale).round() as i32)};
+            let top=clip("clipTop")?.min(r[3]-1);let bottom=clip("clipBottom")?.min(r[3]-top-1);
+            let key=(engine.input_id,r[2],r[3],top,bottom);
+            let mut prior=CLIP.lock().map_err(|_|"控制栏区域不可用")?;
+            if prior.as_ref()!=Some(&key){unsafe{
+                use windows::Win32::Graphics::Gdi::{CreateRectRgn,SetWindowRgn,DeleteObject};
+                if top==0&&bottom==0{if SetWindowRgn(HWND(engine.child as Ptr),None,true)==0{return Err("无法更新全屏视频区域".into())}}
+                else{let region=CreateRectRgn(0,top,r[2],r[3]-bottom);if region.0.is_null(){return Err("无法创建全屏视频区域".into())}if SetWindowRgn(HWND(engine.child as Ptr),Some(region),true)==0{let _=DeleteObject(region.into());return Err("无法更新全屏控制栏".into())}}
+            }*prior=Some(key);}
             let hwnd=HWND(engine.child as Ptr);unsafe{MoveWindow(hwnd,r[0],r[1],r[2],r[3],true).map_err(|e|e.to_string())?;SetLayeredWindowAttributes(hwnd,windows::Win32::Foundation::COLORREF(0),if engine.state()["renderedFrames"].as_u64().unwrap_or(0)>0{255}else{0},LWA_ALPHA).map_err(|e|e.to_string())?;SetWindowPos(hwnd,Some(HWND_TOP),0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE|SWP_SHOWWINDOW).map_err(|e|e.to_string())?;}repaint_after_layout(engine);Ok::<_,String>(json!({"updated":true}))
         })();let _=tx.send(result);}).map_err(|e|e.to_string())?;return rx.await.map_err(|_|"播放器布局结束".to_owned())?;
     }

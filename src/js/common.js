@@ -1174,6 +1174,7 @@ function loadSettings() {
     pdfOpenWith: 'rhfiles',
     imageOpenWith: 'rhfiles',
     videoOpenWith: 'rhfiles',
+    videoSeekSeconds: 5,
     imageBrowseMode: 'paged',
     dualPaneOrientation: 'vertical',
     iconMode: 'mixed',

@@ -380,7 +380,7 @@ unsafe extern "system" fn surface_proc(
         // Child canvases have no user close button. Parent destruction still
         // destroys them normally; asynchronous cleanup must carry its lease.
         if message==WM_CLOSE{return LRESULT(0);}
-        if message==WM_NCHITTEST&&shared_media::owns_surface(hwnd.0 as usize){return LRESULT(HTTRANSPARENT as isize);}
+        if message==WM_NCHITTEST&&(shared_media::owns_surface(hwnd.0 as usize)||file_player::owns_surface(hwnd.0 as usize)){return LRESULT(HTTRANSPARENT as isize);}
         if message==WM_NCDESTROY{let _=KillTimer(Some(hwnd),REPAINT_TIMER);if let Ok(mut paints)=REPAINT_UNTIL.lock(){paints.remove(&(hwnd.0 as usize,GetWindowLongPtrW(hwnd,GWLP_USERDATA) as usize));}SetWindowLongPtrW(hwnd,GWLP_USERDATA,0);if let Ok(mut at)=INPUT_AT.lock(){at.remove(&(hwnd.0 as usize));}}
         if message==WM_LBUTTONDOWN&&surface_binding(hwnd.0 as usize).is_some_and(|binding|binding.0!=LIBRARY_LABEL){let _=SetFocus(Some(hwnd));}
         let modified=matches!(message,WM_KEYDOWN|WM_MOUSEWHEEL|WM_MOUSEHWHEEL)&&[VK_CONTROL,VK_SHIFT,VK_MENU].iter().any(|key|GetKeyState(key.0 as i32)<0);

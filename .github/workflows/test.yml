@@ -58,6 +58,7 @@ jobs:
           node scripts/testing/file-viewer-browser-check.mjs
           node scripts/testing/save-dialog-browser-check.mjs
           node scripts/testing/pdf-reader-browser-check.mjs
+          node scripts/testing/file-video-controls-check.mjs
       - name: Verify business tests catch deliberately broken behavior
         run: npm run test:mutations
       - name: Real filesystem, recovery, archive and persistence tests
