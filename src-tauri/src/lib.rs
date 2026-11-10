@@ -30,6 +30,7 @@ mod profile;
 mod recycle;
 mod rhvideo;
 mod file_viewer;
+mod save_dialog;
 mod rhvideo_rotation;
 #[cfg(windows)]
 mod rhvideo_clock;
@@ -216,6 +217,7 @@ pub fn run() {
             rhvideo::rhvideo_open,
             rhvideo::rhvideo_request,
             file_viewer::file_viewer_request,
+            save_dialog::save_dialog_request,
             lan_service::lan_service_state,
             lan_service::lan_service_webdav_compatibility,
             lan_service::lan_service_webdav,
@@ -355,10 +357,11 @@ pub fn run() {
                 return;
             };
             let app = window.app_handle();
+            save_dialog::owner_closing(window.label());
             let user_window_count = app
                 .webview_windows()
                 .keys()
-                .filter(|label| label.as_str() != "integration-picker" && !label.starts_with("pdf-"))
+                .filter(|label| label.as_str() != "integration-picker" && label.as_str() != "window-save-dialog" && !label.starts_with("pdf-"))
                 .count();
             if user_window_count <= 1
                 && let Some(picker) = app.get_webview_window("integration-picker")

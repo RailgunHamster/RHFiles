@@ -304,7 +304,7 @@ impl<'a> OperationProgress<'a> {
     }
 }
 
-fn validate_target_name(name: &str) -> Result<(), String> {
+pub(crate) fn validate_target_name(name: &str) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     { return if name.is_empty() || matches!(name, "." | "..") || name.contains(['/', '\0']) {
         Err(format!("Invalid destination name: {name}"))

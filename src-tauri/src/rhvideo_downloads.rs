@@ -3,7 +3,8 @@
 use super::{current, exports, AppHandle, Emitter, Session, Value, json};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{fs::File, io::Write, path::{Path, PathBuf}, sync::{Arc, Mutex, OnceLock}, time::Instant};
+use std::{fs::File, io::Write, path::PathBuf, sync::{Arc, Mutex, OnceLock}, time::Instant};
+use tauri::Manager;
 
 const ACTIVE: [&str; 4] = ["queued", "downloading", "cancelling", "publishing"];
 #[derive(Clone, Serialize, Deserialize)]
@@ -89,37 +90,16 @@ pub fn filename(job:&Value)->String{
     let date=job["created_at"].as_str().and_then(|s|chrono::DateTime::parse_from_rfc3339(s).ok()).map(|d|d.format("%Y%m%d-%H%M").to_string()).unwrap_or_else(||"收藏".into());
     format!("RHVideo-喜爱-{date}.zip")
 }
-#[cfg(windows)]
-fn choose(name:&str)->Result<Option<String>,String>{
-    use windows::{core::PCWSTR,Win32::{System::Com::*,UI::Shell::*}};
-    unsafe{
-        CoInitializeEx(None,COINIT_APARTMENTTHREADED).ok().map_err(|e|e.to_string())?;
-        struct Com;impl Drop for Com{fn drop(&mut self){unsafe{CoUninitialize()}}}let _com=Com;
-        let dialog:IFileSaveDialog=CoCreateInstance(&FileSaveDialog,None,CLSCTX_INPROC_SERVER).map_err(|e|e.to_string())?;
-        let name:Vec<u16>=name.encode_utf16().chain(Some(0)).collect();dialog.SetFileName(PCWSTR(name.as_ptr())).map_err(|e|e.to_string())?;
-        let title:Vec<u16>="保存喜爱 ZIP（不覆盖已有文件）\0".encode_utf16().collect();dialog.SetTitle(PCWSTR(title.as_ptr())).map_err(|e|e.to_string())?;
-        let options=FILEOPENDIALOGOPTIONS(dialog.GetOptions().map_err(|e|e.to_string())?.0&!FOS_OVERWRITEPROMPT.0);
-        dialog.SetOptions(options|FOS_FORCEFILESYSTEM|FOS_PATHMUSTEXIST|FOS_NOCHANGEDIR).map_err(|e|e.to_string())?;
-        let extension:Vec<u16>="zip\0".encode_utf16().collect();dialog.SetDefaultExtension(PCWSTR(extension.as_ptr())).map_err(|e|e.to_string())?;
-        if let Err(e)=dialog.Show(None){if e.code().0 as u32==0x800704c7{return Ok(None);}return Err(e.to_string());}
-        let p=dialog.GetResult().map_err(|e|e.to_string())?.GetDisplayName(SIGDN_FILESYSPATH).map_err(|e|e.to_string())?;
-        let path=p.to_string().map_err(|e|e.to_string());CoTaskMemFree(Some(p.0.cast()));path.map(Some)
-    }
-}
 pub async fn start(app:AppHandle,session:Arc<Session>,args:&Value)->Result<Value,String>{
-    if args.as_object().is_none_or(|o|o.keys().any(|k|!["id","path"].contains(&k.as_str()))){return Err("下载参数无效".into());}
+    if args.as_object().is_none_or(|o|o.keys().any(|k|!["id","path","overwrite","expectedTargetRevision"].contains(&k.as_str()))){return Err("下载参数无效".into());}
     let id=args["id"].as_str().filter(|v|exports::uuid(v)).ok_or("导出任务标识无效")?.to_owned();
     let job=session.request(reqwest::Method::GET,&format!("api/v1/favorite-exports/{id}"),&[],None).await?;
     exports::job(&job)?;exports::identity(&job,"id",&id)?;
     if job["can_download"]!=true{return Err("ZIP 尚未完成或已过期，不能下载".into());}
-    let path=if args.get("path").is_some(){Some(args["path"].as_str().filter(|s|s.len()<=32768&&!s.contains('\0')).ok_or("保存路径无效")?.to_owned())}else{
-        #[cfg(windows)] {let name=filename(&job);tauri::async_runtime::spawn_blocking(move||choose(&name)).await.map_err(|_|"保存选择器已结束")??}
-        #[cfg(not(windows))] {return Err("当前平台尚未接入 ZIP 保存选择器".into());}
-    };
-    let Some(path)=path else{return Ok(json!({"picked":false}));};live(&session)?;
-    let target=Path::new(&path);
-    if !target.is_absolute() || !target.parent().is_some_and(Path::is_dir){return Err("请选择已存在目录下的完整保存路径".into());}
-    if target.try_exists().map_err(|e|format!("无法检查保存位置：{e}"))? {return Err("目标已经存在，未覆盖；请选择新的文件名".into());}
+    let target=if let Some(path)=args.get("path"){
+        crate::save_dialog::Target::explicit(&app,path.as_str().ok_or("保存路径无效")?,args["overwrite"]==true,args["expectedTargetRevision"].as_str()).await?
+    }else{let Some(target)=crate::save_dialog::choose(&app,"window-rhvideo",&filename(&job),None,"zip").await? else{return Ok(json!({"picked":false}))};target};live(&session)?;
+    let path=target.path.clone();
     let total=job["archive_bytes"].as_u64().filter(|n|*n>=4).ok_or("导出文件大小无效")?;
     let mut random=[0u8;16];getrandom::fill(&mut random).map_err(|_|"无法创建下载标识")?;let h=random.iter().map(|v|format!("{v:02x}")).collect::<String>();
     let task=Task{id:format!("{}-{}-{}-{}-{}",&h[..8],&h[8..12],&h[12..16],&h[16..20],&h[20..]),export_id:id.clone(),state:"queued".into(),path:path.clone(),bytes:0,total,speed:0.,error:String::new(),started:now(),finished:None,revision:0};
@@ -128,18 +108,19 @@ pub async fn start(app:AppHandle,session:Arc<Session>,args:&Value)->Result<Value
         data.records.push(Record{owner:owner(&session),task:task.clone()});data.persist();}
     let task_id=task.id.clone();let reply=json!({"task":task});let spawn_app=app.clone();let generation=session.generation;
     if let Err(e)=std::thread::Builder::new().name("rhvideo-zip-download".into()).spawn(move||{
-        let result=tauri::async_runtime::block_on(save(&spawn_app,&session,&task_id,&id,&path,total));
+        let result=tauri::async_runtime::block_on(save(&spawn_app,&session,&task_id,&id,&target,total));
         if let Err(error)=result{let _=publish(&spawn_app,generation,&task_id,|t|{t.state=if t.state=="cancelling"{"cancelled"}else{"failed"}.into();t.error=error;t.finished=Some(now());t.speed=0.;});}
     }){publish(&app,generation,&task.id,|t|{t.state="failed".into();t.error=format!("无法启动下载：{e}");t.finished=Some(now());})?;return Err(format!("无法启动下载：{e}"));}
     Ok(reply)
 }
 
-async fn save(app:&AppHandle,session:&Session,task_id:&str,id:&str,path:&str,total:u64)->Result<(),String>{
+async fn save(app:&AppHandle,session:&Session,task_id:&str,id:&str,target:&crate::save_dialog::Target,total:u64)->Result<(),String>{
+    let cancel=app.state::<crate::types::CancelFlag>();let _guard=cancel.begin("rhvideo-zip")?;
     checkpoint(session,task_id)?;publish(app,session.generation,task_id,|t|t.state="downloading".into())?;
     let response=session.client.get(session.endpoint(&format!("api/v1/favorite-exports/{id}/download"))?).bearer_auth(session.access_token().await?).send().await.map_err(super::network_error)?;
     if response.status()==reqwest::StatusCode::UNAUTHORIZED{if let Ok(mut slot)=super::SESSION.lock(){if slot.as_ref().is_some_and(|s|s.generation==session.generation){slot.take();}}}
-    let parent=Path::new(path).parent().ok_or("保存目录无效")?;
-    let mut output=tempfile::Builder::new().prefix(".rhvideo-download-").suffix(".part").tempfile_in(parent).map_err(|e|format!("无法创建下载临时文件：{e}"))?;
+    let parent=target.stage_directory(app)?;
+    let mut output=tempfile::Builder::new().prefix(".rhvideo-download-").suffix(".part").tempfile_in(&parent).map_err(|e|format!("无法创建下载临时文件：{e}"))?;
     let started=Instant::now();let mut last=Instant::now();
     let copied=copy_zip(response,total,output.as_file_mut(),|bytes|{
         checkpoint(session,task_id)?;
@@ -148,7 +129,7 @@ async fn save(app:&AppHandle,session:&Session,task_id:&str,id:&str,path:&str,tot
     output.as_file().sync_all().map_err(|e|format!("下载写入未完成：{e}"))?;
     // Cancellation wins until this short final commit; never delete a saved file.
     live(session)?;{let mut data=store().lock().map_err(|_|"下载任务不可用")?;let record=data.records.iter_mut().find(|r|r.task.id==task_id).ok_or("下载任务不存在")?;if record.task.state=="cancelling"{return Err("已取消下载".into());}record.task.state="publishing".into();}
-    output.persist_noclobber(path).map_err(|e|format!("ZIP 未提交，目标可能已存在（未覆盖）：{e}"))?;
+    target.publish(app,output,&format!("save-zip-{task_id}")).await?;
     publish(app,session.generation,task_id,|t|{t.bytes=copied;t.state="saved".into();t.finished=Some(now());t.speed=0.;})?;Ok(())
 }
 

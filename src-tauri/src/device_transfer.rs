@@ -37,6 +37,12 @@ enum Location {
     Local(PathBuf),
     Remote(DevicePath),
 }
+pub(crate) fn save_path(parent:&str,name:&str)->Result<String,String>{
+    crate::file_ops::validate_target_name(name)?;
+    Ok(Location::parse(parent)?.child(name)?.text())
+}
+pub(crate) fn save_parent(path:&str)->Option<String>{Location::parse(path).ok()?.parent().ok().map(|p|p.text())}
+pub(crate) fn normalize_save_path(path:&str)->Result<String,String>{Ok(Location::parse(path)?.text())}
 impl Location {
     fn parse(value: &str) -> Result<Self, String> {
         if value
@@ -318,6 +324,7 @@ struct Progress<'a> {
     download_options: DownloadOptions,
     shared_bytes: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,
     silent: bool,
+    saving: bool,
 }
 impl Progress<'_> {
     fn check(&self) -> Result<(), String> {
@@ -344,14 +351,15 @@ impl Progress<'_> {
         } else {
             (self.done as f64 / self.items.max(1) as f64 * 100.0).min(99.0)
         };
-        let _=self.app.emit("op-progress",json!({"operationId":self.id,"operation":self.operation,"src":self.src,"dest":self.dest,"currentPath":current.text(),"currentName":current.leaf().unwrap_or_default(),"bytesTransferred":self.bytes,"totalBytes":self.total,"entriesCompleted":self.done,"totalEntries":self.items,"percentage":percentage.round() as u32,"speed":if elapsed>0.0{(self.bytes as f64/elapsed) as u64}else{0},"elapsedSeconds":elapsed,"status":status}));
+        let shown=if self.saving{Location::parse(&self.dest).unwrap_or_else(|_|current.clone())}else{current.clone()};
+        let _=self.app.emit("op-progress",json!({"operationId":self.id,"operation":self.operation,"src":self.src,"dest":self.dest,"currentPath":shown.text(),"currentName":shown.leaf().unwrap_or_default(),"bytesTransferred":self.bytes,"totalBytes":self.total,"entriesCompleted":self.done,"totalEntries":self.items,"percentage":percentage.round() as u32,"speed":if elapsed>0.0{(self.bytes as f64/elapsed) as u64}else{0},"elapsedSeconds":elapsed,"status":status}));
     }
     fn advance(&mut self, bytes: u64) {
         self.bytes += bytes;
         if let Some(shared) = &self.shared_bytes { shared.fetch_add(bytes, std::sync::atomic::Ordering::Relaxed); }
     }
     fn fork(&self, bytes: std::sync::Arc<std::sync::atomic::AtomicU64>) -> Self {
-        Self { app:self.app, cancel:self.cancel, leases:self.leases.clone(), id:self.id.clone(), operation:self.operation.clone(),
+        Self { saving:self.saving, app:self.app, cancel:self.cancel, leases:self.leases.clone(), id:self.id.clone(), operation:self.operation.clone(),
             src:self.src.clone(), dest:self.dest.clone(), total:self.total, bytes:0, items:self.items, done:0,
             started:self.started, last:self.last, history:self.history, exclusive_target:self.exclusive_target,
             history_sources:None, download_options:self.download_options, shared_bytes:Some(bytes), silent:true }
@@ -1612,6 +1620,7 @@ pub async fn device_transfer(
         } else { DownloadOptions::default() },
         shared_bytes: None,
         silent: false,
+        saving: action=="save_copy",
     };
     match action.as_str() {
         "copy" | "move" | "copy_exact" | "move_exact" | "save_copy" => {
@@ -1621,7 +1630,7 @@ pub async fn device_transfer(
             {
                 return Err("[invalid_request] 此接口至少包含一个 RHFiles 设备路径".into());
             }
-            if action=="save_copy"&&(!matches!(destination,Location::Local(_))||snapshot(&source).await?.directory){return Err("[invalid_path] 另存为仅支持把单个文件保存到本地文件系统".into());}
+            if action=="save_copy"&&snapshot(&source).await?.directory{return Err("[invalid_path] 另存为仅支持单个文件".into());}
             let target = if action.ends_with("_exact")||action=="save_copy" {
                 destination
             } else {

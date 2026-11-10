@@ -1311,57 +1311,8 @@ fn configuration_picker()->Result<Option<String>,String>{
         let path=p.to_string().map_err(|e|e.to_string());CoTaskMemFree(Some(p.0.cast()));path.map(Some)
     }
 }
-#[cfg(windows)]
-fn export_dialog(text: &str) -> Result<Value, String> {
-    export_dialog_named(text,"RHVideo-selection.json")
-}
-#[cfg(windows)]
-fn export_dialog_named(text: &str,name:&str) -> Result<Value, String> {
-    use windows::{
-        core::PCWSTR,
-        Win32::{System::Com::*, UI::Shell::*},
-    };
-    unsafe {
-        CoInitializeEx(None, COINIT_APARTMENTTHREADED)
-            .ok()
-            .map_err(|e| e.to_string())?;
-        struct Com;
-        impl Drop for Com {
-            fn drop(&mut self) {
-                unsafe { CoUninitialize() }
-            }
-        }
-        let _com = Com;
-        let dialog: IFileSaveDialog = CoCreateInstance(&FileSaveDialog, None, CLSCTX_INPROC_SERVER)
-            .map_err(|e| e.to_string())?;
-        let name: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
-        dialog
-            .SetFileName(PCWSTR(name.as_ptr()))
-            .map_err(|e| e.to_string())?;
-        dialog
-            .SetOptions(
-                dialog.GetOptions().map_err(|e| e.to_string())?
-                    | FOS_FORCEFILESYSTEM
-                    | FOS_OVERWRITEPROMPT,
-            )
-            .map_err(|e| e.to_string())?;
-        if let Err(e) = dialog.Show(None) {
-            if e.code().0 as u32 == 0x800704c7 {
-                return Ok(json!({"saved":false}));
-            }
-            return Err(e.to_string());
-        }
-        let item = dialog.GetResult().map_err(|e| e.to_string())?;
-        let p = item
-            .GetDisplayName(SIGDN_FILESYSPATH)
-            .map_err(|e| e.to_string())?;
-        let path = p.to_string().map_err(|e| e.to_string());
-        CoTaskMemFree(Some(p.0.cast()));
-        let path = path?;
-        std::fs::write(&path, text.as_bytes()).map_err(|e| format!("导出失败：{e}"))?;
-        Ok(json!({"saved":true,"path":path}))
-    }
-}
+async fn export_dialog_named(app:&AppHandle,text:&str,name:&str,args:&Value,generation:u64)->Result<Value,String>{crate::save_dialog::save_text(app,name,text,args,generation).await}
+pub(crate) fn current_generation()->Option<u64>{current().ok().map(|session|session.generation)}
 pub(crate) async fn client_window(
     app: AppHandle,
     label: &'static str,
@@ -2202,14 +2153,8 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
             let value=session.request(reqwest::Method::POST,"api/v1/config-backups/export",&[],Some(json!({"ui_preferences":preferences}))).await?;
             configuration::document(&value)?;let text=serde_json::to_string_pretty(&value).map_err(|_|"无法生成配置备份")?;
             if text.len()>configuration::LIMIT{return Err("配置备份超过 20 MB".into());}
-            if let Some(path)=args["path"].as_str(){
-                use std::io::Write;
-                if !std::path::Path::new(path).is_absolute(){return Err("导出位置必须是本机完整路径".into());}
-                // A script's explicit path never silently replaces an existing file.
-                let mut output=std::fs::OpenOptions::new().write(true).create_new(true).open(path).map_err(|e|format!("无法创建配置备份：{e}"))?;
-                output.write_all(text.as_bytes()).map_err(|e|format!("配置备份写入失败：{e}"))?;return Ok(json!({"saved":true,"path":path}));
-            }
-            #[cfg(windows)]{return tauri::async_runtime::spawn_blocking(move||export_dialog_named(&text,"RHVideo-configuration.json")).await.map_err(|_|"备份保存结束")?;}
+            if args["path"].is_string(){return export_dialog_named(&app,&text,"RHVideo-configuration.json",&args,session.generation).await;}
+            #[cfg(windows)]{return export_dialog_named(&app,&text,"RHVideo-configuration.json",&args,session.generation).await;}
             #[cfg(not(windows))]{let _=text;Err("当前平台尚未接入配置保存选择器".into())}
         }
         "configuration.preview" => {
@@ -2262,9 +2207,7 @@ async fn rhvideo_dispatch(app:AppHandle,action:String,mut args:Value)->Result<Va
             let text = text(&args, "text", 32 * 1024 * 1024)?.to_owned();
             #[cfg(windows)]
             {
-                return tauri::async_runtime::spawn_blocking(move || export_dialog(&text))
-                    .await
-                    .map_err(|_| "导出任务结束".to_owned())?;
+                return export_dialog_named(&app,&text,"RHVideo-selection.json",&args,session.generation).await;
             }
             #[cfg(not(windows))]
             {

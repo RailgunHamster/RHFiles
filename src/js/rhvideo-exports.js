@@ -82,12 +82,12 @@
     action('exports.downloads',object(),async()=>{
       const version=epoch,result=await native('exports.downloads');ensure(version);acceptTasks(result);changed();return result;
     },'read');
-    action('exports.download',object({id:idSchema,path:{type:'string',minLength:1,maxLength:32768}},['id']),args=>exclusive(async version=>{
+    action('exports.download',object({id:idSchema,path:{type:'string',minLength:1,maxLength:108000},overwrite:{type:'boolean'},expectedTargetRevision:{type:'string',maxLength:256}},['id']),args=>exclusive(async version=>{
       if(!uuid.test(args.id))throw Error('导出任务编号无效');phase='choosing';pickerStarting=true;earlyPicks.clear();changed();
       try{
         const result=await native('exports.download',args);ensure(version);pickerStarting=false;
         if(result.requested){
-          if(!uuid.test(result.pickId))throw Error('系统保存选择器没有返回有效标识');waitingPick=result.pickId;message='请选择 ZIP 的保存位置。';
+          if(!uuid.test(result.pickId))throw Error('保存窗口没有返回有效标识');waitingPick=result.pickId;message='请选择 ZIP 的保存位置。';
           const early=earlyPicks.get(waitingPick);earlyPicks.clear();if(early)pickerResult(early);
         }else acceptDownload(result);
         return result;

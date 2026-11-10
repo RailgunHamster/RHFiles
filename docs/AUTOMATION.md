@@ -120,7 +120,11 @@ Android 文件列表提供 `files.scroll.state`（是否可滚动、当前位置
 
 连续图片自动滚动：Android 使用 `gallery.auto.start/pause/toggle`、`gallery.auto.speed.set {speed}`；Windows 使用 `media.viewer.auto.start/pause/toggle`、`media.viewer.auto.speed.set {speed}`。速度范围为 10–6000 像素／秒，状态随图片查看器一起查询，按当前队列首尾循环；单张图片不启动滚动，隐藏或关闭查看器时暂停。空格切换开始／暂停，输入框和按键重复不会触发。模式使用双按钮切换。
 
-Windows 图片菜单：`media.viewer.context.open {index?}` / `context.close`；`media.viewer.saveAs {index?,destination?,overwrite?,expectedTargetRevision?}`；`media.viewer.copyPath {index?}`；`media.viewer.systemOpen {index?}`。省略保存位置时打开系统“另存为”对话框；脚本指定位置必须是完整本地路径，已有文件默认拒绝覆盖。文件以临时暂存和版本校验后提交，保留源文件；RHFiles 设备图片同样可另存到本地。`media.viewer.state` 返回 `caption`（鼠标、菜单或当前位置来源）、`contextMenu` 和 `saveTask`。保存进度同时显示在查看器和主窗口任务中心，`media.viewer.save.dismiss` 只收起提示，不取消文件传输。
+Windows 图片菜单：`media.viewer.context.open {index?}` / `context.close`；`media.viewer.saveAs {index?,destination?,overwrite?,expectedTargetRevision?}`；`media.viewer.copyPath {index?}`；`media.viewer.systemOpen {index?}`。省略保存位置时打开 RHFiles 保存窗口；脚本位置可用本地／SMB 完整路径或 RHFiles 设备身份 URI，已有文件默认拒绝覆盖。文件以临时暂存和版本校验后提交，保留源文件；RHFiles 设备图片同样可另存到本地。`media.viewer.state` 返回 `caption`（鼠标、菜单或当前位置来源）、`contextMenu` 和 `saveTask`。保存进度同时显示在查看器和主窗口任务中心，`media.viewer.save.dismiss` 只收起提示，不取消文件传输。
+
+Windows 共用保存窗口：`save.dialog.choose {name,directory?}` 可单独选择保存位置，返回 `{picked,target}`，不写入目标文件。图片另存为、RHVideo JSON 配置和 ZIP 导出均使用同一个 RHFiles 窗口，支持本地、UNC/SMB 与 RHFiles 设备；图片 `destination` 及配置/ZIP `path` 参数同样接受设备身份 URI。
+
+在 `--window window-save-dialog` 上调用 `save.dialog.state`、`navigate {path}`、`up/back/forward/refresh`、`entries {offset?,limit?}`、`select/activate {path}`、`name.set {name}`、`type.set {type:"original"|"all"}`、`filter.set {query}`、`hidden.set {visible}`、`folder.open/cancel/create {name}`、`confirm`、`replace.confirm/cancel`、`cancel`。`confirm` 遇到同名文件返回冲突及版本；`replace.confirm` 只批准该版本，文件再次变化时重新显示冲突。确认／取消使用持久完成回执，CLI `--wait run` 可在窗口关闭后取得结果。关闭发起窗口会取消选择；不会自动重放保存操作。
 
 图片定位：Windows `media.viewer.seek {index}`、Android `gallery.seek {index}`（零基序号）。拖动进度条只预览，提交后定位，使用当前队列原有排序；查看器首尾循环。Windows `media.viewer.window.state` 可核对最大化／全屏状态。
 
@@ -136,7 +140,7 @@ Image seeking uses `media.viewer.seek {index}` on Windows or `gallery.seek {inde
 
 Android exposes `files.scroll.state` and `files.scroll.to {ratio:0..1}` for the same virtualized list scroll used by its touch handle. Continuous image auto-scrolling exposes `gallery.auto.start/pause/toggle` and `gallery.auto.speed.set {speed}` on Android, or `media.viewer.auto.start/pause/toggle` and `media.viewer.auto.speed.set {speed}` on Windows. Speed is 10–6000 pixels/second; Space toggles playback outside editable fields, without repeated toggles when held. It follows the circular queue, stays stopped for one image, and pauses when the viewer is hidden or closed.
 
-Windows image menus expose `media.viewer.context.open {index?}`, `context.close`, `saveAs {index?,destination?,overwrite?,expectedTargetRevision?}`, `copyPath {index?}`, and `systemOpen {index?}`. Save As uses the system picker unless an absolute local destination is specified, refuses implicit overwrites, checks revisions, and atomically commits the copy without changing its source. RHFiles device images can also be saved locally. Viewer state includes the pointer/menu/position-based `caption`, `contextMenu`, and `saveTask`; dismissing its progress card with `media.viewer.save.dismiss` does not cancel the transfer.
+Windows image menus expose `media.viewer.context.open {index?}`, `context.close`, `saveAs {index?,destination?,overwrite?,expectedTargetRevision?}`, `copyPath {index?}`, and `systemOpen {index?}`. Save As uses the shared RHFiles picker unless a local/UNC path or device identity URI is specified. It refuses implicit overwrites, checks revisions, and atomically commits the copy without changing its source. Both local files and RHFiles devices can be save destinations. Viewer state includes the pointer/menu/position-based `caption`, `contextMenu`, and `saveTask`; dismissing its progress card with `media.viewer.save.dismiss` does not cancel the transfer.
 
 RHFiles exposes a versioned JSON action registry for desktop and Android. Use Node.js 22+ and `scripts/rhfiles-api.mjs`; discover available actions and parameter schemas with `list` and `describe`.
 

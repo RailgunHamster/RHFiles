@@ -184,11 +184,7 @@ pub(super) async fn request(app: AppHandle, action: &str, args: Value) -> Result
             let text = serde_json::to_string_pretty(document).map_err(|_| "备份无效")?;
             #[cfg(windows)]
             {
-                tauri::async_runtime::spawn_blocking(move || {
-                    export_dialog_named(&text, "RHVideo-configuration.json")
-                })
-                .await
-                .map_err(|_| "保存结束")?
+                export_dialog_named(&app,&text,"RHVideo-configuration.json",&args,session.generation).await
             }
             #[cfg(not(windows))]
             {

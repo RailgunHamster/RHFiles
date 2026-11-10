@@ -114,7 +114,7 @@ async function connection(options){
   try{const session=await selectSession(endpoint,options);return {...session,endpoint,close(){session.close();cleanup();}};}catch(error){cleanup();throw error;}
 }
 export function isReceiptTargetURL(value){
-  try{const u=new URL(value);return ['http:','https:'].includes(u.protocol)&&['tauri.localhost','localhost'].includes(u.hostname)&&!u.username&&!u.password&&!u.search&&!u.hash&&['/','/index.html','/rhvideo.html','/rhvideo-player.html','/rhvideo-grid.html','/file-viewer.html'].includes(u.pathname);}catch{return false;}
+  try{const u=new URL(value);return ['http:','https:'].includes(u.protocol)&&['tauri.localhost','localhost'].includes(u.hostname)&&!u.username&&!u.password&&!u.search&&!u.hash&&['/','/index.html','/rhvideo.html','/rhvideo-player.html','/rhvideo-grid.html','/file-viewer.html','/save-dialog.html'].includes(u.pathname);}catch{return false;}
 }
 // Read only: a disappearing target never authorizes resubmitting its action.
 export async function recoverRun(endpoint,options,request,runId,deadline,{fetchTargets=async()=>{const timeout=AbortSignal.timeout(Math.max(1,deadline-Date.now()));const r=await fetch(endpoint+'/json/list',{signal:signal?AbortSignal.any([signal,timeout]):timeout});return r.ok?r.json():[];},openSession=cdpSession,knownTargets=[],signal}={}){

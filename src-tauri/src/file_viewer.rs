@@ -30,44 +30,24 @@ fn validate_entry(entry:&Entry)->Result<(),String>{
 fn current(args:&Value)->Result<Session,String>{let state=SESSION.lock().map_err(|_|"查看器状态不可用")?;let s=state.as_ref().ok_or("查看器已关闭")?;if args["generation"].as_u64()!=Some(s.generation)||args.get("selection").is_some_and(|v|v.as_u64()!=Some(s.selection)){return Err("查看内容已改变，旧操作未执行".into())}Ok(s.clone())}
 pub(crate) fn is_current(generation:u64,selection:u64)->bool{SESSION.lock().ok().is_some_and(|s|s.as_ref().is_some_and(|s|s.generation==generation&&s.selection==selection))}
 fn stop_video(){#[cfg(windows)]crate::rhvideo_player::file_player::stop();}
-#[cfg(windows)]
-fn save_picker(name:&str,english:bool,owner:Option<usize>)->Result<Option<String>,String>{
-    use windows::{core::PCWSTR,Win32::{Foundation::HWND,System::Com::*,UI::Shell::*}};
-    unsafe{
-        CoInitializeEx(None,COINIT_APARTMENTTHREADED).ok().map_err(|e|e.to_string())?;
-        struct Com;impl Drop for Com{fn drop(&mut self){unsafe{CoUninitialize()}}}let _com=Com;
-        let dialog:IFileSaveDialog=CoCreateInstance(&FileSaveDialog,None,CLSCTX_INPROC_SERVER).map_err(|e|e.to_string())?;
-        let filename:Vec<u16>=name.encode_utf16().chain(Some(0)).collect();dialog.SetFileName(PCWSTR(filename.as_ptr())).map_err(|e|e.to_string())?;
-        let title:Vec<u16>=if english{"Save image as"}else{"图片另存为"}.encode_utf16().chain(Some(0)).collect();dialog.SetTitle(PCWSTR(title.as_ptr())).map_err(|e|e.to_string())?;
-        dialog.SetOptions(dialog.GetOptions().map_err(|e|e.to_string())?|FOS_FORCEFILESYSTEM|FOS_PATHMUSTEXIST|FOS_NOCHANGEDIR|FOS_OVERWRITEPROMPT).map_err(|e|e.to_string())?;
-        if let Err(error)=dialog.Show(owner.map(|value|HWND(value as *mut _))){if error.code().0 as u32==0x800704c7{return Ok(None)}return Err(error.to_string())}
-        let raw=dialog.GetResult().map_err(|e|e.to_string())?.GetDisplayName(SIGDN_FILESYSPATH).map_err(|e|e.to_string())?;
-        let result=raw.to_string().map_err(|e|e.to_string());CoTaskMemFree(Some(raw.0.cast()));result.map(Some)
-    }
-}
 async fn save_image(app:AppHandle,args:Value,cancel:tauri::State<'_,CancelFlag>)->Result<Value,String>{
     let state=current(&args)?;if state.kind!="image"{return Err("当前不是图片".into())}
     let index=args.get("index").map(|v|v.as_u64().filter(|n|(*n as usize)<state.entries.len()).map(|n|n as usize).ok_or("图片索引无效")).transpose()?.unwrap_or(state.index);
     let entry=state.entries[index].clone();let _dialog_guard=cancel.begin("image-save")?;
     let source=crate::device_transfer::device_transfer("inspect".into(),json!({"path":entry.path}),app.clone(),cancel.clone()).await?;
     if source["isDirectory"]==true{return Err("另存为只接受图片文件".into())}
-    let picked=args.get("destination").is_none();
-    let destination=if let Some(value)=args.get("destination"){Some(value.as_str().filter(|p|!p.is_empty()&&p.len()<=32768&&!p.contains('\0')).ok_or("保存路径无效")?.to_owned())}else{
-        #[cfg(windows)]{let owner=app.get_webview_window(LABEL).and_then(|w|w.hwnd().ok()).map(|h|h.0 as usize);let name=entry.name.clone();let english=state.language=="en";tauri::async_runtime::spawn_blocking(move||save_picker(&name,english,owner)).await.map_err(|_|"保存选择器已结束")??}
-        #[cfg(not(windows))]{return Err("此平台尚未提供图片保存选择器".into())}
+    let target=if let Some(destination)=args.get("destination"){
+        crate::save_dialog::Target::explicit(&app,destination.as_str().ok_or("保存路径无效")?,args["overwrite"]==true,args["expectedTargetRevision"].as_str()).await?
+    }else{
+        let initial=crate::device_transfer::save_parent(&entry.path);
+        let Some(target)=crate::save_dialog::choose(&app,LABEL,&entry.name,initial.as_deref(),"image").await? else{return Ok(json!({"saved":false,"cancelled":true}))};target
     };
-    let Some(destination)=destination else{return Ok(json!({"saved":false,"cancelled":true}))};
     if !is_current(state.generation,state.selection){return Err("查看内容已改变，未保存旧图片".into())}
-    if !std::path::Path::new(&destination).is_absolute()||destination.contains("://"){return Err("保存位置必须是本地文件系统的完整路径".into())}
-    let target=match crate::device_transfer::device_transfer("inspect".into(),json!({"path":destination}),app.clone(),cancel.clone()).await{Ok(value)=>Some(value),Err(error)if error.starts_with("[not_found]")=>None,Err(error)=>return Err(error)};
-    if target.as_ref().is_some_and(|v|v["isDirectory"]==true){return Err("保存位置是文件夹，未替换".into())}
-    let overwrite=picked&&target.is_some()||args["overwrite"]==true;
-    if target.is_some()&&!overwrite{return Err("[conflict] 目标文件已存在；未覆盖，请选择新名称或明确确认替换".into())}
-    if let Some(expected)=args.get("expectedTargetRevision").and_then(Value::as_str){if target.as_ref().and_then(|v|v["revision"].as_str())!=Some(expected){return Err("[conflict] 目标文件已改变，未覆盖".into())}}
+    let destination=target.path.clone();
     let operation_id=if let Some(value)=args.get("operationId"){value.as_str().filter(|v|v.starts_with("image-save-")&&v.len()<=100&&v.bytes().all(|b|b.is_ascii_alphanumeric()||b"-_".contains(&b))).ok_or("保存任务标识无效")?.to_owned()}else{format!("image-save-{}",next()?)};
     let event=|status:&str,error:&str|{let _=app.emit_to("main","file-viewer-save-task",json!({"operationId":operation_id,"status":status,"name":entry.name,"source":entry.path,"destination":destination,"error":error}));};
     event("running","");
-    let result=crate::device_transfer::device_transfer("save_copy".into(),json!({"src":entry.path,"dest":destination,"overwrite":overwrite,"expectedSourceRevision":source["revision"],"expectedTargetRevision":target.as_ref().map(|v|v["revision"].clone()),"operationId":operation_id,"recordHistory":false}),app.clone(),cancel.clone()).await;
+    let result=crate::device_transfer::device_transfer("save_copy".into(),json!({"src":entry.path,"dest":destination,"overwrite":target.overwrite,"expectedSourceRevision":source["revision"],"expectedTargetRevision":target.expected_target_revision,"operationId":operation_id,"recordHistory":false}),app.clone(),cancel.clone()).await;
     match result{Ok(_)=>{event("complete","");Ok(json!({"saved":true,"path":destination,"operationId":operation_id}))},Err(error)=>{event(if error.starts_with("[cancelled]"){"cancelled"}else{"failed"},&error);Err(error)}}
 }
 #[tauri::command]

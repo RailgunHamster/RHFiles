@@ -74,6 +74,8 @@ impl Store {
     fn begin(&mut self, run: Run, native_action: &str) -> Result<Admission, String> {
         let valid = match native_action {
             "file-viewer.close" => matches!(run.action.as_str(), "media.viewer.close" | "ui.invoke"),
+            "save-dialog.confirm" => matches!(run.action.as_str(), "save.dialog.confirm" | "save.dialog.replace.confirm" | "save.dialog.activate" | "ui.invoke"),
+            "save-dialog.cancel" => matches!(run.action.as_str(), "save.dialog.cancel" | "ui.invoke"),
             "player.close" => matches!(
                 run.action.as_str(),
                 "rhvideo.player.close" | "rhvideo.player.input" | "ui.invoke"
@@ -443,6 +445,16 @@ mod tests {
         let mut bad = run("bad", "bad");
         bad.completion_result = Some(json!({"forged":true}));
         assert!(s.begin(bad, "player.close").is_err());
+    }
+    #[test]
+    fn save_picker_completion_is_scoped_and_survives_window_retirement(){
+        let mut store=Store::default();let mut request=run("save-confirm","save-confirm");request.action="save.dialog.confirm".into();
+        assert!(matches!(store.begin(request.clone(),"save-dialog.confirm").unwrap(),Admission::New));
+        store.finish_id("save-confirm",&Ok(json!({"picked":true,"target":{"path":"D:\\saved.png"}})));
+        assert_eq!(store.lookup(&query("save-confirm")).unwrap()["result"]["picked"],true);
+        assert!(matches!(store.begin(request,"save-dialog.confirm").unwrap(),Admission::Existing(Ok(_))));
+        for (action,kind)in [("save.dialog.cancel","save-dialog.confirm"),("media.viewer.close","save-dialog.confirm"),("save.dialog.confirm","save-dialog.cancel")]{let mut r=run(action,action);r.action=action.into();assert!(store.begin(r,kind).is_err());}
+        let mut cancel=run("save-cancel","save-cancel");cancel.action="save.dialog.cancel".into();assert!(matches!(store.begin(cancel,"save-dialog.cancel").unwrap(),Admission::New));
     }
     #[test]
     fn filesystem_viewer_close_is_receipted_without_admitting_other_media_actions() {
