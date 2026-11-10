@@ -7,9 +7,12 @@ import {androidSession,until,pause} from './android-session.mjs';
 const receipt=JSON.parse(fs.readFileSync(process.argv[2]||'test-artifacts/delete-055-emulator.json','utf8'));
 assert.equal(receipt.owned,true);assert.match(receipt.serial,/^emulator-\d+$/);
 assert.ok(fs.realpathSync(receipt.avdDirectory).toLowerCase().startsWith(fs.realpathSync('test-artifacts').toLowerCase()+path.sep));
-const sdk=process.env.ANDROID_HOME||process.env.ANDROID_SDK_ROOT,adbExe=path.join(sdk,'platform-tools','adb.exe');
+const sdk=process.env.ANDROID_HOME||process.env.ANDROID_SDK_ROOT,adbExe=path.join(sdk,'platform-tools',process.platform==='win32'?'adb.exe':'adb');
 function adb(...args){const result=spawnSync(adbExe,['-s',receipt.serial,...args],{encoding:'utf8',windowsHide:true,timeout:60000});if(result.status!==0)throw Error(result.stderr||result.stdout||String(result.error));return result.stdout.trim();}
 assert.equal(adb('shell','getprop','ro.kernel.qemu'),'1');assert.equal(adb('emu','avd','name').split('\n')[0].trim(),receipt.avd);
+// Environment.isExternalStorageManager checks the UID app-op on Android 14.
+// Grant only this explicitly owned emulator package, never a physical device.
+adb('shell','appops','set','--uid','com.railgunhamster.rhfiles','MANAGE_EXTERNAL_STORAGE','allow');
 const fixture=fs.mkdtempSync(path.resolve('test-artifacts/android-media-delete-fixture-'));
 const guest='/storage/emulated/0/Download/'+path.basename(fixture);
 const ffmpeg=process.env.RHFILES_TEST_FFMPEG||path.resolve('dist/velopack-stage/ffmpeg.exe');
@@ -25,7 +28,7 @@ async function video(){return call('native.media.state');}
 async function deleteVideo(){await call('native.media.control',{command:'options'});await until(async()=>{const rows=await call('native.ui.list');return rows.some(v=>v.label==='删除当前文件');},'native video deletion menu');await uiClick('删除当前文件',true);await until(async()=>{const rows=await call('native.ui.list');return rows.some(v=>v.label==='移入回收站');},'native delete confirmation');await uiClick('移入回收站',true);}
 function exists(file){return spawnSync(adbExe,['-s',receipt.serial,'shell','test','-e',file],{windowsHide:true,timeout:10000}).status===0;}
 try{
- await call('navigation.open',{path:guest});await call('files.open',{path:guest+'/a.png'});await until(async()=>{const s=await call('gallery.state');return s.open&&s.count===2;},'real gallery opens generated images');
+ await call('navigation.open',{path:guest});await until(async()=>{const listing=await call('files.list');return listing.entries?.some(e=>e.path===guest+'/a.png');},'owned fixture is readable in the current listing');await call('files.open',{path:guest+'/a.png'});await until(async()=>{const s=await call('gallery.state');return s.open&&s.count===2;},'real gallery opens generated images');
  await call('gallery.mode.set',{mode:'continuous'});
  // A run can remain pending through its ordinary confirmation dialog.
  await phone.evaluate(`window.__deleteMediaRun=(RHFilesAPI.forPane?RHFilesAPI.forPane('left'):RHFilesAPI).invoke('gallery.delete',{expectedPath:${JSON.stringify(guest+'/a.png')}}).then(value=>window.__deleteMediaResult=value).catch(error=>window.__deleteMediaResult={error:String(error)});true`);
@@ -33,7 +36,7 @@ try{
  await uiClick('移入回收站');await until(async()=>{const s=await call('gallery.state');return s.open&&s.path.endsWith('/b.png')&&s.count===1;},'image deleted and next selected');
  check(!exists(guest+'/a.png')&&exists(guest+'/b.png'),'real Android gallery deletion recycles only its generated current image and continues');
  await phone.screenshot('image-next-after-delete');await call('navigation.back');
- await call('navigation.open',{path:guest});await call('files.open',{path:guest+'/a.mp4'});
+ await call('navigation.open',{path:guest});await until(async()=>{const listing=await call('files.list');return listing.entries?.some(e=>e.path===guest+'/a.mp4');},'video fixture listing');await call('files.open',{path:guest+'/a.mp4'});
  await until(async()=>{const s=await video();return s.path===guest+'/a.mp4'&&s.renderedFrames>0;},'real generated video decodes',60000);
  await call('native.media.control',{command:'delete'});await until(async()=>(await call('native.ui.list')).some(v=>v.label==='取消'),'video confirmation before cancel');await uiClick('取消',true);
  check((await video()).path===guest+'/a.mp4'&&exists(guest+'/a.mp4'),'canceling native video deletion preserves the file and current queue');
