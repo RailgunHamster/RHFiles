@@ -73,6 +73,7 @@ impl Store {
     }
     fn begin(&mut self, run: Run, native_action: &str) -> Result<Admission, String> {
         let valid = match native_action {
+            "pdf-reader.close" => matches!(run.action.as_str(), "pdf.reader.close" | "ui.invoke"),
             "file-viewer.close" => matches!(run.action.as_str(), "media.viewer.close" | "ui.invoke"),
             "save-dialog.confirm" => matches!(run.action.as_str(), "save.dialog.confirm" | "save.dialog.replace.confirm" | "save.dialog.activate" | "ui.invoke"),
             "save-dialog.cancel" => matches!(run.action.as_str(), "save.dialog.cancel" | "ui.invoke"),

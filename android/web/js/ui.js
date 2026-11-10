@@ -104,7 +104,7 @@ const ui = (() => {
     sheet().hidden = true;
     scrim().hidden = true;
     sheetPanel().innerHTML = '';
-    sheetPanel().classList.remove('viewer','editor','image-viewer','chrome-hidden','continuous-viewer','text-preview');
+    sheetPanel().classList.remove('viewer','editor','image-viewer','chrome-hidden','continuous-viewer','text-preview','pdf-viewer-sheet');
     if (dismiss) dismiss();
     if (previousFocus && previousFocus.isConnected) previousFocus.focus({ preventScroll: true });
     return true;

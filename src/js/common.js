@@ -1171,6 +1171,7 @@ function loadSettings() {
     previewVolume: 100,
     globalSearchEnabled: true,
     imagePreviewMode: 'contain',
+    pdfOpenWith: 'rhfiles',
     imageOpenWith: 'rhfiles',
     videoOpenWith: 'rhfiles',
     imageBrowseMode: 'paged',

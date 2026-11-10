@@ -541,6 +541,7 @@
     if(api.ebooksAvailable()&&/\.(epub|mobi|azw3?|prc|fb2|cbz)$/i.test(entry.name)&&!entry.path.startsWith('remote://'))return api.native('ebook.open',{path:entry.path,name:entry.name,theme:document.documentElement.dataset.theme});
     if(api.playbackAvailable() && ['video','audio'].includes(entry.kind))return api.playMedia(entry,currentEntries());
     if(api.featuresAvailable()&&entry.kind==='image')return androidFeatures.media(entry,currentEntries());
+    if(/\.pdf$/i.test(entry.name))return androidPdfReader.open(entry);
     if(androidTextPreview.supports(entry.name))return androidTextPreview.open(entry,api);
     if(api.featuresAvailable()&&entry.path.startsWith('remote://')&&/\.apk$/i.test(entry.name))return androidTextPreview.install(entry,{button});
     if (api.featuresAvailable() && api.isVirtual(entry.path)) {

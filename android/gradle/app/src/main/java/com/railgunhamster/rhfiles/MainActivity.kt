@@ -36,6 +36,7 @@ class MainActivity : TauriActivity() {
   private val io=Executors.newFixedThreadPool(3)
   private val mediaIo=Executors.newFixedThreadPool(2)
   private val storage by lazy {NativeStorage(applicationContext)}
+  private val pdfReads by lazy {PdfReadSession(storage)}
   private val updates by lazy {AppUpdates.get(this)}
   private val thumbnailDelegate=lazy {MediaThumbnails(storage)}
   private val thumbnails by thumbnailDelegate
@@ -92,7 +93,7 @@ class MainActivity : TauriActivity() {
     watching=true
     try{contentResolver.registerContentObserver(MediaStore.Files.getContentUri("external"),true,mediaObserver)}catch(_:Exception){}
   }
-  override fun onDestroy(){connectionControl.shutdown();if(watching)unregisterReceiver(storageReceiver);contentResolver.unregisterContentObserver(mediaObserver);mainHandler.removeCallbacks(changed);if(thumbnailDelegate.isInitialized())thumbnails.close();RemoteStorage.discardReadSessions();sharedConfig.close();lanDiscovery.close();io.shutdown();mediaIo.shutdown();appWebView=null;super.onDestroy()}
+  override fun onDestroy(){pdfReads.close();connectionControl.shutdown();if(watching)unregisterReceiver(storageReceiver);contentResolver.unregisterContentObserver(mediaObserver);mainHandler.removeCallbacks(changed);if(thumbnailDelegate.isInitialized())thumbnails.close();RemoteStorage.discardReadSessions();sharedConfig.close();lanDiscovery.close();io.shutdown();mediaIo.shutdown();appWebView=null;super.onDestroy()}
   override fun onSaveInstanceState(outState:Bundle){outState.putBoolean("rhfilesRestoreNavigation",true);super.onSaveInstanceState(outState)}
   override fun onStart(){super.onStart();adaptiveWindow.start()}
   override fun onStop(){adaptiveWindow.stop();super.onStop()}
@@ -166,7 +167,7 @@ class MainActivity : TauriActivity() {
           }}
           val uiCommands=setOf("theme","settings","tree.pick","document.pick","usage.settings","shares","shares.clear","panes.touch","config.export.pick","config.import.pick","groups.scan","qr.scan","rhvideo.open","automation.status","automation.enable","automation.ui.list","automation.ui.invoke","automation.ui.set","automation.ui.scroll","automation.back","automation.media.state","automation.media.control","automation.grid.state","automation.grid.control")
           val work={try{if(command=="groups.scan"||command=="qr.scan"){require(scanResult==null){"扫码窗口已打开"};scanResult=respond;try{startActivityForResult(Intent(this@MainActivity,QrScanActivity::class.java),103)}catch(e:Exception){scanResult=null;throw e}}else if(command in listOf("config.export.pick","config.import.pick")){require(picker==null){"已有系统选择器打开"};backupUi.begin(command=="config.export.pick",args.optJSONObject("web")?:JSONObject(),respond)}else if(command=="tree.pick" || command=="document.pick")pick(command=="tree.pick",respond) else respond(dispatch(command,args),null)}catch(e:Exception){respond(null,e.message ?: "系统操作失败")}}
-          if(command in uiCommands||BuildConfig.RHVIDEO_QA_LOCAL_CLOCK&&command=="automation.qa.localClock") work() else if(command in setOf("groups.cancel","groups.diagnostics","text.preview.cancel"))connectionControl.execute(work) else if(command in setOf("media.thumbnail","media.image","app.icon"))mediaIo.execute(work) else io.execute(work)
+          if(command in uiCommands||BuildConfig.RHVIDEO_QA_LOCAL_CLOCK&&command=="automation.qa.localClock") work() else if(command in setOf("groups.cancel","groups.diagnostics","text.preview.cancel","pdf.close"))connectionControl.execute(work) else if(command in setOf("media.thumbnail","media.image","app.icon"))mediaIo.execute(work) else io.execute(work)
         }
       }
     }
@@ -246,6 +247,9 @@ class MainActivity : TauriActivity() {
       require(EbookSource.supported(args.getString("name"))){"不支持的电子书格式"}
       onUi{startActivity(Intent(this,EbookActivity::class.java).putExtra("path",path).putExtra("name",args.getString("name")).putExtra("theme",args.optString("theme","light")));true}
     }
+    "pdf.open" -> pdfReads.open(args.getString("path"))
+    "pdf.read" -> pdfReads.read(args.getString("id"),args.getLong("offset"),args.getInt("length"))
+    "pdf.close" -> pdfReads.release(args.getString("id"))
     "media.thumbnail" -> thumbnails.read(args.getString("path"),args.optInt("maxEdge",160))
     "media.image" -> remoteImages.read(args.getString("path"),args.optInt("maxEdge",1920))
     "image.wallpaper" -> {

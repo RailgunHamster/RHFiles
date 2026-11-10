@@ -30,6 +30,7 @@ mod profile;
 mod recycle;
 mod rhvideo;
 mod file_viewer;
+mod pdf_viewer;
 mod save_dialog;
 mod rhvideo_rotation;
 #[cfg(windows)]
@@ -217,6 +218,7 @@ pub fn run() {
             rhvideo::rhvideo_open,
             rhvideo::rhvideo_request,
             file_viewer::file_viewer_request,
+            pdf_viewer::pdf_viewer_request,
             save_dialog::save_dialog_request,
             lan_service::lan_service_state,
             lan_service::lan_service_webdav_compatibility,

@@ -8,6 +8,7 @@ const androidAutomation=(()=>{
   function install(app){
     const actions=window.RHFilesAPI,state=app.state;
     provideReceipts(actions);
+    actions.register('pdf.reader.open',p=>androidPdfReader.open(p),{params:apiSchema({path:string,name:string},['path','name']),risk:'ui'});
     const register=(name,params,handler,risk='ui',description=name)=>actions.register(name,handler,{params,risk,description});
     register('updates.history.state',apiSchema(),()=>androidUpdates.historyState(),'read');
     register('history.list',apiSchema(),()=>({entries:androidHistory.list(),limit:androidHistoryModel.limit}),'read','Read device-local visited locations, including network and device-group folders');

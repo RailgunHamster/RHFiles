@@ -2,6 +2,8 @@
 
 Windows 和 Android 使用同一套 JSON 动作协议（`apiVersion: 1.0`）。接口调用业务函数或控件原有回调，不依赖鼠标坐标、屏幕尺寸或翻译文本。动作名称和参数可在运行时查询。桌面网页动作表也适用于 macOS，但本命令行传输尚不支持 WKWebView。
 
+PDF 阅读使用 `pdf.reader.open {path}`（Android 还需 `name`），在阅读窗口提供 `pdf.reader.state`、`page.set {page}`（从 1 开始）、`previous/next`、`zoom.set {value}`（0.1–5 或 `page-width/page-fit`）、`rotate`、`search {query}`、`search.next/previous`、`search.toggle`、`outline.toggle`、`outline.go {index}`、`password.submit {password}`、`systemOpen` 和 `close`。Windows `saveAs {destination?,overwrite?,expectedTargetRevision?}` 复用自有保存窗口；`media.preferences.set {pdfOpenWith:"rhfiles"|"system"}` 配置默认打开方式。阅读状态不返回文档密码。Windows 关闭动作保留进程内完成回执；Android 关闭阅读会释放分段读取授权。网络文档不建立文件下载任务，使用现有连接按需读取；缺少授权、服务器不支持 Range、文档改变或损坏时明确报错。
+
 ### RHVideo 配置备份动作（开发版）
 
 媒体库窗口提供 `rhvideo.configuration.export`、`rhvideo.configuration.preview`、`rhvideo.configuration.restore` 和只读 `rhvideo.configuration.state`。导出／预览可省略 `path` 使用原生选择器；脚本也可直接指定 Windows 本机完整文件路径，或 Android 已获授权的 `content://` 文档 URI。Windows 脚本导出不会覆盖已有文件。备份正文不经过命令行参数或 Android 消息桥，最多读取 20 MiB。

@@ -255,7 +255,7 @@ const deviceBrowser=(()=>{
 })();
 deviceBrowser.register(window.RHFilesAPI);
 async function routeDeviceCommand(cmd,args){
-    if(cmd==='device_fs'||cmd==='device_transfer'||cmd==='file_viewer_request'||cmd.startsWith('native_drag_'))return null;
+    if(cmd==='device_fs'||cmd==='device_transfer'||cmd==='file_viewer_request'||cmd==='pdf_viewer_request'||cmd.startsWith('native_drag_'))return null;
   // These values are text/state, not filesystem input. In particular, a
   // multi-path text clipboard is not one malformed device URI.
   if(cmd.startsWith('db_')||cmd.startsWith('config_sync_')||['copy_file_path','save_window_state','open_new_window'].includes(cmd))return null;

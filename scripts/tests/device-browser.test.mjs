@@ -191,3 +191,5 @@ for(const right of [false,true])test(`tab hover uses a readable device path with
   assert(preview.innerHTML.includes('&lt;test&gt;.txt'));
   assert(f.calls.every(v=>v.cmd==='device_groups'),'Rendering a loaded tab must not probe the network');
 });
+
+test('owned PDF operations retain device identity and bypass local-shell routing',async()=>{const f=fixture();assert.equal(await f.route('pdf_viewer_request',{action:'open',args:{path}}),null);assert.equal(f.calls.length,0);});

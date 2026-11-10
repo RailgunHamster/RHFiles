@@ -46,10 +46,18 @@ jobs:
         run: npx playwright-core install chromium
       - name: Android remote preview, cache workflow and image browsing UI (native I/O mocked)
         run: npm run test:android-preview
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Prepare synthetic PDF documents
+        run: |
+          python -m pip install -r scripts/testing/pdf-reader-requirements.txt
+          python scripts/testing/pdf-reader-fixtures.py
       - name: Filesystem media viewer interactions (native decoding exercised below)
         run: |
           node scripts/testing/file-viewer-browser-check.mjs
           node scripts/testing/save-dialog-browser-check.mjs
+          node scripts/testing/pdf-reader-browser-check.mjs
       - name: Verify business tests catch deliberately broken behavior
         run: npm run test:mutations
       - name: Real filesystem, recovery, archive and persistence tests
@@ -76,9 +84,6 @@ jobs:
           if ($vlc.VersionInfo.FileVersion -notlike '3.0.23*') { throw 'Unexpected native test engine version' }
           ./scripts/prepare-ffmpeg.ps1
           "FFMPEG=$pwd/src-tauri/thirdparty/ffmpeg.exe" >> $env:GITHUB_ENV
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.13'
       - name: Prepare disposable loopback protocol fixtures
         shell: pwsh
         run: |
