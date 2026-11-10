@@ -8,6 +8,11 @@ test('auto scroll speed changes, pause cancels frames, and the last image stops 
   a.start();tick(300);tick(350);tick(400);assert.equal(a.state().running,false);assert.equal(pending.size,0);assert.throws(()=>a.setSpeed(0));
 });
 test('desktop and Android use identical continuous image geometry',()=>assert.deepEqual(fs.readFileSync('src/js/image-strip.js'),fs.readFileSync('android/web/js/image-strip.js')));
+test('maximum auto-scroll speed is bounded and frame delays cannot cause runaway jumps',()=>{
+  const {autoScroll}=createRequire(import.meta.url)('../../src/js/image-strip.js'),pending=new Map();let pixels=0,id=0;
+  const auto=autoScroll({move:delta=>{pixels+=delta;return true;},request:fn=>{pending.set(++id,fn);return id;},cancel:id=>pending.delete(id)}),tick=now=>{const tasks=[...pending.values()];pending.clear();tasks.forEach(fn=>fn(now));};
+  auto.setSpeed(6000);auto.start();tick(0);tick(50);assert.equal(pixels,300);tick(60050);assert.ok(pixels<=900);for(const speed of [9,6001,Infinity,NaN])assert.throws(()=>auto.setSpeed(speed));auto.pause();assert.equal(pending.size,0);
+});
 test('fitted portrait, landscape and panoramic image edges meet without letterbox gaps',()=>{
   const s=create(4);s.resize(1200,700);[[350,700],[1400,700],[100,900],[12000,1000]].forEach(([w,h],i)=>s.measure(i,w,h));
   for(const angle of [0,90,180,270]){s.resize(1200,700,angle);for(const p of [0,.3,1,1.6,2.8,3]){const frames=s.layout(p);for(let n=0;n<frames.length;n++){const f=frames[n];assert.ok(f.width<=1200&&f.height<=700);if(n)assert.ok(Math.abs(frames[n-1].left+frames[n-1].width-f.left)<1e-7);}}}

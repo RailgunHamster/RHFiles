@@ -3,6 +3,10 @@
   const $=id=>document.getElementById(id),api=window.RHFilesAPI,core=window.__TAURI__.core,native=(action,args={})=>core.invoke('file_viewer_request',{action,args}),windowApi=window.__TAURI__.window.getCurrentWindow();
   let state=null,position=0,zoom=1,angle=0,x=0,y=0,epoch=0,loading=false,pointer=null,video=null,poll=null,seekDragging=false,rendered=false,imageSeeking=false,selectionTask=null;
   const pages=new Map(),sources=new Map();let strip=null,stripFrames=new Map(),auto=null,autoSpeed=60,closing=false;
+  let mousePoint=null,contextImage=null,saveTask=null;
+  const imageEntries=()=>[...pages].map(([slot,page])=>({slot,index:strip.item(slot),page,image:page.querySelector('img')}));
+  const hitImage=point=>RHFilesImageStrip.hitImage($('viewport'),imageEntries(),point,angle);
+  function caption(){const hit=contextImage||state?.kind==='image'&&hitImage(mousePoint),at=hit?hit.index:index();return {index:at,...state.entries[at],source:contextImage?'context':hit?'pointer':'position'};}
   let zh=true;
   const text=(cn,en)=>zh?cn:en,scope=()=>({generation:state.generation,selection:state.selection}),index=()=>state.kind==='image'?strip.item(Math.round(position)):Math.max(0,Math.min(state.entries.length-1,Math.round(position))),clock=ms=>{const seconds=Math.max(0,Math.floor((ms||0)/1000));return Math.floor(seconds/60)+':'+String(seconds%60).padStart(2,'0');};
   const boundary=RHFilesImageStrip.boundaryLayer($('viewport'),{get label(){return text('末张 · 首张','Last · First');},get first(){return text('已回到第一张','Back to the first image');},get last(){return text('已回到最后一张','Back to the last image');}});
@@ -12,7 +16,10 @@
     zh=/^zh/i.test(language||navigator.language||'en');document.documentElement.lang=zh?'zh-CN':'en';
     const labels={close:['关闭','Close'],fullscreen:['全屏','Fullscreen'],previous:['上一张','Previous'],next:['下一张','Next'],mode:['图片浏览模式','Image browsing mode'],system:['系统应用','System app'],fit:['适应窗口','Fit window'],'zoom-in':['放大','Zoom in'],'zoom-out':['缩小','Zoom out'],rotate:['旋转','Rotate'],'auto-speed':['自动滚动速度','Automatic scroll speed'],seek:['播放进度','Playback position'],volume:['音量','Volume'],rate:['播放速度','Playback speed'],'image-seek':['图片浏览进度：拖动快速跳转','Image progress: drag to jump']};
     for(const [id,pair]of Object.entries(labels)){const element=$(id);element.title=text(...pair);element.setAttribute('aria-label',text(...pair));}
-    $('mode').options[0].textContent=text('逐张翻页','Paged');$('mode').options[1].textContent=text('连续滚动','Continuous');$('system').textContent=text('系统应用','System app');$('fit').textContent=text('适应窗口','Fit window');
+    $('mode-paged').textContent=text('逐张翻页','Paged');$('mode-continuous').textContent=text('连续滚动','Continuous');$('system').textContent=text('系统应用','System app');$('fit').textContent=text('适应窗口','Fit window');
+    const menuItems={'image-save-as':['另存为…','Save as…','M12 3v12m-5-5 5 5 5-5M4 15v5h16v-5'],'image-copy-path':['复制文件路径','Copy file path','M9 9h11v12H9zM5 16H3V3h11v3'],'image-system-open':['使用系统应用打开','Open in system app','M14 3h7v7m0-7L10 14M9 3H3v18h18v-6']};
+    for(const [id,[cn,en,path]]of Object.entries(menuItems)){$(id).replaceChildren();const svg=document.createElementNS('http://www.w3.org/2000/svg','svg'),line=document.createElementNS(svg.namespaceURI,'path');svg.setAttribute('viewBox','0 0 24 24');svg.setAttribute('aria-hidden','true');line.setAttribute('d',path);svg.append(line);$(id).append(svg,document.createTextNode(text(cn,en)));}
+    $('auto-speed-number').setAttribute('aria-label',text('自动滚动速度（像素/秒）','Auto scroll speed (pixels/sec)'));$('image-save-dismiss').setAttribute('aria-label',text('关闭提示','Dismiss'));paintSave();
     paintAuto(auto?.state()||{running:false,speed:autoSpeed});
     for(const page of pages.values()){const status=page.querySelector('.image-error');if(status)status.textContent=status.dataset.failed?text('图片无法解码，可使用系统应用打开','Cannot decode this image. Try the system app.'):text('正在读取图片…','Loading image…');}
     boundary.relabel();if(state)header();
@@ -22,11 +29,46 @@
     $('image-seek').max=String(state.entries.length-1);$('image-seek').disabled=state.entries.length<2;
     if(preview!==undefined||!imageSeeking){$('image-seek').value=String(at);$('image-seek').setAttribute('aria-valuetext',label);$('image-count').textContent=label;$('image-count').title=label;}
   }
+  function paintSelection(){
+    const page=contextImage&&pages.get(contextImage.slot),bounds=page&&RHFilesImageStrip.imageBounds(page.querySelector('img'),angle),frame=$('viewport').getBoundingClientRect();
+    $('image-selection').hidden=!bounds;if(bounds)Object.assign($('image-selection').style,{left:(bounds.left-frame.left)+'px',top:(bounds.top-frame.top)+'px',width:bounds.width+'px',height:bounds.height+'px'});
+  }
+  function hideImageMenu(){contextImage=null;$('image-menu').hidden=true;$('image-selection').hidden=true;if(state)header();}
+  function showImageMenu(target,point){
+    if(!target)throw Error(text('请指向一张已加载的图片','Point to a loaded image'));auto?.pause();contextImage={index:target.index,slot:target.slot};
+    $('image-menu-name').textContent=state.entries[target.index].name;$('image-menu-name').title=state.entries[target.index].name;$('image-menu').hidden=false;
+    const bounds=target.bounds||RHFilesImageStrip.imageBounds(target.image,angle),x=point?.x??bounds.left+bounds.width/2,y=point?.y??bounds.top+bounds.height/2;
+    Object.assign($('image-menu').style,{left:Math.max(8,Math.min(x+4,innerWidth-$('image-menu').offsetWidth-8))+'px',top:Math.max(8,Math.min(y+4,innerHeight-$('image-menu').offsetHeight-8))+'px'});
+    header();paintSelection();$('image-save-as').focus({preventScroll:true});return snapshot();
+  }
+  function contextOpen(p={}){
+    if(state?.kind!=='image')throw Error(text('当前不是图片','The current item is not an image'));
+    const at=p.index??index(),target=imageEntries().filter(row=>row.index===at&&row.image.naturalWidth>0).sort((a,b)=>Math.abs(a.slot-position)-Math.abs(b.slot-position))[0];
+    return showImageMenu(target,p.x===undefined?null:{x:p.x,y:p.y});
+  }
+  function imageIndex(value){const at=value??contextImage?.index??index();if(state?.kind!=='image'||!Number.isInteger(at)||at<0||at>=state.entries.length)throw Error(text('图片位置无效','Invalid image index'));return at;}
+  function paintSave(){
+    const task=saveTask;$('image-save-progress').hidden=!task||task.dismissed;if(!task)return;
+    $('image-save-title').textContent=task.name;$('image-save-progress').classList.toggle('failed',task.status==='failed');
+    $('image-save-detail').textContent=task.error||({choosing:text('请选择保存位置…','Choose where to save…'),running:text('正在保存','Saving')+' · '+Math.round(task.percentage||0)+'%'+(task.speed?' · '+(task.speed/1048576).toFixed(1)+' MB/s':''),complete:text('已保存','Saved'),cancelled:text('已取消','Cancelled')})[task.status];
+    if(task.status==='choosing')$('image-save-bar').removeAttribute('value');else $('image-save-bar').value=task.status==='complete'?100:task.percentage||0;
+  }
+  async function saveAs(p={}){
+    const at=imageIndex(p.index);if(saveTask&&['choosing','running'].includes(saveTask.status))throw Error(text('已有图片正在保存','An image save is already in progress'));
+    auto?.pause();const task=saveTask={id:'image-save-'+crypto.randomUUID(),index:at,name:state.entries[at].name,source:state.entries[at].path,status:'choosing',percentage:0,destination:null,error:null,speed:0,bytesTransferred:0,totalBytes:0};paintSave();hideImageMenu();
+    try{const result=await native('image.saveAs',{...scope(),index:at,operationId:task.id,...(p.destination===undefined?{}:{destination:p.destination}),...(p.overwrite===undefined?{}:{overwrite:p.overwrite}),...(p.expectedTargetRevision===undefined?{}:{expectedTargetRevision:p.expectedTargetRevision})});task.status=result.saved?'complete':'cancelled';task.destination=result.path??null;if(result.saved)task.percentage=100;return result;}
+    catch(e){task.status=String(e).includes('[cancelled]')?'cancelled':'failed';task.error=String(e.message||e);throw e;}finally{if(saveTask===task)paintSave();}
+  }
+  async function copyImagePath(p={}){
+    const at=imageIndex(p.index);let path=state.entries[at].path;auto?.pause();
+    if(RHFilesDevicePaths.is(path)){const data=await core.invoke('device_groups',{command:'state',args:{}}),peers=[];for(const group of data.groups||[])for(const peer of group.members||[])if(!peer.self&&!peer.blocked&&peer.server)peers.push({group:group.id,groupName:group.name,peer:peer.id,name:data.deviceAliases?.[peer.id]||peer.name});path=RHFilesDevicePaths.addressFor(path,peers,{strict:true});}
+    await navigator.clipboard.writeText(path);hideImageMenu();return {copied:true,path};
+  }
   applyLanguage();
   function error(value){$('message').textContent=String(value.message||value);}
-  function paintAuto(value){autoSpeed=value.speed;$('auto-scroll').textContent=value.running?text('暂停滚动','Pause'):text('自动滚动','Auto scroll');$('auto-speed').value=value.speed;$('auto-speed').title=text('滚动速度 ','Scroll speed ')+(value.speed/60).toFixed(1)+'×';}
-  function autoControl(command,value){if(state?.kind!=='image'||state.mode!=='continuous')throw Error(text('请先打开连续图片浏览','Open continuous image browsing first'));zoom=1;x=y=0;return command==='speed'?auto.setSpeed(value):auto[command]();}
-  function header(){if(!state)return;const i=index();$('title').textContent=state.entries[i].name;document.title=state.entries[i].name+' · RHFiles';$('counter').textContent=(i+1)+' / '+state.entries.length;$('previous').disabled=state.kind==='image'?state.entries.length<2:i===0;$('next').disabled=state.kind==='image'?state.entries.length<2:i===state.entries.length-1;$('mode').value=state.mode;imageProgress();}
+  function paintAuto(value){autoSpeed=value.speed;$('auto-scroll').textContent=value.running?text('暂停滚动','Pause'):text('自动滚动','Auto scroll');$('auto-scroll').setAttribute('aria-keyshortcuts','Space');$('auto-speed').value=value.speed;$('auto-speed-number').value=value.speed;$('auto-speed-multiplier').textContent=(value.speed/60).toFixed(1)+'×';$('auto-speed').title=text('滚动速度 ','Scroll speed ')+(value.speed/60).toFixed(1)+'×';}
+  function autoControl(command,value){if(state?.kind!=='image'||state.mode!=='continuous')throw Error(text('请先打开连续图片浏览','Open continuous image browsing first'));if(command==='start'||command==='toggle'&&!auto.state().running){zoom=1;x=y=0;}return command==='speed'?auto.setSpeed(value):auto[command]();}
+  function header(){if(!state)return;const i=index(),shown=caption();$('title').textContent=shown.name;$('title').title=shown.name;document.title=shown.name+' · RHFiles';$('counter').textContent=(shown.index+1)+' / '+state.entries.length;$('previous').disabled=state.kind==='image'?state.entries.length<2:i===0;$('next').disabled=state.kind==='image'?state.entries.length<2:i===state.entries.length-1;for(const mode of ['paged','continuous'])$('mode-'+mode).setAttribute('aria-pressed',String(state.mode===mode));imageProgress();}
   async function source(entry){const key=entry.path;if(!sources.has(key)){if(sources.size>=32)sources.delete(sources.keys().next().value);sources.set(key,key.startsWith('rhfiles-device:')?core.invoke('device_fs',{action:'resource',args:{path:key}}).then(v=>v.url):Promise.resolve(core.convertFileSrc(key)));}return sources.get(key);}
   function transform(){
     const quarter=angle%180!==0,w=$('viewport').clientWidth,h=$('viewport').clientHeight;$('viewport').classList.toggle('image-zoomed',zoom>1);
@@ -36,6 +78,7 @@
       image.style.height=frame?frame.imageHeight+'px':quarter?w+'px':'100%';
       image.style.transform=`translate(-50%,-50%) translate(${active?x:0}px,${active?y:0}px) scale(${active?zoom:1}) rotate(${angle}deg)`;
     }
+    header();paintSelection();
   }
   function images(){
     if(!state||state.kind!=='image')return;
@@ -64,7 +107,7 @@
     $('track').style.transform=continuous?'':`translateX(${-(position-center)*$('viewport').clientWidth}px)`;transform();
     boundary.update(continuous?[...stripFrames.values()]:wanted.map(at=>({slot:at,index:strip.item(at),left:(at-position)*$('viewport').clientWidth})),{width:$('viewport').clientWidth,count:state.entries.length,zoom,...(continuous?{cycle:Math.floor(Math.round(position)/state.entries.length)}:{})});
   }
-  function clear(){boundary.clear();auto?.pause();auto=null;++epoch;clearTimeout(poll);video=null;rendered=false;pointer=null;imageSeeking=false;zoom=1;angle=x=y=0;for(const p of pages.values())p.querySelector('img').removeAttribute('src');pages.clear();sources.clear();$('track').replaceChildren();$('track').style.transform='';$('message').textContent='';}
+  function clear(){hideImageMenu();boundary.clear();auto?.pause();auto=null;++epoch;clearTimeout(poll);video=null;rendered=false;pointer=null;imageSeeking=false;zoom=1;angle=x=y=0;for(const p of pages.values())p.querySelector('img').removeAttribute('src');pages.clear();sources.clear();$('track').replaceChildren();$('track').style.transform='';$('message').textContent='';}
   async function select(at){
     if(!state)return;if(closing)throw Error(text('查看器正在关闭','The viewer is closing'));const generation=state.generation;
     if(selectionTask){await selectionTask.catch(()=>{});if(generation!==state.generation)throw Error(text('查看内容已改变','The viewed content changed'));return select(at);}
@@ -80,10 +123,10 @@
   async function pollVideo(token){if(token!==epoch||state?.kind!=='video')return;try{const result=await native('video.state',scope());if(token!==epoch)return;video=result;if(result.opened){$('position').textContent=clock(result.positionMs);$('duration').textContent=clock(result.durationMs);if(!seekDragging)$('seek').value=result.durationMs>0?Math.round(result.positionMs/result.durationMs*1000):0;$('toggle').textContent=result.pauseRequested||result.state===4?text('继续','Play'):result.state===6?text('重播','Replay'):text('暂停','Pause');if(result.presentationError||result.seekError)error(result.presentationError||result.seekError);else if(result.state===7)error(text('播放失败，可使用系统应用打开','Playback failed. Try the system app.'));else if(result.renderedFrames>0){$('message').textContent='';rendered=true;}await bounds();}}catch(e){if(token===epoch)error(e);}finally{if(token===epoch)poll=setTimeout(()=>pollVideo(token),400);}}
   async function activate(result){const fresh=result.generation!==state?.generation;clear();state=result;position=state.index;strip=RHFilesImageStrip.create(state.entries.length,{loop:state.kind==='image'});if(fresh){closing=false;applyLanguage(state.language);}header();$('image-progress').hidden=state.kind!=='image';$('mode').hidden=state.kind!=='image';$('image-controls').hidden=state.kind!=='image';$('video-controls').hidden=state.kind!=='video';if(state.kind==='image'){auto=RHFilesImageStrip.autoScroll({speed:autoSpeed,move:delta=>{if(document.hidden||state.mode!=='continuous')return false;position=strip.move(position,delta);images();return state.entries.length>1;},changed:paintAuto});paintAuto(auto.state());images();return;}const token=epoch;$('message').textContent=text('正在准备视频…','Opening video…');try{const result=await native('video.open',scope());if(token!==epoch)return;video=result;await pollVideo(token);}catch(e){if(token===epoch)error(e);}}
   async function refresh(){const result=await native('state');if(result.generation&&result.generation!==state?.generation)await activate(result);}
-  async function mode(value){if(!['paged','continuous'].includes(value))throw Error(text('图片浏览模式无效','Invalid image mode'));const result=await native('mode',{...scope(),mode:value});state=result;if(value==='paged'){auto?.pause();position=index();}images();return snapshot();}
-  function snapshot(){return state?{opened:true,...state,index:index(),path:state.entries[index()].path,position:state.kind==='image'?strip.normalize(position):position,zoom,angle,rendered,language:zh?'zh':'en',progress:{index:index(),total:state.entries.length,previewIndex:imageSeeking?Number($('image-seek').value):null},loopBoundary:boundary.state(),autoScroll:auto?.state()||{running:false,speed:autoSpeed},video:video?{...video}:null}:{opened:false};}
+  async function mode(value){if(!['paged','continuous'].includes(value))throw Error(text('图片浏览模式无效','Invalid image mode'));hideImageMenu();const result=await native('mode',{...scope(),mode:value});state=result;if(value==='paged'){auto?.pause();position=index();}images();return snapshot();}
+  function snapshot(){return state?{opened:true,...state,index:index(),path:state.entries[index()].path,position:state.kind==='image'?strip.normalize(position):position,zoom,angle,rendered,language:zh?'zh':'en',caption:caption(),contextMenu:contextImage?{index:contextImage.index,path:state.entries[contextImage.index].path}:null,saveTask,progress:{index:index(),total:state.entries.length,previewIndex:imageSeeking?Number($('image-seek').value):null},loopBoundary:boundary.state(),autoScroll:auto?.state()||{running:false,speed:autoSpeed},video:video?{...video}:null}:{opened:false};}
   async function close(run){const generation=state.generation;closing=true;auto?.pause();try{if(selectionTask)await selectionTask.catch(()=>{});if(state.generation!==generation)throw Error(text('查看内容已改变','The viewed content changed'));const args=scope();clear();return await native('close',{...args,...(run?{_automationRun:run}:{})});}catch(error){if(state.generation===generation)closing=false;throw error;}}
-  async function systemOpen(){const path=state.entries[index()].path;return path.startsWith('rhfiles-device:')?core.invoke('device_transfer',{action:'open',args:{path,command:'open_file'}}):core.invoke('open_file',{path});}
+  async function systemOpen(at=index()){if(!Number.isInteger(at)||at<0||at>=state.entries.length)throw Error(text('文件位置无效','Invalid file index'));const path=state.entries[at].path;return path.startsWith('rhfiles-device:')?core.invoke('device_transfer',{action:'open',args:{path,command:'open_file'}}):core.invoke('open_file',{path});}
   const actions={next:()=>select(index()+1),previous:()=>select(index()-1),fit:()=>{auto?.pause();zoom=1;x=y=0;transform();},zoomIn:()=>{auto?.pause();zoom=Math.min(8,zoom*1.4);transform();},zoomOut:()=>{auto?.pause();zoom=Math.max(.25,zoom/1.4);transform();},rotate:()=>{auto?.pause();angle=(angle+90)%360;images();},close,systemOpen,fullscreen:async()=>windowApi.setFullscreen(!await windowApi.isFullscreen())};
   const object=(properties={},required=[])=>({type:'object',properties,required,additionalProperties:false});
   api.provideState('application',()=>({platform:'windows',window:'window-file-viewer',ready:!!state}));api.register('media.viewer.state',snapshot,{params:object(),risk:'read'});api.register('media.viewer.mode.set',p=>mode(p.mode),{params:object({mode:{enum:['paged','continuous']}},['mode']),risk:'settings'});api.register('media.viewer.video.control',p=>videoControl(p.command,p.value),{params:object({command:{enum:['pause','resume','seek','volume','rate']},value:{type:'number'}},['command']),risk:'ui'});
@@ -91,13 +134,28 @@
   api.register('media.viewer.window.state',()=>native('window.state',scope()),{params:object(),risk:'read'});
   api.provideRunLookup(query=>core.invoke('automation_receipt',{query}));api.provideRunTransport(()=>core.invoke('automation_receipt_transport'));
   for(const command of ['start','pause','toggle'])api.register('media.viewer.auto.'+command,()=>autoControl(command),{params:object(),risk:'ui'});
-  api.register('media.viewer.auto.speed.set',p=>autoControl('speed',p.speed),{params:object({speed:{type:'number',minimum:10,maximum:600}},['speed']),risk:'ui'});
+  api.register('media.viewer.auto.speed.set',p=>autoControl('speed',p.speed),{params:object({speed:{type:'number',minimum:10,maximum:6000}},['speed']),risk:'ui'});
+  const imageParam={type:'integer',minimum:0,maximum:4999};
+  api.register('media.viewer.context.open',contextOpen,{params:object({index:imageParam,x:{type:'number'},y:{type:'number'}}),risk:'ui'});
+  api.register('media.viewer.context.close',()=>{hideImageMenu();return snapshot();},{params:object(),risk:'ui'});
+  api.register('media.viewer.saveAs',saveAs,{params:object({index:imageParam,destination:{type:'string',minLength:1,maxLength:32768},overwrite:{type:'boolean'},expectedTargetRevision:{type:'string',maxLength:256}}),risk:'write'});
+  api.register('media.viewer.copyPath',copyImagePath,{params:object({index:imageParam}),risk:'external'});
+  api.register('media.viewer.save.dismiss',()=>{if(saveTask)saveTask.dismissed=true;paintSave();return snapshot();},{params:object(),risk:'ui'});
+  api.register('media.viewer.systemOpen',p=>{const at=p.index??index();hideImageMenu();return systemOpen(at);},{params:object({index:imageParam}),risk:'external'});
   api.register('media.viewer.close',(_,run)=>close(run),{params:object(),risk:'ui'});
-  for(const [name,handler]of Object.entries(actions))if(name!=='close')api.register('media.viewer.'+name,handler,{params:object(),risk:name==='systemOpen'?'external':'ui'});
+  for(const [name,handler]of Object.entries(actions))if(!['close','systemOpen'].includes(name))api.register('media.viewer.'+name,handler,{params:object(),risk:'ui'});
   function listen(id,event,fn){RHFilesUI.listen(typeof id==='string'?$(id):id,event,fn,undefined,'desktop.file-viewer.'+(typeof id==='string'?id:'document')+'.'+event);}
   for(const [id,action]of Object.entries({previous:'previous',next:'next',fit:'fit','zoom-in':'zoomIn','zoom-out':'zoomOut',rotate:'rotate',close:'close',system:'systemOpen',fullscreen:'fullscreen'}))listen(id,'click',()=>api.invoke('media.viewer.'+action).catch(error));
-  listen('mode','change',()=>api.invoke('media.viewer.mode.set',{mode:$('mode').value}).catch(error));listen('toggle','click',()=>videoControl(video?.pauseRequested||video?.state===4||video?.state===6?'resume':'pause').catch(error));listen('rate','change',()=>videoControl('rate',Number($('rate').value)).catch(error));listen('volume','change',()=>videoControl('volume',Number($('volume').value)).catch(error));
+  for(const value of ['paged','continuous'])listen('mode-'+value,'click',()=>api.invoke('media.viewer.mode.set',{mode:value}).catch(error));listen('toggle','click',()=>videoControl(video?.pauseRequested||video?.state===4||video?.state===6?'resume':'pause').catch(error));listen('rate','change',()=>videoControl('rate',Number($('rate').value)).catch(error));listen('volume','change',()=>videoControl('volume',Number($('volume').value)).catch(error));
   listen('auto-scroll','click',()=>api.invoke('media.viewer.auto.toggle').catch(error));listen('auto-speed','input',()=>api.invoke('media.viewer.auto.speed.set',{speed:Number($('auto-speed').value)}).catch(error));
+  listen('auto-speed-number','change',()=>api.invoke('media.viewer.auto.speed.set',{speed:Number($('auto-speed-number').value)}).catch(e=>{paintAuto(auto.state());error(e);}));
+  for(const [id,action]of Object.entries({'image-save-as':'saveAs','image-copy-path':'copyPath','image-system-open':'systemOpen'}))listen(id,'click',()=>{const at=contextImage?.index;if(at===undefined)return;void api.invoke('media.viewer.'+action,{index:at}).catch(error);});
+  listen('image-save-dismiss','click',()=>api.invoke('media.viewer.save.dismiss').catch(error));
+  const observeMouse=event=>{if(event.pointerType==='mouse'){mousePoint={x:event.clientX,y:event.clientY};header();}};
+  listen('viewport','pointerenter',observeMouse);listen('viewport','pointermove',observeMouse);listen('viewport','pointerleave',()=>{mousePoint=null;header();});
+  listen(window,'blur',()=>{mousePoint=null;header();});
+  listen(document,'pointerdown',event=>{if(contextImage&&!$('image-menu').contains(event.target))hideImageMenu();});
+  listen('viewport','contextmenu',event=>{event.preventDefault();event.stopPropagation();if(state?.kind!=='image')return;const point={x:event.clientX,y:event.clientY},target=hitImage(point);if(target)showImageMenu(target,point);else hideImageMenu();});
   listen('image-seek','pointerdown',()=>{imageSeeking=true;auto?.pause();});listen('image-seek','input',()=>{imageSeeking=true;auto?.pause();imageProgress(Number($('image-seek').value));});listen('image-seek','change',()=>{const at=Number($('image-seek').value);imageSeeking=false;void seekImage(at).catch(error);});listen('image-seek','pointercancel',()=>{imageSeeking=false;imageProgress();});
   listen(window,'storage',event=>{if(event.key==='rhfiles-lang')applyLanguage(event.newValue||state?.language);});
   listen(document,'visibilitychange',()=>{if(document.hidden)auto?.pause();});
@@ -107,8 +165,16 @@
   listen('viewport','pointerup',event=>{if(!pointer||event.pointerId!==pointer.id)return;const start=pointer;pointer=null;if(zoom>1)return;if(state.mode==='paged'){const dx=event.clientX-start.x,dy=event.clientY-start.y;position=start.position;if(Math.abs(dx)>=Math.min(60,$('viewport').clientWidth*.12)&&Math.abs(dx)>Math.abs(dy)*1.25)void select(Math.round(position)+(dx<0?1:-1)).catch(error);else images();}});
   listen('viewport','pointercancel',()=>{pointer=null;if(state?.mode==='paged'){position=state.index;images();}});
   RHFilesUI.listen($('viewport'),'wheel',event=>{if(state?.kind!=='image')return;event.preventDefault();auto?.pause();if(event.ctrlKey){zoom=Math.max(.25,Math.min(8,zoom*(event.deltaY>0?.9:1.1)));transform();return;}if(zoom>1)return;if(state.mode==='continuous'){position=strip.move(position,event.deltaX||event.deltaY);images();}else if(Math.abs(event.deltaX||event.deltaY)>10)void select(index()+((event.deltaX||event.deltaY)>0?1:-1)).catch(error);},{passive:false},'desktop.file-viewer.wheel');
-  listen(document,'keydown',event=>{if(/INPUT|SELECT|TEXTAREA/.test(event.target.tagName))return;if(state?.kind==='image'&&['Home','End'].includes(event.key)){event.preventDefault();void seekImage(event.key==='Home'?0:state.entries.length-1).catch(error);return;}const action={ArrowRight:'next',ArrowLeft:'previous',Escape:'close',f:'fullscreen','+':'zoomIn','-':'zoomOut','0':'fit'}[event.key];if(action){event.preventDefault();void api.invoke('media.viewer.'+action).catch(error);}else if(event.key===' '&&state?.kind==='video'){event.preventDefault();void videoControl(video?.pauseRequested||video?.state===4?'resume':'pause').catch(error);}});
+  listen(document,'keydown',event=>{
+    if(event.isComposing||event.ctrlKey||event.altKey||event.metaKey||/INPUT|SELECT|TEXTAREA/.test(event.target.tagName)||event.target.isContentEditable)return;
+    if(contextImage){if(event.key==='Escape'){event.preventDefault();hideImageMenu();$('viewport').focus({preventScroll:true});}else if(['ArrowDown','ArrowUp','Home','End'].includes(event.key)){event.preventDefault();const items=[...$('image-menu').querySelectorAll('button')],at=items.indexOf(document.activeElement);items[event.key==='Home'?0:event.key==='End'?items.length-1:(at+(event.key==='ArrowDown'?1:-1)+items.length)%items.length].focus();}return;}
+    if(event.key===' '){if(state?.kind==='image'&&state.mode==='continuous'){event.preventDefault();if(!event.repeat)void api.invoke('media.viewer.auto.toggle').catch(error);}else if(state?.kind==='video'){event.preventDefault();if(!event.repeat)void videoControl(video?.pauseRequested||video?.state===4?'resume':'pause').catch(error);}return;}
+    if(state?.kind==='image'&&['Home','End'].includes(event.key)){event.preventDefault();void seekImage(event.key==='Home'?0:state.entries.length-1).catch(error);return;}
+    if(event.key==='ContextMenu'&&state?.kind==='image'){event.preventDefault();void api.invoke('media.viewer.context.open').catch(error);return;}
+    const action={ArrowRight:'next',ArrowLeft:'previous',Escape:'close',f:'fullscreen','+':'zoomIn','-':'zoomOut','0':'fit'}[event.key];if(action){event.preventDefault();void api.invoke('media.viewer.'+action).catch(error);}
+  });
   listen(document,'contextmenu',event=>event.preventDefault());
   const resize=new ResizeObserver(()=>{if(state?.kind==='image')images();else void bounds().catch(error);});resize.observe($('viewport'));
+  window.__TAURI__.event.listen('op-progress',({payload:p})=>{if(saveTask&&p?.operationId===saveTask.id&&!['complete','failed','cancelled'].includes(saveTask.status)){Object.assign(saveTask,{status:'running',percentage:p.percentage??0,speed:p.speed??0,bytesTransferred:p.bytesTransferred??0,totalBytes:p.totalBytes??0});paintSave();}}).catch(error);
   window.__TAURI__.event.listen('file-viewer-changed',()=>refresh().catch(error)).catch(error);void refresh().catch(error);
 })();

@@ -15,7 +15,7 @@ function declaration(ctx,file,name){
 }
 for(const mode of ['async','webview-denied','unavailable'])test('Android group settings uses the shared full-text clipboard adapter: '+mode,async()=>{
   const text='rhfiles-group-request:v1:'+('公开证明'.repeat(9000)),nodes=new Map(),events=[];let area,mounted;
-  const document={documentElement:{dataset:{theme:'light'}},body:{appendChild:n=>{area=n;events.push('append');},removeChild:n=>{assert.equal(n,area);events.push('remove');}},
+  const document={querySelectorAll:()=>[],documentElement:{dataset:{theme:'light'}},body:{appendChild:n=>{area=n;events.push('append');},removeChild:n=>{assert.equal(n,area);events.push('remove');}},
     createElement:()=>({style:{},setAttribute(){},select(){events.push('select');}}),execCommand:command=>{assert.equal(command,'copy');assert.equal(area.value,text);events.push('legacy');return mode!=='unavailable';}};
   const clipboard={writeText:async value=>{assert.equal(value,text);events.push('async');if(mode!=='async')throw Error('Write permission denied.');}};
   const ctx=context({document,navigator:{clipboard},ui:{},state:{route:{section:'storage'}},localStorage:{getItem:()=>null},

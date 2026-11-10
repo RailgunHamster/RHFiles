@@ -17,6 +17,15 @@ test('filesystem media viewer: real images, continuous input, native video, inde
     const call=(name,args={})=>page.evaluate(`RHFilesAPI.invoke(${JSON.stringify(name)},${JSON.stringify(args)})`);
     await until(()=>page.evaluate('RHFilesAPI.snapshot().state.application?.ready'),'viewer action registry');await until(()=>page.evaluate('[...document.querySelectorAll(".image-page img")].every(i=>i.naturalWidth>0)'),'real local images');
     let state=await call('media.viewer.state');assert.equal(state.entries.length,3);assert.equal(state.entries[state.index].name,'b.png');assert.equal(state.mode,'paged');
+    const saves=path.join(directory,'Saved images');fs.mkdirSync(saves);const saved=path.join(saves,'中文另存为.png');
+    const saveResult=await call('media.viewer.saveAs',{index:1,destination:saved});assert.equal(saveResult.saved,true);assert.equal(hash(saved),sourceHashes.get('b.png'));assert.equal((await call('media.viewer.state')).saveTask.status,'complete');
+    await until(async()=>(await main('tasks.list')).some(task=>task.id===saveResult.operationId&&task.status==='complete'),'image save completion also reaches the main task center');
+    await assert.rejects(()=>call('media.viewer.saveAs',{index:0,destination:saved}),/conflict|已存在/);assert.equal(hash(saved),sourceHashes.get('b.png'),'an existing favorite is not overwritten implicitly');
+    const revision=await app.evaluate(`call('device_transfer',{action:'inspect',args:{path:${JSON.stringify(saved)}}})`);fs.writeFileSync(saved,'changed after review');
+    await assert.rejects(()=>call('media.viewer.saveAs',{index:0,destination:saved,overwrite:true,expectedTargetRevision:revision.revision}),/conflict|改变/);assert.equal(fs.readFileSync(saved,'utf8'),'changed after review');
+    await call('media.viewer.saveAs',{index:0,destination:saved,overwrite:true});assert.equal(hash(saved),sourceHashes.get('a.png'),'explicit replace saves exactly the requested picture');
+    await assert.rejects(()=>call('media.viewer.saveAs',{index:0,destination:path.join(directory,'a.png'),overwrite:true}),/same|nested|相同/);assert.equal(hash(path.join(directory,'a.png')),sourceHashes.get('a.png'),'save-as cannot overwrite its own source');
+    await assert.rejects(()=>call('media.viewer.saveAs',{index:200,destination:saved}),/无效|Invalid/);
     await until(async()=>(await call('media.viewer.window.state')).maximized,'viewer starts maximized');assert.equal((await call('media.viewer.window.state')).fullscreen,false);assert.equal(state.language,'zh');
     await call('media.viewer.seek',{index:2});await call('media.viewer.next');assert.equal((await call('media.viewer.state')).index,0);await call('media.viewer.previous');assert.equal((await call('media.viewer.state')).index,2);await call('media.viewer.seek',{index:1});
     for(const asset of ['js/file-viewer-window.js','js/image-strip.js','css/file-viewer.css']){
@@ -69,6 +78,7 @@ test('filesystem media viewer: real images, continuous input, native video, inde
     await app.evaluate(`call('device_fs',{action:'list',args:{path:${JSON.stringify(remote)}}})`);
     await main('navigation.open',{path:remote});await main('media.viewer.open',{path:remote+'b.png'});await until(async()=>(await call('media.viewer.state')).path===remote+'b.png','remote group image selected');await until(()=>page.evaluate('[...document.querySelectorAll(".image-page img")].every(i=>i.naturalWidth>0)'),'streaming group images');
     assert.ok(await page.evaluate('[...document.querySelectorAll(".image-page img")].every(i=>i.src.startsWith("http://127.0.0.1:"))'));
+    const remoteSaved=path.join(saves,'远端图片.png');await call('media.viewer.saveAs',{index:1,destination:remoteSaved});assert.equal(hash(remoteSaved),sourceHashes.get('b.png'),'save-as streams the chosen RHFiles device picture to an atomic local copy');
     await main('media.viewer.open',{path:remote+'sample.mp4'});state=await ready();assert.equal(state.path,remote+'sample.mp4');assert.equal(state.video.engine,'libVLC');
     for(const [name,digest]of sourceHashes)assert.equal(hash(path.join(directory,name)),digest);
     const closed=spawnSync(process.execPath,['scripts/rhfiles-api.mjs','--port',String(app.port),'--window','window-file-viewer','--wait','run','media.viewer.close','{}'],{encoding:'utf8',windowsHide:true,timeout:45000});fs.writeFileSync(path.join(app.artifactDir,'file-viewer-close.txt'),closed.stdout+'\n'+closed.stderr);assert.equal(closed.status,0,closed.stdout+'\n'+closed.stderr);assert.match(closed.stdout,/closed|succeeded/);

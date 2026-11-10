@@ -50,7 +50,7 @@
       if(!move(speed*delta/1000)){pause();return;}frame=request(tick);
     }
     function start(){if(!running&&move(0)){running=true;last=null;frame=request(tick);changed(state());}return state();}
-    function setSpeed(value){if(!Number.isFinite(value)||value<10||value>600)throw Error('自动滚动速度必须介于 10 和 600 像素/秒');speed=value;changed(state());return state();}
+    function setSpeed(value){if(!Number.isFinite(value)||value<10||value>6000)throw Error('自动滚动速度必须介于 10 和 6000 像素/秒');speed=value;changed(state());return state();}
     return {state,start,pause,setSpeed,toggle:()=>running?pause():start()};
   }
   function boundaryLayer(viewport,labels){
@@ -67,5 +67,17 @@
     function clear(){clearTimeout(timer);timer=null;cycle=null;notice.hidden=true;for(const node of markers.values())node.remove();markers.clear();}
     return {update,notify,clear,relabel:()=>{for(const node of markers.values())node.replaceChildren(badge(labels.label));if(!notice.hidden)notice.replaceChildren(badge(direction>0?labels.first:labels.last));},state:()=>({visible:markers.size>0&&!viewport.classList.contains('image-zoomed'),notice:notice.hidden?'':notice.textContent}),destroy:()=>{clear();layer.remove();notice.remove();}};
   }
-  return {create,autoScroll,boundaryLayer};
+  function imageBounds(image,rotation=0){
+    if(!image?.naturalWidth||!image.naturalHeight)return null;
+    const box=image.getBoundingClientRect(),ratio=rotation%180?image.naturalHeight/image.naturalWidth:image.naturalWidth/image.naturalHeight;
+    const width=Math.min(box.width,box.height*ratio),height=width/ratio,left=box.left+(box.width-width)/2,top=box.top+(box.height-height)/2;
+    return {left,top,right:left+width,bottom:top+height,width,height};
+  }
+  function hitImage(viewport,entries,point,rotation=0){
+    if(!point)return null;const inside=box=>box&&point.x>=box.left&&point.x<box.right&&point.y>=box.top&&point.y<box.bottom;
+    if(!inside(viewport.getBoundingClientRect()))return null;
+    for(const entry of [...entries].reverse()){const bounds=imageBounds(entry.image,rotation);if(inside(entry.page.getBoundingClientRect())&&inside(bounds))return {...entry,bounds};}
+    return null;
+  }
+  return {create,autoScroll,boundaryLayer,imageBounds,hitImage};
 });

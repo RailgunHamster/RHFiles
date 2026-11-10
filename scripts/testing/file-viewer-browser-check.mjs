@@ -10,14 +10,15 @@ await context.addInitScript(()=>{
   const sizes=[[6000,4000],[4000,6000],[10000,1000],[40,30]];
   const entries=['a.jpg','b.jpg','c.jpg','d.jpg'].map((name,index)=>({name,path:'D:\\QA\\'+name,width:sizes[index][0],height:sizes[index][1]}));
   const s=window.__viewerQA={generation:1,selection:1,index:1,kind:'image',mode:'paged',entries,calls:[],fullscreen:false,events:{}};
+  Object.defineProperty(navigator,'clipboard',{value:{writeText:async value=>s.copied=value}});
   localStorage.setItem('rhfiles-settings',JSON.stringify({language:'en'}));localStorage.setItem('rhfiles-lang','zh');
   window.__TAURI__={core:{
     convertFileSrc:path=>{
       const entry=entries.find(entry=>entry.path===path);
       return 'data:image/svg+xml,'+encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${entry.width}" height="${entry.height}"><rect width="100%" height="100%" fill="teal"/><rect x="2" y="2" width="${entry.width-4}" height="${entry.height-4}" fill="none" stroke="coral" stroke-width="4"/></svg>`);
     },
-    invoke:async(command,{action,args={}}={})=>{
-      s.calls.push({command,action,args});
+    invoke:async(command,input={})=>{
+      const {action,args={}}=input;s.calls.push({command,action,args:command==='file_viewer_request'?args:input});
       if(command==='open_file')return true;
       if(command!=='file_viewer_request')throw Error('Unexpected native command');
       const value=()=>JSON.parse(JSON.stringify({generation:s.generation,selection:s.selection,index:s.index,kind:s.kind,mode:s.mode,entries:s.entries}));
@@ -26,6 +27,7 @@ await context.addInitScript(()=>{
       if(action==='select'){s.index=args.index;s.selection++;return value();}
       if(action==='mode'){s.mode=args.mode;return value();}
       if(action==='close')return {closed:true};
+      if(action==='image.saveAs'){if(s.savePending)return new Promise(resolve=>s.finishSave=()=>resolve({saved:true,path:'D:\\Saved\\'+entries[args.index].name}));return {saved:true,path:'D:\\Saved\\'+entries[args.index].name};}
       throw Error('Unexpected native action '+action);
     }
   },window:{getCurrentWindow:()=>({isFullscreen:async()=>s.fullscreen,setFullscreen:async value=>s.fullscreen=value})},event:{listen:async(name,fn)=>{s.events[name]=fn;return()=>delete s.events[name];}}};
@@ -53,6 +55,7 @@ try{
   await page.evaluate(()=>{localStorage.setItem('rhfiles-lang','en');dispatchEvent(new StorageEvent('storage',{key:'rhfiles-lang'}));});check(await page.locator('#fit').textContent()==='Fit window'&&await page.locator('#image-seek').getAttribute('aria-label')==='Image progress: drag to jump','visible labels, tooltips and progress accessibility labels switch to English');
   await page.evaluate(()=>{localStorage.setItem('rhfiles-lang','zh');dispatchEvent(new StorageEvent('storage',{key:'rhfiles-lang'}));});
   check((await call('media.viewer.state')).mode==='paged','Windows viewer defaults to paged images');
+  check(await page.locator('#mode select').count()===0&&await page.locator('#mode-paged').getAttribute('aria-pressed')==='true','browsing modes are directly visible segmented buttons');
   await call('media.viewer.seek',{index:3});await call('media.viewer.next');check((await call('media.viewer.state')).index===0,'next at the last image wraps to the first');check((await call('media.viewer.state')).loopBoundary.notice==='已回到第一张','forward wrapping displays the first-image cue');await call('media.viewer.previous');check((await call('media.viewer.state')).index===3,'previous at the first wraps to the last');check((await call('media.viewer.state')).loopBoundary.notice==='已回到最后一张','backward wrapping displays the last-image cue');await call('media.viewer.seek',{index:1});
   const requests=await page.evaluate(()=>__viewerQA.calls.filter(c=>c.action==='select').length);
   await page.locator('#image-seek').evaluate(e=>{e.value='3';e.dispatchEvent(new Event('input',{bubbles:true}));});check((await call('media.viewer.state')).index===1&&(await call('media.viewer.state')).progress.previewIndex===3&&await page.evaluate(()=>__viewerQA.calls.filter(c=>c.action==='select').length)===requests,'progress dragging previews its target without loading files');
@@ -75,6 +78,28 @@ try{
   check(gaps.length>0&&gaps.every(gap=>Math.abs(gap)<1),'actual fitted picture edges meet, including portrait letterboxing');
   await call('media.viewer.auto.speed.set',{speed:120});await call('media.viewer.auto.start');await page.waitForTimeout(250);check((await call('media.viewer.state')).position>state.position,'continuous images auto-scroll at the selected speed');
   await page.locator('#auto-scroll').click();const paused=await call('media.viewer.state');await page.waitForTimeout(200);check(!paused.autoScroll.running&&(await call('media.viewer.state')).position===paused.position,'physical pause button stops automatic movement');
+  await call('media.viewer.seek',{index:1});await loaded();
+  const target=await page.evaluate(()=>{const viewport=document.getElementById('viewport').getBoundingClientRect(),current=1;for(const page of document.querySelectorAll('.image-page')){const index=Number(page.dataset.index),image=page.querySelector('img'),r=RHFilesImageStrip.imageBounds(image),left=Math.max(viewport.left,r.left),right=Math.min(viewport.right,r.right);if(index!==current&&right-left>20)return {index,x:(left+right)/2,y:Math.max(viewport.top,r.top)+Math.min(viewport.bottom,r.bottom,r.top+r.height/2)-Math.max(viewport.top,r.top),bounds:r};}throw Error('No visible neighbor');});
+  const originalPosition=(await call('media.viewer.state')).position;await page.mouse.move(target.x,target.y);
+  check((await call('media.viewer.state')).caption.index===target.index&&(await call('media.viewer.state')).position===originalPosition,'hovering a neighboring image changes only the title, not navigation position');
+  const blank=await page.evaluate(()=>{const viewport=document.getElementById('viewport').getBoundingClientRect();for(const page of document.querySelectorAll('.image-page')){const r=RHFilesImageStrip.imageBounds(page.querySelector('img')),left=Math.max(viewport.left,r.left),right=Math.min(viewport.right,r.right);if(right-left>10&&r.top>viewport.top+8)return {x:(left+right)/2,y:viewport.top+4};}throw Error('No visible letterbox');});await page.mouse.move(blank.x,blank.y);check((await call('media.viewer.state')).caption.source==='position','letterbox space uses the scroll position rather than a nearby image');
+  await page.mouse.move(target.x,target.y);await page.mouse.click(target.x,target.y,{button:'right'});
+  let menuState=await call('media.viewer.state');check(menuState.contextMenu.index===target.index&&!menuState.autoScroll.running,'right-click pins the actual neighboring picture and pauses automatic movement');
+  const outline=await page.locator('#image-selection').boundingBox(),content=target.bounds;check(Math.abs(outline.x-content.left)<1&&Math.abs(outline.y-content.top)<1&&Math.abs(outline.width-content.width)<1&&Math.abs(outline.height-content.height)<1,'context selection outlines the whole picture rather than its page or click point');
+  await page.screenshot({path:'test-artifacts/windows-viewer-image-context.png'});
+  await page.getByRole('menuitem',{name:'复制文件路径',exact:true}).click();check(await page.evaluate(()=>__viewerQA.copied)===menuState.entries[target.index].path&&await page.locator('#image-menu').isHidden(),'copy-path uses the right-clicked picture and dismisses its highlight');
+  await page.mouse.click(target.x,target.y,{button:'right'});await page.keyboard.press('Escape');check(!(await call('media.viewer.state')).contextMenu&&!await page.evaluate(()=>__viewerQA.calls.some(c=>c.action==='close')),'Escape closes the image menu before closing the viewer');
+  await page.mouse.click(target.x,target.y,{button:'right'});await page.keyboard.press('ArrowDown');await page.keyboard.press('End');await page.keyboard.press('Enter');check(await page.evaluate(()=>__viewerQA.calls.filter(c=>c.command==='open_file').at(-1).args.path)===menuState.entries[target.index].path,'keyboard menu navigation opens the pinned picture in the system app');
+  await page.evaluate(()=>__viewerQA.savePending=true);await page.mouse.click(target.x,target.y,{button:'right'});await page.getByRole('menuitem',{name:'另存为…',exact:true}).click();await page.waitForFunction(()=>!!__viewerQA.finishSave);
+  const save=(await call('media.viewer.state')).saveTask;await page.evaluate(id=>__viewerQA.events['op-progress']({payload:{operationId:id,status:'running',percentage:37,speed:2097152}}),save.id);
+  check(await page.locator('#image-save-detail').textContent()==='正在保存 · 37% · 2.0 MB/s','saving reports intermediate progress inside the viewer');
+  await assert.rejects(()=>call('media.viewer.saveAs',{index:1}),/正在保存/);await page.evaluate(()=>__viewerQA.finishSave());await page.waitForFunction(()=>document.getElementById('image-save-detail').textContent==='已保存');
+  check((await call('media.viewer.state')).saveTask.index===target.index,'save-as keeps the pinned image for the full asynchronous operation');await page.locator('#image-save-dismiss').click();
+  await page.mouse.move(0,0);await page.locator('#viewport').focus();await page.keyboard.press('Space');check((await call('media.viewer.state')).autoScroll.running,'Space starts continuous auto scroll');await page.keyboard.down('Space');await page.keyboard.down('Space');check(!(await call('media.viewer.state')).autoScroll.running,'holding Space does not repeatedly toggle');await page.keyboard.up('Space');
+  await page.locator('#auto-scroll').focus();await page.keyboard.press('Space');await page.waitForTimeout(80);check((await call('media.viewer.state')).autoScroll.running,'Space on the auto-scroll button toggles exactly once');await page.keyboard.press('Space');
+  await page.locator('#auto-speed-number').fill('6000');await page.locator('#auto-speed-number').press('Tab');check((await call('media.viewer.state')).autoScroll.speed===6000,'precise speed input accepts 6000 pixels per second');await assert.rejects(()=>call('media.viewer.auto.speed.set',{speed:6001}));
+  await page.locator('#auto-speed-number').focus();await page.keyboard.press('Space');check(!(await call('media.viewer.state')).autoScroll.running,'Space while editing speed does not start movement');
+  await call('media.viewer.auto.speed.set',{speed:120});await page.locator('#mode-paged').click();check((await call('media.viewer.state')).mode==='paged'&&await page.locator('#mode-paged').getAttribute('aria-pressed')==='true','segmented button switches back to paged mode');await page.locator('#mode-continuous').click();
   await call('media.viewer.zoomIn');check((await call('media.viewer.state')).zoom>1,'zoom controls expose semantic actions');
   await call('media.viewer.fit');await call('media.viewer.rotate');assert.equal((await call('media.viewer.state')).angle,90);
   await call('media.viewer.fullscreen');check(await page.evaluate(()=>__viewerQA.fullscreen),'fullscreen uses the application window');

@@ -1338,6 +1338,7 @@ body.preview-fullscreen-active::before {
 .settings-card .settings-row select {
   width: min(330px, 55%);
 }
+.media-mode-switch{display:flex;gap:3px;padding:3px;border:1px solid var(--border);border-radius:9px;background:var(--bg-raised)}.media-mode-switch button{border:0;border-radius:6px;padding:6px 13px;background:transparent;color:var(--text-2);font:inherit;cursor:pointer}.media-mode-switch button[aria-pressed=true]{background:var(--accent-light);color:var(--accent)}
 
 .settings-card .settings-row input[type="checkbox"] {
   width: 17px;

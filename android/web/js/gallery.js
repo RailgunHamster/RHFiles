@@ -4,7 +4,8 @@ const androidGallery=(()=>{
   function mode(){return localStorage.getItem('rhfiles.imageBrowseMode')==='continuous'?'continuous':'paged';}
   function state(){return active?{open:true,mode:active.mode,...active.state()}:{open:false,mode:mode()};}
   function control(command){if(!active)throw Error('图片浏览器未打开');const action=active.controls[command];if(!action)throw Error('未知图片操作');action();return state();}
-  function auto(command,value){if(!active?.auto)throw Error('请先打开连续图片浏览');if(command==='start')active.controls.fit();return command==='speed'?active.auto.setSpeed(value):active.auto[command]();}
+  function auto(command,value){if(!active?.auto)throw Error('请先打开连续图片浏览');if(command==='start'||command==='toggle'&&!active.auto.state().running)active.controls.fit();return command==='speed'?active.auto.setSpeed(value):active.auto[command]();}
+  function modeSwitch(app,value){const group=ui.el('div','gallery-mode-switch');group.setAttribute('role','group');group.setAttribute('aria-label','图片浏览模式');for(const [mode,label,icon]of [['paged','逐张翻页','paged'],['continuous','连续浏览','continuous']]){const button=app.button('',icon,()=>RHFilesAPI.invoke('gallery.mode.set',{mode}),'media-icon-btn');button.querySelector('span')?.remove();button.title=label;button.setAttribute('aria-label',label);button.setAttribute('aria-pressed',String(mode===value));group.append(button);}return group;}
   function seek(at){if(!active||!Number.isInteger(at)||at<0||at>=active.state().count)throw Error('图片位置无效');active.seek(at);return state();}
   function progress(panel,images,getIndex,go,pause,signal){
     const row=ui.el('div','gallery-progress'),bar=ui.el('input'),label=ui.el('span','gallery-progress-label');let dragging=false;
@@ -21,6 +22,7 @@ const androidGallery=(()=>{
     if(!['paged','continuous'].includes(value))throw Error('图片浏览模式无效');
     localStorage.setItem('rhfiles.imageBrowseMode',value);
     document.querySelectorAll('[data-gallery-mode]').forEach(element=>{element.value=value;});
+    document.querySelectorAll('[data-gallery-setting]').forEach(element=>element.setAttribute('aria-pressed',String(element.dataset.gallerySetting===value)));
     if(active&&active.mode!==value){const view=active,entry=view.entry();ui.closeSheet();open(entry,view.entries,view.app);}
     return state();
   }
@@ -35,7 +37,7 @@ const androidGallery=(()=>{
     title.id='viewer-filename';viewport.append(track);panel.append(viewport,header,toolbar,info);let currentImage;
     const boundary=RHFilesImageStrip.boundaryLayer(viewport,{label:'末张 · 首张',first:'已回到第一张',last:'已回到最后一张'});
     function icon(label,name,fn){const button=app.button('',name,fn,'media-icon-btn');button.setAttribute('aria-label',label);button.title=label;button.querySelector('span')?.remove();return button;}
-    header.append(icon('返回文件列表','back',()=>ui.closeSheet()),title,icon('连续浏览','continuous',()=>setMode('continuous')),icon('分享图片','share',()=>images[index].path.startsWith('remote://')?ui.toast('网络图片可先保存到本机，再使用系统分享'):api.shareFile(images[index].path)));
+    header.append(icon('返回文件列表','back',()=>ui.closeSheet()),title,modeSwitch(app,'paged'),icon('分享图片','share',()=>images[index].path.startsWith('remote://')?ui.toast('网络图片可先保存到本机，再使用系统分享'):api.shareFile(images[index].path)));
     const previous=icon('上一张','previous',()=>animate(-1)),next=icon('下一张','next',()=>animate(1));
     const transform=()=>{if(currentImage)currentImage.style.transform=`translate(${x}px,${y}px) scale(${zoom}) rotate(${rotation}deg)`;};
     const controls={previous:()=>animate(-1),next:()=>animate(1),zoomOut:()=>{zoom=Math.max(.25,zoom/1.4);transform();},fit:()=>{zoom=1;x=y=0;transform();},rotate:()=>{rotation=(rotation+90)%360;transform();},zoomIn:()=>{zoom=Math.min(8,zoom*1.4);transform();}};
@@ -94,5 +96,5 @@ const androidGallery=(()=>{
     ui.onClosed(()=>{boundary.destroy();clearView();controller.abort();clearTimeout(tapTimer);clearTimeout(settleTimer);epoch++;for(const image of track.querySelectorAll('img'))image.removeAttribute('src');cache.clear();});
     render();
   }
-  return {open,mode,setMode,state,control,auto,seek,progress};
+  return {open,mode,setMode,state,control,auto,seek,progress,modeSwitch};
 })();

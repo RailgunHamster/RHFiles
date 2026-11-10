@@ -1614,14 +1614,15 @@ pub async fn device_transfer(
         silent: false,
     };
     match action.as_str() {
-        "copy" | "move" | "copy_exact" | "move_exact" => {
+        "copy" | "move" | "copy_exact" | "move_exact" | "save_copy" => {
             let source = Location::parse(field(&args, "src")?)?;
             let destination = Location::parse(field(&args, "dest")?)?;
-            if !matches!(source, Location::Remote(_)) && !matches!(destination, Location::Remote(_))
+            if action!="save_copy"&&!matches!(source, Location::Remote(_)) && !matches!(destination, Location::Remote(_))
             {
                 return Err("[invalid_request] 此接口至少包含一个 RHFiles 设备路径".into());
             }
-            let target = if action.ends_with("_exact") {
+            if action=="save_copy"&&(!matches!(destination,Location::Local(_))||snapshot(&source).await?.directory){return Err("[invalid_path] 另存为仅支持把单个文件保存到本地文件系统".into());}
+            let target = if action.ends_with("_exact")||action=="save_copy" {
                 destination
             } else {
                 destination.child(args["targetName"].as_str().unwrap_or(&source.leaf()?))?

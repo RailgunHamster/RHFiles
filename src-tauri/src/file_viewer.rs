@@ -4,6 +4,7 @@ use serde_json::{json,Value};
 use std::sync::{Mutex,atomic::{AtomicU64,Ordering}};
 use tauri::{AppHandle,Emitter,Manager,WindowEvent};
 use rhfiles_service::connection::DevicePath;
+use crate::types::CancelFlag;
 const LABEL:&str="window-file-viewer";
 static SESSION:Mutex<Option<Session>>=Mutex::new(None);
 static SEQUENCE:AtomicU64=AtomicU64::new(0);
@@ -29,17 +30,57 @@ fn validate_entry(entry:&Entry)->Result<(),String>{
 fn current(args:&Value)->Result<Session,String>{let state=SESSION.lock().map_err(|_|"查看器状态不可用")?;let s=state.as_ref().ok_or("查看器已关闭")?;if args["generation"].as_u64()!=Some(s.generation)||args.get("selection").is_some_and(|v|v.as_u64()!=Some(s.selection)){return Err("查看内容已改变，旧操作未执行".into())}Ok(s.clone())}
 pub(crate) fn is_current(generation:u64,selection:u64)->bool{SESSION.lock().ok().is_some_and(|s|s.as_ref().is_some_and(|s|s.generation==generation&&s.selection==selection))}
 fn stop_video(){#[cfg(windows)]crate::rhvideo_player::file_player::stop();}
+#[cfg(windows)]
+fn save_picker(name:&str,english:bool,owner:Option<usize>)->Result<Option<String>,String>{
+    use windows::{core::PCWSTR,Win32::{Foundation::HWND,System::Com::*,UI::Shell::*}};
+    unsafe{
+        CoInitializeEx(None,COINIT_APARTMENTTHREADED).ok().map_err(|e|e.to_string())?;
+        struct Com;impl Drop for Com{fn drop(&mut self){unsafe{CoUninitialize()}}}let _com=Com;
+        let dialog:IFileSaveDialog=CoCreateInstance(&FileSaveDialog,None,CLSCTX_INPROC_SERVER).map_err(|e|e.to_string())?;
+        let filename:Vec<u16>=name.encode_utf16().chain(Some(0)).collect();dialog.SetFileName(PCWSTR(filename.as_ptr())).map_err(|e|e.to_string())?;
+        let title:Vec<u16>=if english{"Save image as"}else{"图片另存为"}.encode_utf16().chain(Some(0)).collect();dialog.SetTitle(PCWSTR(title.as_ptr())).map_err(|e|e.to_string())?;
+        dialog.SetOptions(dialog.GetOptions().map_err(|e|e.to_string())?|FOS_FORCEFILESYSTEM|FOS_PATHMUSTEXIST|FOS_NOCHANGEDIR|FOS_OVERWRITEPROMPT).map_err(|e|e.to_string())?;
+        if let Err(error)=dialog.Show(owner.map(|value|HWND(value as *mut _))){if error.code().0 as u32==0x800704c7{return Ok(None)}return Err(error.to_string())}
+        let raw=dialog.GetResult().map_err(|e|e.to_string())?.GetDisplayName(SIGDN_FILESYSPATH).map_err(|e|e.to_string())?;
+        let result=raw.to_string().map_err(|e|e.to_string());CoTaskMemFree(Some(raw.0.cast()));result.map(Some)
+    }
+}
+async fn save_image(app:AppHandle,args:Value,cancel:tauri::State<'_,CancelFlag>)->Result<Value,String>{
+    let state=current(&args)?;if state.kind!="image"{return Err("当前不是图片".into())}
+    let index=args.get("index").map(|v|v.as_u64().filter(|n|(*n as usize)<state.entries.len()).map(|n|n as usize).ok_or("图片索引无效")).transpose()?.unwrap_or(state.index);
+    let entry=state.entries[index].clone();let _dialog_guard=cancel.begin("image-save")?;
+    let source=crate::device_transfer::device_transfer("inspect".into(),json!({"path":entry.path}),app.clone(),cancel.clone()).await?;
+    if source["isDirectory"]==true{return Err("另存为只接受图片文件".into())}
+    let picked=args.get("destination").is_none();
+    let destination=if let Some(value)=args.get("destination"){Some(value.as_str().filter(|p|!p.is_empty()&&p.len()<=32768&&!p.contains('\0')).ok_or("保存路径无效")?.to_owned())}else{
+        #[cfg(windows)]{let owner=app.get_webview_window(LABEL).and_then(|w|w.hwnd().ok()).map(|h|h.0 as usize);let name=entry.name.clone();let english=state.language=="en";tauri::async_runtime::spawn_blocking(move||save_picker(&name,english,owner)).await.map_err(|_|"保存选择器已结束")??}
+        #[cfg(not(windows))]{return Err("此平台尚未提供图片保存选择器".into())}
+    };
+    let Some(destination)=destination else{return Ok(json!({"saved":false,"cancelled":true}))};
+    if !is_current(state.generation,state.selection){return Err("查看内容已改变，未保存旧图片".into())}
+    if !std::path::Path::new(&destination).is_absolute()||destination.contains("://"){return Err("保存位置必须是本地文件系统的完整路径".into())}
+    let target=match crate::device_transfer::device_transfer("inspect".into(),json!({"path":destination}),app.clone(),cancel.clone()).await{Ok(value)=>Some(value),Err(error)if error.starts_with("[not_found]")=>None,Err(error)=>return Err(error)};
+    if target.as_ref().is_some_and(|v|v["isDirectory"]==true){return Err("保存位置是文件夹，未替换".into())}
+    let overwrite=picked&&target.is_some()||args["overwrite"]==true;
+    if target.is_some()&&!overwrite{return Err("[conflict] 目标文件已存在；未覆盖，请选择新名称或明确确认替换".into())}
+    if let Some(expected)=args.get("expectedTargetRevision").and_then(Value::as_str){if target.as_ref().and_then(|v|v["revision"].as_str())!=Some(expected){return Err("[conflict] 目标文件已改变，未覆盖".into())}}
+    let operation_id=if let Some(value)=args.get("operationId"){value.as_str().filter(|v|v.starts_with("image-save-")&&v.len()<=100&&v.bytes().all(|b|b.is_ascii_alphanumeric()||b"-_".contains(&b))).ok_or("保存任务标识无效")?.to_owned()}else{format!("image-save-{}",next()?)};
+    let event=|status:&str,error:&str|{let _=app.emit_to("main","file-viewer-save-task",json!({"operationId":operation_id,"status":status,"name":entry.name,"source":entry.path,"destination":destination,"error":error}));};
+    event("running","");
+    let result=crate::device_transfer::device_transfer("save_copy".into(),json!({"src":entry.path,"dest":destination,"overwrite":overwrite,"expectedSourceRevision":source["revision"],"expectedTargetRevision":target.as_ref().map(|v|v["revision"].clone()),"operationId":operation_id,"recordHistory":false}),app.clone(),cancel.clone()).await;
+    match result{Ok(_)=>{event("complete","");Ok(json!({"saved":true,"path":destination,"operationId":operation_id}))},Err(error)=>{event(if error.starts_with("[cancelled]"){"cancelled"}else{"failed"},&error);Err(error)}}
+}
 #[tauri::command]
-pub async fn file_viewer_request(app:AppHandle,action:String,mut args:Value)->Result<Value,String>{
+pub async fn file_viewer_request(app:AppHandle,action:String,mut args:Value,cancel:tauri::State<'_,CancelFlag>)->Result<Value,String>{
     if let Some(run)=args.as_object_mut().and_then(|v|v.remove("_automationRun")){
         if action!="close"{return Err("此操作不接受关闭回执".into())}
         let id=run["id"].as_str().unwrap_or_default().to_owned();
         if let Some(previous)=crate::automation_receipts::begin(run,"file-viewer.close")?{return previous;}
-        let completion=crate::automation_receipts::Completion::new(id);let result=dispatch(app,action,args).await;completion.finish(&result);return result;
+        let completion=crate::automation_receipts::Completion::new(id);let result=dispatch(app,action,args,cancel).await;completion.finish(&result);return result;
     }
-    dispatch(app,action,args).await
+    dispatch(app,action,args,cancel).await
 }
-async fn dispatch(app:AppHandle,action:String,args:Value)->Result<Value,String>{
+async fn dispatch(app:AppHandle,action:String,args:Value,cancel:tauri::State<'_,CancelFlag>)->Result<Value,String>{
     match action.as_str(){
         "open"=>{
             let entries:Vec<Entry>=serde_json::from_value(args["entries"].clone()).map_err(|_|"媒体列表无效")?;
@@ -65,6 +106,7 @@ async fn dispatch(app:AppHandle,action:String,args:Value)->Result<Value,String>{
         "select"=>{let mut s=current(&args)?;let prior=s.selection;let index=args["index"].as_u64().filter(|v|(*v as usize)<s.entries.len()).ok_or("媒体索引无效")? as usize;s.index=index;s.selection=next()?;{let mut slot=SESSION.lock().map_err(|_|"查看器状态不可用")?;if slot.as_ref().map(|v|v.selection)!=Some(prior){return Err("查看内容已改变".into())}*slot=Some(s.clone());}stop_video();if let Some(window)=app.get_webview_window(LABEL){window.set_title(&format!("{} · RHFiles",s.entries[s.index].name)).map_err(|e|e.to_string())?;}Ok(json!(s))}
         "mode"=>{let mut s=current(&args)?;let mode=args["mode"].as_str().filter(|v|["paged","continuous"].contains(v)).ok_or("图片浏览模式无效")?;s.mode=mode.into();{let mut slot=SESSION.lock().map_err(|_|"查看器状态不可用")?;if !slot.as_ref().is_some_and(|v|v.generation==s.generation&&v.selection==s.selection){return Err("查看内容已改变".into())}*slot=Some(s.clone());}app.emit("file-viewer-preference",json!({"imageBrowseMode":mode})).map_err(|e|e.to_string())?;Ok(json!(s))}
         "close"=>{current(&args)?;if let Some(w)=app.get_webview_window(LABEL){w.close().map_err(|e|e.to_string())?;}Ok(json!({"closed":true}))}
+        "image.saveAs"=>save_image(app,args,cancel).await,
         "video.open"=>{
             let state=current(&args)?;if state.kind!="video"{return Err("当前不是视频".into())}let path=&state.entries[state.index].path;
             let source=if path.starts_with("rhfiles-device:"){crate::device_fs::device_fs("resource".into(),json!({"path":path})).await?["url"].as_str().ok_or("远程媒体地址缺失")?.to_string()}else{url::Url::from_file_path(std::path::Path::new(path)).map_err(|_|"视频路径无效")?.to_string()};

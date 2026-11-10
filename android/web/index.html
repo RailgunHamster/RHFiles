@@ -53,7 +53,7 @@
         <section data-settings-panel="display" role="tabpanel"><h2>浏览与显示</h2>
         <button id="btn-theme" class="setting-row">主题：明亮</button>
         <button id="btn-hidden" class="setting-row">显示隐藏文件：关</button>
-        <label class="setting-row" for="image-browse-mode">图片浏览<select id="image-browse-mode" data-gallery-mode><option value="paged">逐张翻页</option><option value="continuous">连续滚动</option></select></label>
+        <div class="setting-row">图片浏览<div id="image-browse-mode" class="setting-mode-switch" role="group" aria-label="图片浏览模式"><button data-gallery-setting="paged" aria-pressed="true">逐张翻页</button><button data-gallery-setting="continuous" aria-pressed="false">连续滚动</button></div></div>
         <p class="muted">列表和网格均显示图片、视频缩略图。平板与展开的大屏会显示常驻导航；分屏、旋转或折叠时按可用空间调整。</p></section>
         <section data-settings-panel="updates" role="tabpanel" hidden><section id="app-updates" hidden></section>
           <section id="device-transfer-settings" class="settings-card" hidden><h2>设备文件传输</h2><label class="setting-row" for="device-download-streams">单文件并行下载数<select id="device-download-streams"><option>1</option><option selected>2</option><option>3</option><option>4</option></select></label>

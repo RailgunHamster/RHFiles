@@ -858,7 +858,7 @@
     $('version').textContent = 'RHFiles Android ' + info.version;
     $('btn-theme').textContent = '主题：' + (document.documentElement.dataset.theme === 'dark' ? '深色' : '明亮');
     $('btn-hidden').textContent = '显示隐藏文件：' + (state.hidden ? '开' : '关');
-    $('image-browse-mode').value=androidGallery.mode();
+    document.querySelectorAll('[data-gallery-setting]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.gallerySetting===androidGallery.mode())));
     if(api.updatesAvailable())androidUpdates.onSettings().catch(error);
     if(api.syncAvailable())configSync.refresh().catch(error);
     const transferSettings=typeof api.transferSettingsAvailable==='function'&&api.transferSettingsAvailable();
@@ -1009,7 +1009,7 @@
     RHFilesUI.listen($('scrim'),'click',closeDrawer,undefined,"android.web.js.app.boot.b5946fbd45ef");
     on('btn-menu',openDrawer); on('drawer-close',closeDrawer);
     on('drawer-refresh-devices',()=>RHFilesAPI.invoke('devices.discover'));
-    RHFilesUI.listen($('image-browse-mode'),'change',event=>RHFilesAPI.invoke('gallery.mode.set',{mode:event.target.value}).catch(error),undefined,'android.gallery.mode.setting');
+    for(const button of document.querySelectorAll('[data-gallery-setting]'))RHFilesUI.listen(button,'click',()=>RHFilesAPI.invoke('gallery.mode.set',{mode:button.dataset.gallerySetting}).catch(error),undefined,'android.gallery.mode.setting.'+button.dataset.gallerySetting);
     for(const id of ['device-download-streams','device-download-rate'])RHFilesUI.listen($(id),'change',async()=>{
       if(!$('device-download-rate').checkValidity())return;
       try{await api.native('transfer.configure',{parallelism:Number($('device-download-streams').value),rateMiB:Number($('device-download-rate').value)});}catch(e){error(e);}

@@ -22,7 +22,8 @@ const androidAutomation=(()=>{
     register('gallery.mode.set',apiSchema({mode:{type:'string',enum:['paged','continuous']}},['mode']),p=>androidGallery.setMode(p.mode),'settings');
     register('gallery.auto.start',apiSchema(),()=>androidGallery.auto('start'));
     register('gallery.auto.pause',apiSchema(),()=>androidGallery.auto('pause'));
-    register('gallery.auto.speed.set',apiSchema({speed:{type:'number',minimum:10,maximum:600}},['speed']),p=>androidGallery.auto('speed',p.speed));
+    register('gallery.auto.toggle',apiSchema(),()=>androidGallery.auto('toggle'));
+    register('gallery.auto.speed.set',apiSchema({speed:{type:'number',minimum:10,maximum:6000}},['speed']),p=>androidGallery.auto('speed',p.speed));
     register('gallery.control',apiSchema({command:{type:'string',enum:['next','previous','zoomIn','zoomOut','fit','rotate']}},['command']),p=>androidGallery.control(p.command));
     register('files.cacheApk',apiSchema({path:string},['path']),async p=>({jobId:await api.native('job.start',{op:'cache-open',args:p})}),'write','Start a background cache job; inspect tasks.list and install the completed job explicitly');
     register('files.installCachedApk',apiSchema({jobId:string},['jobId']),p=>api.native('cache.install',p),'external','Open the Android system installer for one completed, validated APK cache job');
