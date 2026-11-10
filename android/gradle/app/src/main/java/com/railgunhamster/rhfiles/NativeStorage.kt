@@ -12,9 +12,9 @@ import org.json.JSONObject
 import java.io.*
 
 data class NativeEntry(val path: String, val name: String, val isDir: Boolean, val size: Long = 0,
-  val modified: Long = 0, val flags: Int = 0) {
+  val modified: Long = 0, val flags: Int = 0, val revision:String?=null) {
   fun json() = JSONObject().put("path", path).put("name", name).put("isDir", isDir).put("size", size)
-    .put("modifiedMs", modified).put("kind", if (isDir) "folder" else kind(name)).put("hidden", name.startsWith('.')).put("flags", flags)
+    .put("modifiedMs", modified).put("kind", if (isDir) "folder" else kind(name)).put("hidden", name.startsWith('.')).put("flags", flags).put("revision",revision?:JSONObject.NULL)
   companion object {
     fun kind(name: String): String = when (name.substringAfterLast('.', "").lowercase()) {
       "jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "heif", "avif", "svg" -> "image"
@@ -28,8 +28,8 @@ data class NativeEntry(val path: String, val name: String, val isDir: Boolean, v
 }
 
 /** One storage adapter for paths and granted document trees. Never turn a content URI into a guessed path. */
-class NativeStorage(val context: Context) {
-  val remote by lazy { RemoteStorage(context) }
+class NativeStorage(val context: Context,private val remoteProvider:()->RemoteStorage={RemoteStorage(context)}) {
+  val remote by lazy { remoteProvider() }
   fun isDocument(path: String) = path.startsWith("content://")
   fun isRemote(path: String) = path.startsWith("remote://")
   fun local(path: String): File {

@@ -484,4 +484,30 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
       else -> request(l,"DELETE").close()
     }
   }
+  fun canRecycle(paths:List<String>):Boolean {
+    val checked=mutableMapOf<String,Boolean>()
+    return paths.all{path->
+      val l=location(path)
+      require(!isRhFilesRoot(path)&&l.relative.isNotEmpty()){"不能删除共享入口"}
+      if(l.c.getString("type")!="rhfiles")false else checked.getOrPut(l.id){
+        val cap=RhFilesConnection(l.c).capabilities();require(cap.getJSONObject("permissions").optBoolean("delete")){"电脑端未授予删除权限"};cap.optBoolean("recycleBin")
+      }
+    }
+  }
+  fun recycleMany(paths:List<String>,revisions:JSONObject,check:()->Unit,completed:(String)->Unit,failed:(String,String)->Unit) {
+    require(paths.size<=1000){"删除数量过多"}
+    val grouped=paths.groupBy{location(it).id}
+    for((_,sources)in grouped)for(chunk in sources.chunked(32)){
+      check();val config=location(chunk.first()).c
+      require(config.getString("type")=="rhfiles"&&chunk.none{isRhFilesRoot(it)}){"不能回收此位置，文件已保留"}
+      val byRelative=chunk.associateBy{"/"+location(it).relative}
+      val result=RhFilesConnection(config).recycleMany(chunk.map{it.let{p->location(p).relative to revisions.optString(p).takeIf{v->v.isNotBlank()&&v!="null"}}})
+      val seen=mutableSetOf<String>()
+      val recycled=result.getJSONArray("recycled");val errors=result.getJSONArray("errors")
+      for(i in 0 until recycled.length()){val item=recycled.getJSONObject(i);val relative=item.getString("path");require(seen.add(relative)&&byRelative.containsKey(relative)&&item.getString("receipt").isNotBlank()){"远端回收结果不匹配，请核对目标；未重复发送"};completed(byRelative.getValue(relative))}
+      for(i in 0 until errors.length()){val item=errors.getJSONObject(i);val relative=item.getString("path");require(seen.add(relative)&&byRelative.containsKey(relative)){"远端回收结果不匹配"};failed(byRelative.getValue(relative),item.getString("message"))}
+      for((relative,path)in byRelative)if(relative !in seen)failed(path,"操作结果未确认，已停止；未重复发送")
+      if(errors.length()>0||seen.size!=chunk.size)return
+    }
+  }
 }

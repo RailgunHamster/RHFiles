@@ -330,6 +330,7 @@ class MainActivity : TauriActivity() {
         onUi{requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS),11)}
       synchronized(settingsLock){require(!sharedConfig.isApplying()){"正在应用同步配置，请稍后再启动文件任务"};FileTasks.start(this,args.getString("op"),args.getJSONObject("args"))}
     }
+    "delete.policy" -> {val paths=args.getJSONArray("paths");DeletePolicy.describe(storage,(0 until paths.length()).map{paths.getString(it)})}
     "jobs" -> FileTasks.list(this)
     "job.status" -> FileTasks.status(this,args.getString("id"))
     "job.control" -> {FileTasks.control(this,args.getString("id"),args.getString("action"));true}

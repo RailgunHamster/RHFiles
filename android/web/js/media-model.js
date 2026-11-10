@@ -3,7 +3,7 @@
     const seen=new Set(),all=entries.filter(e=>!e.isDir&&e.kind===entry.kind&&typeof e.path==='string'&&!seen.has(e.path)&&seen.add(e.path));
     if(!all.some(e=>e.path===entry.path))all.push(entry);
     const selected=all.findIndex(e=>e.path===entry.path);let start=Math.max(0,Math.min(selected-499,all.length-1000)),end=Math.min(all.length,start+1000);
-    let queue=all.slice(start,end).map(e=>({path:e.path,name:e.name}));
+    let queue=all.slice(start,end).map(e=>({path:e.path,name:e.name,...(e.revision?{revision:e.revision}:{})}));
     const encoder=new TextEncoder(),costs=queue.map(item=>encoder.encode(JSON.stringify(item)).length);let bytes=2+Math.max(0,queue.length-1)+costs.reduce((a,b)=>a+b,0);
     while(bytes>240*1024&&queue.length>1){
       if(selected-start>end-1-selected){start++;queue.shift();bytes-=costs.shift()+1;}else{end--;queue.pop();bytes-=costs.pop()+1;}

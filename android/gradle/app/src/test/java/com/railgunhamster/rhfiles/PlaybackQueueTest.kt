@@ -6,6 +6,18 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class PlaybackQueueTest {
+  @Test fun remoteFileRevisionsSurviveTheIntentAndRotationQueueRoundTrip(){
+    val selected="remote://qa/Files/movie.mp4";val input=JSONObject().put("path",selected).put("queue",JSONArray().put(JSONObject().put("path",selected).put("name","视频").put("revision","original-selected-revision")))
+    val queue=PlaybackQueue.parse(input);assertEquals("original-selected-revision",queue.single().revision)
+    assertEquals(queue,PlaybackQueue.parse(input.put("queue",JSONArray(PlaybackQueue.json(queue)))))
+  }
+  @Test fun deletionSelectsTheFollowingItemWrapsAtTheEndAndClosesAnEmptyQueue(){
+    val items=listOf("a","b","c").map{PlaybackQueue.Item("/storage/$it.mp4",it)}
+    val middle=PlaybackQueue.afterDelete(items,items[1].path);assertEquals(listOf("a","c"),middle.first.map{it.name});assertEquals(1,middle.second)
+    val last=PlaybackQueue.afterDelete(items,items.last().path);assertEquals(0,last.second)
+    assertTrue(PlaybackQueue.afterDelete(items.take(1),items[0].path).first.isEmpty())
+    try{PlaybackQueue.afterDelete(items,"/new-occupant.mp4");fail()}catch(_:IllegalArgumentException){}
+  }
   @Test fun singleFileAndVisiblePlaylistPreserveOrderAndNames(){
     assertEquals("/storage/test.mp4",PlaybackQueue.parse(JSONObject().put("path","/storage/test.mp4")).single().path)
     val input=JSONObject().put("path","remote://id/Share/b.mp4").put("queue",JSONArray().put(JSONObject().put("path","remote://id/Share/a.mp4").put("name","第一集")).put(JSONObject().put("path","remote://id/Share/b.mp4").put("name","第二集")))

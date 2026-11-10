@@ -15,6 +15,43 @@ import java.util.concurrent.TimeUnit
 
 @RunWith(RobolectricTestRunner::class)@Config(manifest=Config.NONE,sdk=[28])
 class RhFilesConnectionTest {
+  @Test fun batchRecycleUsesOneWriteAndOwnerBoundReceiptWithoutWalkingChildren(){GroupConnectionsTest().fixture{f->
+    val writes=java.util.concurrent.atomic.AtomicInteger();val reads=java.util.concurrent.atomic.AtomicInteger();var operation=""
+    f.onRequest={request->when(request.requestUrl!!.encodedPath){
+      "/api/v1/capabilities"->MockResponse().setBody("{\"recycleBin\":true,\"permissions\":{\"delete\":true},\"features\":[\"batch-recycle\"]}")
+      "/api/v1/recycle-batch-checked"->{writes.incrementAndGet();operation=request.getHeader("X-RHFiles-Operation-Id")!!;val body=JSONObject(request.body.readUtf8());assertEquals(2,body.getJSONArray("entries").length());assertEquals("selected-revision",body.getJSONArray("entries").getJSONObject(0).getString("revision"));MockResponse().setResponseCode(202).addHeader("X-RHFiles-Operation-Id",operation).setBody("{}")}
+      "/api/v1/operations/$operation"->{reads.incrementAndGet();MockResponse().addHeader("X-RHFiles-Operation-Id",operation).setBody("{\"recycled\":[{\"path\":\"/Files/folder\",\"receipt\":\"${"r".repeat(43)}\"},{\"path\":\"/Files/video.mp4\",\"receipt\":\"${"s".repeat(43)}\"}],\"errors\":[]}")}
+      "/api/v1/list","/api/v1/stat","/api/v1/delete"->throw AssertionError("Recursive/permanent deletion must not be used")
+      else->null
+    }}
+    val result=RhFilesConnection(f.config()).recycleMany(listOf("Files/folder" to "selected-revision","Files/video.mp4" to null))
+    assertEquals(2,result.getJSONArray("recycled").length());assertEquals(1,writes.get());assertEquals(1,reads.get())
+  }}
+  @Test fun ambiguousBatchFailureQueriesOnlyTheReceiptAndNeverResubmits(){GroupConnectionsTest().fixture{f->
+    val writes=java.util.concurrent.atomic.AtomicInteger()
+    f.onRequest={request->when{
+      request.requestUrl!!.encodedPath=="/api/v1/capabilities"->MockResponse().setBody("{\"recycleBin\":true,\"permissions\":{\"delete\":true},\"features\":[\"batch-recycle\"]}")
+      request.requestUrl!!.encodedPath=="/api/v1/recycle-batch-checked"->{writes.incrementAndGet();MockResponse().setSocketPolicy(okhttp3.mockwebserver.SocketPolicy.DISCONNECT_AFTER_REQUEST)}
+      request.requestUrl!!.encodedPath.startsWith("/api/v1/operations/")->MockResponse().setResponseCode(404)
+      else->null
+    }}
+    try{RhFilesConnection(f.config()).recycleMany(listOf("Files/one" to null));fail("Unknown result accepted")}catch(e:java.io.IOException){assertTrue(e.message!!.contains("没有重复发送"))}
+    assertEquals(1,writes.get())
+  }}
+  @Test fun ordinaryRemoteRecycleTaskSkipsBothRecursiveMeasurementAndErase(){GroupConnectionsTest().fixture{f->
+    val writes=java.util.concurrent.atomic.AtomicInteger()
+    f.onRequest={request->when(request.requestUrl!!.encodedPath){
+      "/api/v1/capabilities"->MockResponse().setBody("{\"recycleBin\":true,\"permissions\":{\"delete\":true},\"features\":[\"batch-recycle\"]}")
+      "/api/v1/recycle-batch-checked"->{writes.incrementAndGet();MockResponse().setBody("{\"recycled\":[{\"path\":\"/Files/large-folder\",\"receipt\":\"${"r".repeat(43)}\"}],\"errors\":[]}")}
+      "/api/v1/list","/api/v1/stat","/api/v1/delete"->throw AssertionError("Task must not enumerate descendants")
+      else->null
+    }}
+    val context=org.robolectric.RuntimeEnvironment.getApplication();val remote=RemoteStorage(context,profileLookup={f.config()});val storage=NativeStorage(context){remote}
+    val path="remote://qa/Files/large-folder";val args=JSONObject().put("sources",org.json.JSONArray(listOf(path))).put("permanent",false)
+    val job=FileTasks.Job(java.util.UUID.randomUUID().toString(),"delete",args)
+    FileTasks.execute(context,job,storage)
+    assertTrue(job.failures.toString(),job.failures.isEmpty());assertEquals(listOf(path),job.completed);assertEquals(1L,job.files);assertEquals(1L,job.done);assertEquals(1,writes.get())
+  }}
   private var baseline=0
   private fun https(block:(MockWebServer,JSONObject)->Unit){
     GroupConnectionsTest().fixture{f->

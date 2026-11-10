@@ -1259,6 +1259,50 @@ async fn mutations(
             if paths.is_empty() || paths.len() > 10000 {
                 return Err("[invalid_request] 删除数量无效".into());
             }
+            if !permanent {
+                let roots=paths.iter().map(|v|Location::parse(v.as_str().ok_or("Invalid path")?)).collect::<Result<Vec<_>,String>>()?;
+                for root in &roots {remote_child(root)?;hold(root,progress)?;}
+                let first=remote_child(&roots[0])?;
+                let same_host=roots.iter().all(|v|remote_child(v).is_ok_and(|p|p.group==first.group&&p.peer==first.peer));
+                if same_host {
+                    let cap=request(first,FileRequest::Capabilities).await?.json(65536).await?;
+                    if cap["permissions"]["delete"]!=true{return Err("[forbidden] 设备组未授予删除权限".into());}
+                    if cap["recycleBin"]==true&&cap["features"].as_array().is_some_and(|v|v.iter().any(|v|v=="batch-recycle")) {
+                        progress.items=roots.len() as u64;
+                        let mut deleted=Vec::new();let mut errors=Vec::new();let mut recycled=Vec::new();
+                        for chunk in roots.chunks(32) {
+                            if progress.cancel.is_cancelled(Some(&progress.id))? {break;}
+                            if let Err(error)=progress.check(){errors.push(error);break;}
+                            let entries=chunk.iter().map(|p|Ok((remote_child(p)?.path.clone(),args["revisions"][p.text()].as_str().map(str::to_owned)))).collect::<Result<Vec<_>,String>>()?;
+                            let result=async {request(first,FileRequest::RecycleBatch{entries}).await?.json(65536).await}.await;
+                            match result {
+                                Ok(reply)=>{
+                                    let mut seen=std::collections::HashSet::new();
+                                    for item in reply["recycled"].as_array().ok_or("[invalid_response] 缺少批量回收结果")? {
+                                        let path=field(item,"path")?;
+                                        let source=chunk.iter().find(|v|remote_child(v).is_ok_and(|p|p.path==path)).ok_or("[invalid_response] 回收结果来源不匹配")?;
+                                        if !seen.insert(path.to_owned()){return Err("[invalid_response] 重复回收结果".into());}
+                                        let token=field(item,"receipt")?;
+                                        recycled.push((remote_child(source)?.clone(),token.to_owned()));deleted.push(source.text());progress.done+=1;progress.emit("running",source,false);
+                                    }
+                                    for item in reply["errors"].as_array().ok_or("[invalid_response] 缺少批量回收错误列表")? {
+                                        let path=field(item,"path")?;
+                                        let source=chunk.iter().find(|v|remote_child(v).is_ok_and(|p|p.path==path)).ok_or("[invalid_response] 回收错误来源不匹配")?;
+                                        if !seen.insert(path.to_owned()){return Err("[invalid_response] 重复回收结果".into());}
+                                        errors.push(format!("{}: [{}] {}",source.text(),field(item,"code")?,field(item,"message")?));
+                                    }
+                                    if seen.len()!=chunk.len(){errors.push("[invalid_response] 远端回收结果不完整，请核对目标；未重复发送".into());break;}
+                                },
+                                Err(error)=>{errors.push(error);break;}
+                            }
+                        }
+                        let cancelled=progress.cancel.is_cancelled(Some(&progress.id))?;
+                        let history_id=history::record_recycle(recycled,progress);
+                        progress.emit(if cancelled{"cancelled"}else if errors.is_empty(){"complete"}else{"failed"},&roots[0],true);
+                        return Ok(json!({"deleted":deleted,"errors":errors,"cancelled":cancelled,"undoSupported":history_id.is_some(),"historyId":history_id}));
+                    }
+                }
+            }
             let mut plans = Vec::new();
             for raw in paths {
                 let path = Location::parse(raw.as_str().ok_or("Invalid path")?)?;

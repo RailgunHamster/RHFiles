@@ -14,6 +14,43 @@ struct Fixture {
     password: String,
 }
 
+#[cfg(windows)]
+#[tokio::test]
+async fn batch_recycle_is_revision_checked_restorable_and_never_replayed() {
+    let f=Fixture::new(true,true).await;
+    std::fs::write(f.share.join("one.txt"),b"one").unwrap();std::fs::create_dir(f.share.join("batch-folder")).unwrap();
+    for i in 0..200 {std::fs::write(f.share.join("batch-folder").join(format!("{i}.txt")),b"owned fixture").unwrap();}
+    let old:Value=f.request("GET","/api/v1/stat").query(&[("path","/Files/one.txt")]).send().await.unwrap().json().await.unwrap();
+    std::fs::rename(f.share.join("one.txt"),f.share.join("old-one.txt")).unwrap();std::fs::write(f.share.join("one.txt"),b"new occupant").unwrap();
+    let body=json!({"entries":[{"path":"/Files/one.txt","revision":old["revision"]},{"path":"/Files/batch-folder"}]});
+    let id=format!("{}.{}",1,base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([7u8;32]));
+    let response=f.request("POST","/api/v1/recycle-batch-checked").header("X-RHFiles-Operation-Id",&id).json(&body).send().await.unwrap();
+    let response=if response.status()==202{f.request("GET",&format!("/api/v1/operations/{id}")).send().await.unwrap()}else{response};
+    assert_eq!(response.status(),200);let value:Value=response.json().await.unwrap();
+    assert_eq!(value["recycled"].as_array().unwrap().len(),1);assert_eq!(value["errors"][0]["code"],"conflict");
+    assert_eq!(std::fs::read(f.share.join("one.txt")).unwrap(),b"new occupant");assert!(!f.share.join("batch-folder").exists());
+    std::fs::create_dir(f.share.join("batch-folder")).unwrap();std::fs::write(f.share.join("batch-folder/new.txt"),b"keep new batch-folder").unwrap();
+    let repeated:Value=f.request("POST","/api/v1/recycle-batch-checked").header("X-RHFiles-Operation-Id",&id).json(&body).send().await.unwrap().json().await.unwrap();
+    assert_eq!(value,repeated);assert!(f.share.join("batch-folder/new.txt").exists());
+    let restore=json!({"receipt":value["recycled"][0]["receipt"]});
+    assert_eq!(f.request("POST","/api/v1/recycle-restore").json(&restore).send().await.unwrap().status(),409);
+    std::fs::remove_file(f.share.join("batch-folder/new.txt")).unwrap();std::fs::remove_dir(f.share.join("batch-folder")).unwrap();
+    let response=f.request("POST","/api/v1/recycle-restore").json(&restore).send().await.unwrap();assert_eq!(response.status(),200);
+    assert_eq!(std::fs::read(f.share.join("batch-folder/199.txt")).unwrap(),b"owned fixture");
+}
+
+#[tokio::test]
+async fn batch_recycle_checks_boundaries_permissions_and_overlaps_before_deleting() {
+    for grant in [false,true] {
+        let f=Fixture::new(true,grant).await;std::fs::write(f.share.join("keep.txt"),b"preserve").unwrap();
+        for entries in [json!([]),json!([{"path":"/Files/keep.txt"},{"path":"/Files"}]),json!([{"path":"/Files/a"},{"path":"/Files/a/b"}]),json!([{"path":"/Files/keep.txt"},{"path":"/Files/keep.txt"}])] {
+            assert!(!f.request("POST","/api/v1/recycle-batch-checked").json(&json!({"entries":entries})).send().await.unwrap().status().is_success());
+            assert_eq!(std::fs::read(f.share.join("keep.txt")).unwrap(),b"preserve");
+        }
+        if !grant {assert_eq!(f.request("POST","/api/v1/recycle-batch-checked").json(&json!({"entries":[{"path":"/Files/keep.txt"}]})).send().await.unwrap().status(),403);}
+    }
+}
+
 async fn wait_for_activity(f:&Fixture,active:bool){
     tokio::time::timeout(std::time::Duration::from_secs(8),async{
         while (f.service.update_activity(std::time::Duration::from_secs(30)).active_requests>0)!=active {

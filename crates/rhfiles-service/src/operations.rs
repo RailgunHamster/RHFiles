@@ -18,6 +18,7 @@ pub(crate) fn supported(path: &str) -> bool {
     matches!(
         path,
         "/api/v1/recycle-checked"
+            | "/api/v1/recycle-batch-checked"
             | "/api/v1/recycle-restore"
             | "/api/v1/delete-checked"
             | "/api/v1/rename-checked"
@@ -47,6 +48,7 @@ pub(crate) struct Receipt {
     owner: String,
     digest: String,
     completed: Mutex<Option<Completed>>,
+    changed: tokio::sync::watch::Sender<bool>,
 }
 impl Receipt {
     pub fn finish(&self, status: StatusCode, body: bytes::Bytes) {
@@ -55,6 +57,16 @@ impl Receipt {
             body,
             at: Instant::now(),
         });
+        self.changed.send_replace(true);
+    }
+    /// Completion is signalled, so fast work has no polling-floor latency.
+    /// Dropping a waiter never cancels or resubmits the independent operation.
+    pub async fn wait_response(&self, wait: Duration) -> Response {
+        let mut changed = self.changed.subscribe();
+        if !*changed.borrow() {
+            let _ = tokio::time::timeout(wait, changed.changed()).await;
+        }
+        self.response()
     }
     pub fn response(&self) -> Response {
         let completed = self.completed.lock().unwrap();
@@ -152,6 +164,7 @@ impl Operations {
             owner: owner.into(),
             digest: digest.into(),
             completed: Mutex::new(None),
+            changed: tokio::sync::watch::channel(false).0,
         });
         all.insert(id.into(), item.clone());
         records.seen.insert(key);
@@ -231,5 +244,23 @@ mod tests {
         assert!(all.lookup(&first, "a").is_err());
         assert!(all.submit(&first, "a", "delete").is_err());
         assert!(all.0.lock().unwrap().results.len() <= 2048);
+    }
+    #[tokio::test]
+    async fn completion_wakes_all_waiters_and_late_waiters_without_a_polling_delay() {
+        let all=Operations::default();let key=id();let (receipt,_)=all.submit(&key,"owner","batch").unwrap();
+        let waiters=(0..8).map(|_|{let r=receipt.clone();tokio::spawn(async move{r.wait_response(Duration::from_secs(5)).await.status()})}).collect::<Vec<_>>();
+        tokio::task::yield_now().await;
+        receipt.finish(StatusCode::OK,bytes::Bytes::from_static(b"{}"));
+        for waiter in waiters {assert_eq!(tokio::time::timeout(Duration::from_millis(200),waiter).await.unwrap().unwrap(),StatusCode::OK);}
+        assert_eq!(tokio::time::timeout(Duration::from_millis(200),receipt.wait_response(Duration::from_secs(5))).await.unwrap().status(),StatusCode::OK);
+    }
+    #[tokio::test]
+    async fn timing_out_or_dropping_a_waiter_never_reexecutes_or_cancels_work() {
+        let all=Operations::default();let key=id();let (receipt,_)=all.submit(&key,"owner","batch").unwrap();
+        assert_eq!(receipt.wait_response(Duration::from_millis(1)).await.status(),StatusCode::ACCEPTED);
+        let r=receipt.clone();let waiter=tokio::spawn(async move{r.wait_response(Duration::from_secs(5)).await});tokio::task::yield_now().await;waiter.abort();
+        receipt.finish(StatusCode::NO_CONTENT,bytes::Bytes::new());
+        assert!(!all.submit(&key,"owner","batch").unwrap().1);
+        assert_eq!(all.lookup(&key,"owner").unwrap().wait_response(Duration::ZERO).await.status(),StatusCode::NO_CONTENT);
     }
 }

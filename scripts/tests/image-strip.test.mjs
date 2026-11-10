@@ -17,6 +17,16 @@ test('fitted portrait, landscape and panoramic image edges meet without letterbo
   const s=create(4);s.resize(1200,700);[[350,700],[1400,700],[100,900],[12000,1000]].forEach(([w,h],i)=>s.measure(i,w,h));
   for(const angle of [0,90,180,270]){s.resize(1200,700,angle);for(const p of [0,.3,1,1.6,2.8,3]){const frames=s.layout(p);for(let n=0;n<frames.length;n++){const f=frames[n];assert.ok(f.width<=1200&&f.height<=700);if(n)assert.ok(Math.abs(frames[n-1].left+frames[n-1].width-f.left)<1e-7);}}}
 });
+test('shrinking a continuous strip changes both image sizes and gaps at every rotation',()=>{
+  const s=create(6,{loop:true});[[170,1100],[1100,700],[200,900],[1000,800],[190,750],[900,700]].forEach(([w,h],i)=>s.measure(i,w,h));
+  for(const scale of [.25,.5,1/1.4,1])for(const angle of [0,90,180,270]){
+    s.resize(412,892,angle,scale);const frames=s.layout(2.4);
+    for(let i=1;i<frames.length;i++)assert.ok(Math.abs(frames[i-1].left+frames[i-1].width-frames[i].left)<1e-7);
+    assert.ok(frames[0].left<=0&&frames.at(-1).left+frames.at(-1).width>=412);
+    for(const f of frames)assert.ok(Math.abs(f.width-(angle%180?f.imageHeight:f.imageWidth))<1e-7);
+  }
+  for(const invalid of [NaN,0,2])assert.throws(()=>s.resize(412,892,0,invalid));
+});
 test('dragging follows pixels across differently sized pictures and round-trips',()=>{
   const s=create(6);s.resize(1000,700);[200,1200,80,900,600,350].forEach((w,i)=>s.measure(i,w,900));
   fc.assert(fc.property(fc.double({min:0,max:5,noNaN:true}),fc.integer({min:-1500,max:1500}),(p,delta)=>{

@@ -2,7 +2,7 @@
 (function(root,factory){const value=factory();if(typeof module==='object'&&module.exports)module.exports=value;else root.RHFilesImageStrip=value;})(globalThis,()=>{
   function create(count,{loop=false}={}){
     loop=loop&&count>1;
-    const sizes=new Map(),widths=new Float64Array(count),heights=new Float64Array(count),imageWidths=new Float64Array(count),imageHeights=new Float64Array(count),centers=new Float64Array(count);let width=1,height=1,rotation=0,dirty=true,period=0;
+    const sizes=new Map(),widths=new Float64Array(count),heights=new Float64Array(count),imageWidths=new Float64Array(count),imageHeights=new Float64Array(count),centers=new Float64Array(count);let width=1,height=1,rotation=0,stripScale=1,dirty=true,period=0;
     const clamp=value=>Math.max(0,Math.min(Math.max(0,count-1),value));
     const item=value=>count?((value%count)+count)%count:0;
     const normalize=value=>loop?item(value):clamp(value);
@@ -10,7 +10,7 @@
       if(!dirty)return;dirty=false;
       for(let i=0;i<count;i++){
         const known=sizes.get(i),w=known?known[0]:width,h=known?known[1]:height,quarter=rotation%180!==0;
-        const scale=Math.min(width/(quarter?h:w),height/(quarter?w:h));
+        const scale=Math.min(width/(quarter?h:w),height/(quarter?w:h))*stripScale;
         imageWidths[i]=w*scale;imageHeights[i]=h*scale;widths[i]=(quarter?h:w)*scale;heights[i]=(quarter?w:h)*scale;
         centers[i]=i?centers[i-1]+(widths[i-1]+widths[i])/2:0;
       }
@@ -25,7 +25,7 @@
       let lo=0,hi=count-1;while(lo+1<hi){const mid=(lo+hi)>>1;if(centers[mid]<=pixel)lo=mid;else hi=mid;}
       return cycle*count+lo+(pixel-centers[lo])/(centers[hi]-centers[lo]);
     }
-    function resize(w,h,angle=0){w=Math.max(1,w);h=Math.max(1,h);if(width!==w||height!==h||rotation!==angle){width=w;height=h;rotation=angle;dirty=true;}}
+    function resize(w,h,angle=0,scale=1){if(!Number.isFinite(scale)||scale<.25||scale>1)throw Error('Invalid strip scale');w=Math.max(1,w);h=Math.max(1,h);if(width!==w||height!==h||rotation!==angle||stripScale!==scale){width=w;height=h;rotation=angle;stripScale=scale;dirty=true;}}
     function measure(at,w,h){if(!(w>0&&h>0)||at<0||at>=count)return;const old=sizes.get(at);if(!old||old[0]!==w||old[1]!==h){sizes.set(at,[w,h]);dirty=true;}}
     function layout(position){
       build();if(!count)return[];const origin=offset(position),left=origin-width/2,right=origin+width/2;

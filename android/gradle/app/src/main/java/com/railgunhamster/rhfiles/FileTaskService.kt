@@ -165,8 +165,7 @@ object FileTasks {
       if(now-j.notified>750) {j.notified=now;service?.update("${j.current} · ${j.bytes/1024} KB · ${j.done}/${j.files} 项")}
     }
   }
-  internal fun execute(context:Context,j:Job) {
-    val storage=NativeStorage(context)
+  internal fun execute(context:Context,j:Job,storage:NativeStorage=NativeStorage(context)) {
     if(j.op=="cache-open") {
       val path=j.args.getString("path");val entry=storage.stat(path)
       j.files=1;j.total=entry.size;j.current=entry.name;j.state="running"
@@ -190,6 +189,14 @@ object FileTasks {
     val paths=j.args.optJSONArray("sources") ?: JSONArray()
     val sources=(0 until paths.length()).map {paths.getString(it)}.distinct()
     val destination=j.args.optString("destination")
+    if(j.op=="delete"&&!j.args.optBoolean("permanent",true)) {
+      require(sources.isNotEmpty()&&sources.all{storage.isRemote(it)}&&storage.remote.canRecycle(sources)){"此位置不支持回收站，文件已保留"}
+      j.files=sources.size.toLong();j.state="running"
+      storage.remote.recycleMany(sources,j.args.optJSONObject("revisions")?:JSONObject(),{checkpoint(j)},
+        {path->j.current=path;j.completed.add(path);j.done++;persist(context,j)},
+        {path,message->j.current=path;j.failures.add(path to message);persist(context,j)})
+      return
+    }
     if(j.op=="backup") {
       val pkg=j.args.getString("package");val app=context.packageManager.getApplicationInfo(pkg,0)
       val files=(listOf(app.sourceDir)+(app.splitSourceDirs?.toList() ?: emptyList())).map{File(it)}

@@ -6,7 +6,7 @@
   },
   "scripts": {
     "test": "node scripts/automation-bindings.mjs && node --test scripts/tests/*.test.mjs android/web/tests/*.test.cjs android/web/tests/format.test.js",
-    "test:android-preview": "node android/web/tests/media-check.mjs && node android/web/tests/preview-continuous-check.mjs",
+    "test:android-preview": "node android/web/tests/media-check.mjs && node android/web/tests/preview-continuous-check.mjs && node android/web/tests/gallery-delete-check.mjs",
     "api": "node scripts/rhfiles-api.mjs",
     "test:automation-ui": "node scripts/testing/automation-ui-check.mjs",
     "test:android-sort-tasks": "node android/web/tests/sort-task-check.mjs",

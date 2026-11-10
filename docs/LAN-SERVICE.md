@@ -16,6 +16,8 @@ RHFiles 设备之间只使用[设备组](DEVICE-GROUPS.md)授权。Windows 0.1.8
 
 ## 网络与恢复
 
+Windows 0.1.124 起声明 `batch-recycle` 能力：`POST /api/v1/recycle-batch-checked` 接收 `entries:[{path,revision?}]`，每批最多 64 项且正文不超过 64 KiB。请求先检查共享边界、锁、权限和重复/嵌套来源，再捕获文件版本；提供的选择版本必须匹配。返回 `recycled:[{path,receipt}]` 和 `errors:[{path,code,message}]`，不是整批原子事务。普通删除在服务所在电脑回收整个来源文件夹，不在网络上逐个删除子文件。操作 ID 仍绑定成员和请求摘要；断线只查询回执，不重新提交写入。快速操作可直接返回结果，较长操作的回执读取最多等待 5 秒的完成通知，再返回处理中。
+
 ### 当前电脑客户端的边界
 
 Windows 左侧“RHFiles 设备”在收藏夹上方列出已接受的组成员文件服务，点击即可在普通标签页浏览。地址栏也支持 `rh://WINSERVER/`、`rh://WINSERVER/D/文件夹`；重名时使用 `rh://RH@WINSERVER/D/文件夹` 指定组。仅按已接受的设备名解析，不进行 DNS/SMB 查询，不自动信任新设备；组名也重复时请从侧栏明确选择。

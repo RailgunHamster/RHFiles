@@ -3,10 +3,10 @@ const androidGallery=(()=>{
   let active=null;
   function mode(){return localStorage.getItem('rhfiles.imageBrowseMode')==='continuous'?'continuous':'paged';}
   function state(){return active?{open:true,mode:active.mode,...active.state()}:{open:false,mode:mode()};}
-  function control(command){if(!active)throw Error('图片浏览器未打开');const action=active.controls[command];if(!action)throw Error('未知图片操作');action();return state();}
+  function control(command){if(!active)throw Error('图片浏览器未打开');if(active.deleting)throw Error('正在删除当前图片');const action=active.controls[command];if(!action)throw Error('未知图片操作');action();return state();}
   function auto(command,value){if(!active?.auto)throw Error('请先打开连续图片浏览');if(command==='start'||command==='toggle'&&!active.auto.state().running)active.controls.fit();return command==='speed'?active.auto.setSpeed(value):active.auto[command]();}
   function modeSwitch(app,value){const group=ui.el('div','gallery-mode-switch');group.setAttribute('role','group');group.setAttribute('aria-label','图片浏览模式');for(const [mode,label,icon]of [['paged','逐张翻页','paged'],['continuous','连续浏览','continuous']]){const button=app.button('',icon,()=>RHFilesAPI.invoke('gallery.mode.set',{mode}),'media-icon-btn');button.querySelector('span')?.remove();button.title=label;button.setAttribute('aria-label',label);button.setAttribute('aria-pressed',String(mode===value));group.append(button);}return group;}
-  function seek(at){if(!active||!Number.isInteger(at)||at<0||at>=active.state().count)throw Error('图片位置无效');active.seek(at);return state();}
+  function seek(at){if(!active||active.deleting||!Number.isInteger(at)||at<0||at>=active.state().count)throw Error('图片位置无效或正在删除');active.seek(at);return state();}
   function progress(panel,images,getIndex,go,pause,signal){
     const row=ui.el('div','gallery-progress'),bar=ui.el('input'),label=ui.el('span','gallery-progress-label');let dragging=false;
     bar.type='range';bar.min='0';bar.max=String(images.length-1);bar.step='1';bar.disabled=images.length<2;bar.setAttribute('aria-label','图片浏览进度');bar.title='拖动快速跳转';row.append(bar,label);panel.append(row);
@@ -27,6 +27,43 @@ const androidGallery=(()=>{
     return state();
   }
   function register(view){active=view;return ()=>{if(active===view)active=null;};}
+  function dialog(title,items,view){
+    return new Promise(resolve=>{
+      const popup=ui.el('dialog','media-dialog'),heading=ui.el('strong','',title);let settled=false;
+      popup.append(heading);document.body.append(popup);
+      const abort=()=>finish(null);
+      const finish=value=>{if(settled)return;settled=true;view.signal.removeEventListener('abort',abort);popup.close();popup.remove();resolve(value);};
+      for(const item of items){const button=ui.el('button',item.danger?'danger':'',item.label);button.type='button';button.dataset.mediaAction=item.id;RHFilesUI.listen(button,'click',()=>finish(item.id),undefined,'android.gallery.dialog.'+item.id);popup.append(button);}
+      RHFilesUI.listen(popup,'cancel',event=>{event.preventDefault();finish(null);},undefined,'android.gallery.dialog.cancel');
+      RHFilesUI.listen(popup,'click',event=>{if(event.target===popup){const r=popup.getBoundingClientRect();if(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom)finish(null);}},undefined,'android.gallery.dialog.outside');
+      view.signal.addEventListener('abort',abort,{once:true});popup.showModal();
+    });
+  }
+  async function remove(expectedPath){
+    const view=active;if(!view||view.deleting)throw Error('图片浏览器未就绪');
+    const entry=view.entry();if(expectedPath&&entry.path!==expectedPath)throw Error('图片已改变，请重新读取状态');
+    view.auto?.pause();view.deleting=true;
+    try{
+      const policy=await api.deletePolicy([entry.path]);if(active!==view||view.entry().path!==entry.path)return {cancelled:true};
+      const selected=await dialog('删除 '+entry.name+'？\n'+policy.message,[{id:'confirm-delete',label:policy.recycle?'移入回收站':'永久删除',danger:true},{id:'cancel-delete',label:'取消'}],view);
+      if(selected!=='confirm-delete'||active!==view||view.entry().path!==entry.path)return {cancelled:true};
+      const revisions=entry.revision?{[entry.path]:entry.revision}:{};
+      const busy=ui.el('dialog','media-dialog'),message=ui.el('strong','','正在删除 '+entry.name+'…');busy.append(message);document.body.append(busy);busy.showModal();
+      const abortBusy=()=>{busy.close();busy.remove();};view.signal.addEventListener('abort',abortBusy,{once:true});
+      RHFilesUI.listen(busy,'cancel',event=>event.preventDefault(),undefined,'android.gallery.delete.wait');
+      let result;try{result=policy.kind==='local'?await api.runJob('trash',{sources:[entry.path]}):await api.deleteEntries({paths:[entry.path],permanent:!policy.recycle,revisions});}finally{view.signal.removeEventListener('abort',abortBusy);abortBusy();}
+      if(!(result.deleted||[]).includes(entry.path))throw Error(result.failures?.[0]?.message||'删除结果未确认，请核对目标；未重复发送');
+      view.app.state.entries=view.app.state.entries.filter(e=>e.path!==entry.path);
+      const ordered=view.entries.filter(e=>!e.isDir&&e.kind==='image'),at=ordered.findIndex(e=>e.path===entry.path),next=ordered[(at+1)%ordered.length],remaining=view.entries.filter(e=>e.path!==entry.path);
+      if(active===view){ui.closeSheet();if(next&&next.path!==entry.path)open(next,remaining,view.app);}
+      await view.app.refresh();ui.toast('已删除 '+entry.name);return {deleted:true,path:entry.path};
+    }finally{view.deleting=false;}
+  }
+  async function more(){
+    const view=active;if(!view||view.deleting)return;view.auto?.pause();const entry=view.entry();
+    const selected=await dialog(entry.name,[{id:'delete',label:'删除',danger:true},{id:'close-menu',label:'关闭'}],view);
+    if(selected==='delete'&&active===view&&view.entry().path===entry.path)return remove(entry.path);
+  }
   function open(entry,entries,app){
     if(mode()==='continuous')return androidContinuousGallery.open(entry,entries,app,register);
     const images=entries.filter(e=>!e.isDir&&e.kind==='image');if(!images.some(e=>e.path===entry.path))images.push(entry);
@@ -43,7 +80,8 @@ const androidGallery=(()=>{
     const controls={previous:()=>animate(-1),next:()=>animate(1),zoomOut:()=>{zoom=Math.max(.25,zoom/1.4);transform();},fit:()=>{zoom=1;x=y=0;transform();},rotate:()=>{rotation=(rotation+90)%360;transform();},zoomIn:()=>{zoom=Math.min(8,zoom*1.4);transform();}};
     toolbar.append(previous,icon('缩小','zoomOut',controls.zoomOut),icon('适应','fit',controls.fit),icon('旋转','rotate',controls.rotate),icon('放大','zoomIn',controls.zoomIn),next);
     info.hidden=true;const progressBar=progress(panel,images,()=>index,at=>seekAt(at),()=>{},signal);
-    const clearView=register({mode:'paged',entry:()=>images[index],entries,app,controls,seek:seekAt,state:()=>({path:images[index].path,index,count:images.length,position:index,zoom,rotation,previewIndex:progressBar.preview(),loopBoundary:boundary.state()})});
+    header.insertBefore(icon('图片更多选项','more',()=>RHFilesAPI.invoke('gallery.more').catch(app.error)),header.children[2]);
+    const clearView=register({mode:'paged',signal,entry:()=>images[index],entries:images,app,controls,seek:seekAt,state:()=>({path:images[index].path,index,count:images.length,position:index,zoom,rotation,previewIndex:progressBar.preview(),loopBoundary:boundary.state()})});
     function seekAt(at){clearTimeout(settleTimer);settling=sliding=false;points.clear();origin=null;index=at;render();}
     function source(item){const key=JSON.stringify([item.path,item.modifiedMs,item.size]);if(!cache.has(key)){if(cache.size>=5)cache.delete(cache.keys().next().value);cache.set(key,api.imageUrl(item));}return cache.get(key);}
     function render(){
@@ -92,9 +130,9 @@ const androidGallery=(()=>{
     RHFilesUI.listen(viewport,'click',()=>{if(moved||settling)return;clearTimeout(tapTimer);tapTimer=setTimeout(()=>panel.classList.toggle('chrome-hidden'),230);},{signal},"android.web.js.gallery.open.f057c1e4f451");
     RHFilesUI.listen(viewport,'dblclick',()=>{clearTimeout(tapTimer);zoom=zoom===1?2:1;x=y=0;transform();},{signal},"android.web.js.gallery.open.ecc9bd5c139a");
     RHFilesUI.listen(viewport,'wheel',event=>{event.preventDefault();zoom=Math.max(.25,Math.min(8,zoom*(event.deltaY>0?.9:1.1)));transform();},{passive:false,signal},"android.web.js.gallery.open.eb6ce9fd7939");
-    RHFilesUI.listen(document,'keydown',event=>{if(/INPUT|SELECT|TEXTAREA/.test(event.target.tagName))return;if(event.key==='ArrowRight')animate(1);if(event.key==='ArrowLeft')animate(-1);if(event.key==='Home')seekAt(0);if(event.key==='End')seekAt(images.length-1);},{signal},"android.web.js.gallery.open.ea5a60ea371d");
+    RHFilesUI.listen(document,'keydown',event=>{if(event.target.closest?.('dialog')||/INPUT|SELECT|TEXTAREA/.test(event.target.tagName))return;if(event.key==='ArrowRight')animate(1);if(event.key==='ArrowLeft')animate(-1);if(event.key==='Home')seekAt(0);if(event.key==='End')seekAt(images.length-1);},{signal},"android.web.js.gallery.open.ea5a60ea371d");
     ui.onClosed(()=>{boundary.destroy();clearView();controller.abort();clearTimeout(tapTimer);clearTimeout(settleTimer);epoch++;for(const image of track.querySelectorAll('img'))image.removeAttribute('src');cache.clear();});
     render();
   }
-  return {open,mode,setMode,state,control,auto,seek,progress,modeSwitch};
+  return {open,mode,setMode,state,control,auto,seek,progress,modeSwitch,more,remove};
 })();

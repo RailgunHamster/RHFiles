@@ -98,19 +98,21 @@
   function autoControl(command,value){if(focused&&command!=='pause')throw Error(text('请先退出专注浏览','Exit focused image viewing first'));if(state?.kind!=='image'||state.mode!=='continuous')throw Error(text('请先打开连续图片浏览','Open continuous image browsing first'));if(command==='start'||command==='toggle'&&!auto.state().running){zoom=1;x=y=0;}return command==='speed'?auto.setSpeed(value):auto[command]();}
   function header(){if(!state)return;const i=index(),shown=caption();$('title').textContent=shown.name;$('title').title=shown.name;document.title=shown.name+' · RHFiles';$('counter').textContent=(shown.index+1)+' / '+state.entries.length;$('previous').disabled=state.kind==='image'?state.entries.length<2:i===0;$('next').disabled=state.kind==='image'?state.entries.length<2:i===state.entries.length-1;for(const mode of ['paged','continuous'])$('mode-'+mode).setAttribute('aria-pressed',String(state.mode===mode));imageProgress();}
   async function source(entry){const key=entry.path;if(!sources.has(key)){if(sources.size>=32)sources.delete(sources.keys().next().value);sources.set(key,key.startsWith('rhfiles-device:')?core.invoke('device_fs',{action:'resource',args:{path:key}}).then(v=>v.url):Promise.resolve(core.convertFileSrc(key)));}return sources.get(key);}
+  let stripScale=1;
   function transform(){
+    if(state?.mode==='continuous'&&stripScale!==Math.min(zoom,1)){images();return;}
     const quarter=angle%180!==0,w=$('viewport').clientWidth,h=$('viewport').clientHeight;$('viewport').classList.toggle('image-zoomed',zoom>1);
     for(const [at,page]of pages){
       const image=page.querySelector('img'),active=at===Math.round(position),frame=state.mode==='continuous'?stripFrames.get(at):null;
       image.style.width=frame?frame.imageWidth+'px':quarter?h+'px':'100%';
       image.style.height=frame?frame.imageHeight+'px':quarter?w+'px':'100%';
-      image.style.transform=`translate(-50%,-50%) translate(${active?x:0}px,${active?y:0}px) scale(${active?zoom:1}) rotate(${angle}deg)`;
+      image.style.transform=`translate(-50%,-50%) translate(${active?x:0}px,${active?y:0}px) scale(${active?(frame?Math.max(zoom,1):zoom):1}) rotate(${angle}deg)`;
     }
     header();paintSelection();
   }
   function images(){
     if(!state||state.kind!=='image')return;
-    const center=Math.round(position),continuous=state.mode==='continuous';header();$('auto-scroll').hidden=!continuous;$('auto-speed-label').hidden=!continuous;strip.resize($('viewport').clientWidth,$('viewport').clientHeight,angle);
+    const center=Math.round(position),continuous=state.mode==='continuous';header();$('auto-scroll').hidden=!continuous;$('auto-speed-label').hidden=!continuous;stripScale=continuous?Math.min(zoom,1):1;strip.resize($('viewport').clientWidth,$('viewport').clientHeight,angle,stripScale);
     stripFrames=new Map(continuous?strip.layout(position).map(frame=>[frame.slot,frame]):[]);
     const wanted=continuous?[...stripFrames.keys()]:state.entries.length<2?[0]:[center,center+1,center-1];
     for(const [at,page]of pages)if(!wanted.includes(at)){page.querySelector('img').removeAttribute('src');page.remove();pages.delete(at);}

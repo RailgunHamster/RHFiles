@@ -154,6 +154,7 @@ pub enum FileRequest {
         path: String,
     },
     Recycle { path: String, revision: String },
+    RecycleBatch { entries: Vec<(String, Option<String>)> },
     RestoreRecycle { receipt: String },
     CheckedMutation { path:String, destination:Option<String>, revision:String, target_revision:Option<String> },
     UploadCreate {
@@ -183,6 +184,12 @@ impl FileRequest {
             Self::Recycle { path, revision } => {
                 validate_path(path)?;
                 if revision.is_empty() || revision.len() > 256 {return Err("[invalid_request] 文件版本无效".into());}
+                Ok(())
+            }
+            Self::RecycleBatch { entries } => {
+                if entries.is_empty() || entries.len()>64 {return Err("[invalid_request] 批量回收数量无效".into());}
+                for (path,revision) in entries {validate_path(path)?;if revision.as_ref().is_some_and(|v|v.is_empty()||v.len()>256){return Err("[invalid_request] 文件版本无效".into());}}
+                if serde_json::to_vec(&serde_json::json!({"entries":entries.iter().map(|(path,revision)|serde_json::json!({"path":path,"revision":revision})).collect::<Vec<_>>()})).map_err(|e|e.to_string())?.len()>65536{return Err("[too_large] 批次路径过长，请缩小操作范围".into());}
                 Ok(())
             }
             Self::CheckedMutation { path,destination,revision,target_revision } => {
@@ -278,6 +285,7 @@ impl FileRequest {
             Self::Copy { .. } => "copy",
             Self::Delete { .. } => "delete",
             Self::Recycle { .. } => "recycle",
+            Self::RecycleBatch { .. } => "recycle.batch",
             Self::RestoreRecycle { .. } => "recycle.restore",
             Self::CheckedMutation {destination,..} => if destination.is_some(){"rename.checked"}else{"delete.checked"},
             Self::UploadCreate { .. } => "upload.create",
@@ -299,7 +307,7 @@ impl FileRequest {
         )
     }
     fn tracked_mutation(&self) -> bool {
-        matches!(self,Self::Recycle{..}|Self::RestoreRecycle{..}|Self::CheckedMutation{..}|Self::Delete{..}|Self::Copy{..}|Self::Rename{..}|Self::Mkdir{..})
+        matches!(self,Self::Recycle{..}|Self::RecycleBatch{..}|Self::RestoreRecycle{..}|Self::CheckedMutation{..}|Self::Delete{..}|Self::Copy{..}|Self::Rename{..}|Self::Mkdir{..})
     }
     fn build(&self, route: &Route) -> Result<RequestBuilder, String> {
         let (method, endpoint) = match self {
@@ -314,6 +322,7 @@ impl FileRequest {
             Self::Copy { .. } => (Method::POST, "copy".into()),
             Self::Delete { .. } => (Method::POST, "delete".into()),
             Self::Recycle { .. } => (Method::POST, "recycle-checked".into()),
+            Self::RecycleBatch { .. } => (Method::POST, "recycle-batch-checked".into()),
             Self::RestoreRecycle { .. } => (Method::POST, "recycle-restore".into()),
             Self::CheckedMutation {destination,..} => (Method::POST,if destination.is_some(){"rename-checked"}else{"delete-checked"}.into()),
             Self::UploadCreate { .. } => (Method::POST, "uploads".into()),
@@ -354,6 +363,7 @@ impl FileRequest {
                 },
             ));
         match self {
+            Self::RecycleBatch { entries } => {request=request.json(&json!({"entries":entries.iter().map(|(path,revision)|json!({"path":path,"revision":revision})).collect::<Vec<_>>()}));}
             Self::RestoreRecycle { receipt } => { request = request.json(&json!({"receipt":receipt})); }
             Self::Recycle { path, revision } => {
                 request = request.json(&json!({"path":path,"revision":revision}));

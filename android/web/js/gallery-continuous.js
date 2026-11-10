@@ -22,12 +22,13 @@ const androidContinuousGallery=(()=>{
     RHFilesUI.listen(document,'visibilitychange',()=>{if(document.hidden)auto.pause();},{signal},'android.gallery.auto.visibility');
     function caption(){const entries=[...pages].map(([slot,page])=>({slot,index:strip.item(slot),page,image:page.querySelector('img')})),hit=RHFilesImageStrip.hitImage(viewport,entries,mousePoint,rotation),at=hit?.index??index;return {index:at,name:images[at].name,path:images[at].path,source:hit?'pointer':'position'};}
     function paintCaption(){const shown=caption();title.textContent=shown.name;info.textContent=(shown.index+1)+' / '+images.length;}
-    function transform(){viewport.classList.toggle('image-zoomed',zoom>1);for(const [at,page]of pages){const image=page.querySelector('img'),f=stripFrames.get(at),active=at===Math.round(position);if(!f)continue;image.style.width=f.imageWidth+'px';image.style.height=f.imageHeight+'px';image.style.transform=`translate(-50%,-50%) translate(${active?x:0}px,${active?y:0}px) scale(${active?zoom:1}) rotate(${rotation}deg)`;}paintCaption();}
+    function transform(){render();}
+    function paintTransform(){viewport.classList.toggle('image-zoomed',zoom>1);for(const [at,page]of pages){const image=page.querySelector('img'),f=stripFrames.get(at),active=at===Math.round(position);if(!f)continue;image.style.width=f.imageWidth+'px';image.style.height=f.imageHeight+'px';image.style.transform=`translate(-50%,-50%) translate(${active?x:0}px,${active?y:0}px) scale(${active?Math.max(1,zoom):1}) rotate(${rotation}deg)`;}paintCaption();}
     function render(){
       if(signal.aborted)return;
       const previousIndex=index;index=strip.item(Math.round(position));
-      if(previousIndex!==index){zoom=1;x=y=0;}
-      strip.resize(viewport.clientWidth,viewport.clientHeight,rotation);stripFrames=new Map(strip.layout(position).map(f=>[f.slot,f]));
+      if(previousIndex!==index){if(zoom>1)zoom=1;x=y=0;}
+      strip.resize(viewport.clientWidth,viewport.clientHeight,rotation,Math.min(1,zoom));stripFrames=new Map(strip.layout(position).map(f=>[f.slot,f]));
       title.textContent=images[index].name;info.textContent=(index+1)+' / '+images.length;previous.disabled=next.disabled=images.length<2;progressBar.update(index);
       for(const [at,page]of pages)if(!stripFrames.has(at)){page.querySelector('img').removeAttribute('src');page.remove();pages.delete(at);}
       for(const at of stripFrames.keys()){
@@ -42,7 +43,7 @@ const androidContinuousGallery=(()=>{
         }
         const f=stripFrames.get(at);page.style.left=f.left+'px';page.style.width=f.width+'px';page.dataset.relative=String(at-index);
       }
-      track.style.transform='';transform();boundary.update([...stripFrames.values()],{width:viewport.clientWidth,count:images.length,zoom,cycle:Math.floor(Math.round(position)/images.length)});
+      track.style.transform='';paintTransform();boundary.update([...stripFrames.values()],{width:viewport.clientWidth,count:images.length,zoom,cycle:Math.floor(Math.round(position)/images.length)});
     }
     function put(value){position=images.length<2?0:value;render();}
     function jump(delta){stop();auto.pause();points.clear();origin=null;zoom=1;x=y=0;rotation=0;put(Math.round(position)+delta);transform();}
@@ -53,7 +54,8 @@ const androidContinuousGallery=(()=>{
     toolbar.append(previous,icon('缩小','zoomOut',controls.zoomOut),icon('适应','fit',controls.fit),icon('旋转','rotate',controls.rotate),icon('放大','zoomIn',controls.zoomIn),next);
     info.hidden=true;const progressBar=androidGallery.progress(panel,images,()=>index,at=>seekAt(at),()=>{stop();auto.pause();},signal);
     function seekAt(at){stop();auto.pause();points.clear();origin=null;zoom=1;x=y=0;rotation=0;put(at);}
-    const clearView=register({mode:'continuous',entry:()=>images[index],entries,app,controls,auto,seek:seekAt,state:()=>({path:images[index].path,index,count:images.length,position:strip.normalize(position),zoom,rotation,caption:caption(),previewIndex:progressBar.preview(),loopBoundary:boundary.state(),autoScroll:auto.state()})});
+    header.insertBefore(icon('图片更多选项','more',()=>RHFilesAPI.invoke('gallery.more').catch(app.error)),header.children[2]);
+    const clearView=register({mode:'continuous',signal,entry:()=>images[index],entries:images,app,controls,auto,seek:seekAt,state:()=>({path:images[index].path,index,count:images.length,position:strip.normalize(position),zoom,rotation,caption:caption(),previewIndex:progressBar.preview(),loopBoundary:boundary.state(),autoScroll:auto.state()})});
     function momentum(now){
       if(signal.aborted)return;const dt=Math.min(40,Math.max(0,now-lastTime));lastTime=now;
       const nextPosition=strip.move(position,velocity*dt);put(nextPosition);velocity*=Math.exp(-dt/130);
@@ -89,7 +91,7 @@ const androidContinuousGallery=(()=>{
     RHFilesUI.listen(viewport,'pointermove',event=>{if(event.pointerType==='mouse'){mousePoint={x:event.clientX,y:event.clientY};paintCaption();}},{signal},'android.gallery.continuous.caption.move');
     RHFilesUI.listen(viewport,'pointerleave',()=>{mousePoint=null;paintCaption();},{signal},'android.gallery.continuous.caption.leave');
     RHFilesUI.listen(window,'blur',()=>{mousePoint=null;paintCaption();},{signal},'android.gallery.continuous.caption.blur');
-    RHFilesUI.listen(document,'keydown',event=>{if(event.isComposing||event.ctrlKey||event.altKey||event.metaKey||/INPUT|SELECT|TEXTAREA/.test(event.target.tagName)||event.target.isContentEditable)return;if(event.key===' '){event.preventDefault();if(!event.repeat)void RHFilesAPI.invoke('gallery.auto.toggle').catch(error=>ui.toast(error.message||String(error)));return;}if(event.key==='Home'){event.preventDefault();seekAt(0);}if(event.key==='End'){event.preventDefault();seekAt(images.length-1);}if(event.key==='ArrowRight'){event.preventDefault();jump(1);}if(event.key==='ArrowLeft'){event.preventDefault();jump(-1);}},{signal},'android.gallery.continuous.keys');
+    RHFilesUI.listen(document,'keydown',event=>{if(event.target.closest?.('dialog')||event.isComposing||event.ctrlKey||event.altKey||event.metaKey||/INPUT|SELECT|TEXTAREA/.test(event.target.tagName)||event.target.isContentEditable)return;if(event.key===' '){event.preventDefault();if(!event.repeat)void RHFilesAPI.invoke('gallery.auto.toggle').catch(error=>ui.toast(error.message||String(error)));return;}if(event.key==='Home'){event.preventDefault();seekAt(0);}if(event.key==='End'){event.preventDefault();seekAt(images.length-1);}if(event.key==='ArrowRight'){event.preventDefault();jump(1);}if(event.key==='ArrowLeft'){event.preventDefault();jump(-1);}},{signal},'android.gallery.continuous.keys');
     let viewportSize='';
     const resize=new ResizeObserver(()=>{const size=viewport.clientWidth+':'+viewport.clientHeight;if(viewportSize&&size!==viewportSize){stop();points.clear();origin=null;}viewportSize=size;render();});resize.observe(viewport);
     ui.onClosed(()=>{boundary.destroy();clearView();controller.abort();stop();auto.pause();clearTimeout(tapTimer);resize.disconnect();for(const page of pages.values())page.querySelector('img').removeAttribute('src');pages.clear();cache.clear();});

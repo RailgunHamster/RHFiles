@@ -90,7 +90,7 @@ const androidFeatures = (() => {
     notice(node,'关闭页面不会中断正在运行的任务。失败和中断只保留结果与原因，不重试旧请求；再次操作请重新选择当前文件。');
     if(!lastJobs.length)notice(node,'暂无任务');
     for(const j of lastJobs.slice(0,100)) {
-      const card=ui.el('article','task-card');card.append(ui.el('strong','',(names[j.op]||j.op)+' · '+states[j.state]));
+      const card=ui.el('article','task-card');card.append(ui.el('strong','',(j.op==='delete'&&j.args?.permanent===false?'移入目标电脑回收站':names[j.op]||j.op)+' · '+states[j.state]));
       const seconds=Math.max(1,((j.finished || Date.now())-j.started)/1000);
       card.append(ui.el('p','muted',fmt.displayPathText(j.current)),ui.el('p','',fmt.size(j.bytes)+(j.total?' / '+fmt.size(j.total):'')+' · '+(j.state==='paused'?'已暂停':fmt.size(j.bytes/seconds)+'/s（平均）')+' · '+j.done+'/'+j.files+' 项'));
       const progress=document.createElement('progress');progress.max=Math.max(j.total,j.bytes,1);

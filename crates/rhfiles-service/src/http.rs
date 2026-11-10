@@ -390,7 +390,7 @@ async fn handle(s: Arc<State>, r: Request) -> Result<Response> {
     let a=s.auth.authenticate_grouped(header(&r,"Authorization"),r.method().as_str(),Some(&s.groups))?;
     a.check(false,false)?;
     if a.compatibility_binding.is_some(){return Err(Error::new("forbidden","兼容凭据仅能用于 WebDAV"));}
-    if lookup{return Ok(s.operations.lookup(path.strip_prefix(crate::operations::PREFIX).unwrap(),&a.id)?.response());}
+    if lookup{return Ok(s.operations.lookup(path.strip_prefix(crate::operations::PREFIX).unwrap(),&a.id)?.wait_response(Duration::from_secs(5)).await);}
     let id=header(&r,crate::operations::HEADER).ok_or_else(||bad("操作标识无效"))?.to_owned();
     let endpoint=path.to_owned();
     let (parts,body)=r.into_parts();
@@ -412,7 +412,7 @@ async fn handle(s: Arc<State>, r: Request) -> Result<Response> {
             }
         });
     }
-    Ok(receipt.response())
+    Ok(receipt.wait_response(Duration::from_millis(150)).await)
 }
 
 async fn handle_direct(s: Arc<State>, mut r: Request) -> Result<Response> {
@@ -635,7 +635,7 @@ async fn handle_direct(s: Arc<State>, mut r: Request) -> Result<Response> {
         return Ok(response.map(Body::new));
     }
     match (method.as_str(),path.as_str()) {
-        ("GET","/api/v1/capabilities")=>Ok(Json(serde_json::json!({"protocol":1,"name":"RHFiles","permissions":a.permissions,"features":["list","stat","range","versioned-ranges-sha256","mkdir","rename","delete","tus","webdav","image-thumbnails","checked-mutations","async-mutation-receipts","webdav-client-grant"],"recycleBin":cfg!(windows),"windowsCompatibility":s.compatibility.lock().unwrap().clone(),"overwrite":false,"webdav":"/dav/","uploads":"/api/v1/uploads","maxUpload":MAX_UPLOAD})).into_response()),
+        ("GET","/api/v1/capabilities")=>Ok(Json(serde_json::json!({"protocol":1,"name":"RHFiles","permissions":a.permissions,"features":["list","stat","range","versioned-ranges-sha256","mkdir","rename","delete","tus","webdav","image-thumbnails","checked-mutations","async-mutation-receipts","batch-recycle","webdav-client-grant"],"recycleBin":cfg!(windows),"windowsCompatibility":s.compatibility.lock().unwrap().clone(),"overwrite":false,"webdav":"/dav/","uploads":"/api/v1/uploads","maxUpload":MAX_UPLOAD})).into_response()),
         ("GET","/api/v1/list")=>{
             let q:ListQuery=query(&r)?;if q.limit==0||q.limit>2000{return Err(bad("limit 必须在 1–2000 之间"));}
             let cached=s.cache.lock().unwrap().get(&q.path).filter(|c|header(&r,"Cache-Control")!=Some("no-cache")&&c.0.elapsed()<Duration::from_secs(2)).cloned();
@@ -681,6 +681,41 @@ async fn handle_direct(s: Arc<State>, mut r: Request) -> Result<Response> {
                 let mut output=std::io::Cursor::new(Vec::new());image.write_to(&mut output,image::ImageFormat::Png).map_err(|_|Error::new("internal","缩略图生成失败"))?;Ok(output.into_inner())
             }).await.map_err(|_|Error::new("internal","缩略图生成失败"))??;
             a.check(false,false)?;Ok(([("Content-Type","image/png")],bytes).into_response())
+        },
+        ("POST","/api/v1/recycle-batch-checked")=>{
+            #[derive(Deserialize)] #[serde(deny_unknown_fields)] struct Item {path:String,revision:Option<String>}
+            #[derive(Deserialize)] #[serde(deny_unknown_fields)] struct Batch {entries:Vec<Item>}
+            let m:Batch=json(r).await?;
+            if m.entries.is_empty()||m.entries.len()>64{return Err(bad("回收站每批须为 1–64 项"));}
+            a.check(false,true)?;
+            let mut names=Vec::new();
+            for item in &m.entries {
+                if item.revision.as_ref().is_some_and(|v|v.is_empty()||v.len()>256){return Err(bad("文件版本无效"));}
+                let node=s.storage.node(&item.path)?;node.require_child()?;
+                let key=if cfg!(windows){node.virtual_path.to_lowercase()}else{node.virtual_path.clone()};
+                if names.iter().any(|p:&String|p==&key||p.starts_with(&(key.clone()+"/"))||key.starts_with(&(p.clone()+"/"))){return Err(bad("批次不能包含重复或嵌套的来源"));}
+                names.push(key);s.unlocked(&item.path,&a).await?;
+            }
+            let storage=s.storage.clone();let owner=a.id.clone();
+            let result=tokio::task::spawn_blocking(move||{
+                // Capture all revisions before touching any source. A selected
+                // revision, when supplied, is never replaced by a fresh one.
+                let plan=m.entries.into_iter().map(|item|{
+                    let stamp=storage.stat(&item.path).and_then(|e|{
+                        if item.revision.as_ref().is_some_and(|r|r!=&e.revision){Err(Error::new("conflict","源文件已变化，文件已保留"))}else{Ok(e.revision)}
+                    });(item.path,stamp)
+                }).collect::<Vec<_>>();
+                let mut recycled=Vec::new();let mut errors=Vec::new();
+                for (path,stamp) in plan {
+                    let access=a.clone();
+                    match stamp.and_then(|revision|storage.recycle_checked(&path,&revision,&owner,move||access.check(false,true))) {
+                        Ok(receipt)=>recycled.push(serde_json::json!({"path":path,"receipt":receipt})),
+                        Err(error)=>errors.push(serde_json::json!({"path":path,"code":error.code,"message":error.message})),
+                    }
+                }
+                serde_json::json!({"recycled":recycled,"errors":errors})
+            }).await.map_err(|_|Error::new("internal","批量回收操作异常结束，请核对目标；未重复执行"))?;
+            s.invalidate();Ok(Json(result).into_response())
         },
         ("POST","/api/v1/recycle-checked")=>{
             let m:CheckedMutation=json(r).await?;

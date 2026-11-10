@@ -77,7 +77,7 @@ internal class RhFilesConnection(private var config:JSONObject) {
     if(!response.isSuccessful){val detail=try{JSONObject(String(response.body!!.byteStream().readBytesBounded(16384),Charsets.UTF_8)).optJSONObject("error")?.optString("message")}catch(_:Exception){null};response.close();throw HttpFailure(response.code,"RHFiles：HTTP ${response.code} · "+(detail?:when(response.code){401->"授权已失效，请重新配对";403->"电脑端未授予此权限";409,412->"目标已存在或目录已变化，未覆盖";423->"文件被其他客户端锁定";else->"请求失败"}))};return response
   }
   private fun objectReply(r:Response)=r.use{JSONObject(String(it.body!!.byteStream().readBytesBounded(8*1024*1024),Charsets.UTF_8))}
-  private fun entry(v:JSONObject,path:String)=NativeEntry(path,v.getString("name"),v.getBoolean("isDir"),v.getLong("size"),v.getLong("modifiedMs"))
+  private fun entry(v:JSONObject,path:String)=NativeEntry(path,v.getString("name"),v.getBoolean("isDir"),v.getLong("size"),v.getLong("modifiedMs"),revision=v.optString("revision").takeIf{it.isNotEmpty()&&it!="null"})
   fun list(relative:String,parent:String):List<NativeEntry> {
     val result=mutableListOf<NativeEntry>();var revision:String?=null
     do {
@@ -125,7 +125,45 @@ internal class RhFilesConnection(private var config:JSONObject) {
     })
   }
   fun thumbnail(relative:String):JSONObject=request("GET","/api/v1/thumbnail","/$relative").use{JSONObject().put("dataUrl","data:image/png;base64,"+Base64.encodeToString(it.body!!.byteStream().readBytesBounded(1024*1024),Base64.NO_WRAP))}
-  fun mutate(action:String,relative:String,destination:String?=null){require(action in listOf("mkdir","rename","delete"));val v=JSONObject().put("path","/$relative");if(destination!=null)v.put("destination","/$destination");request("POST","/api/v1/$action",body=v.toString().toRequestBody(JSON)).close()}
+  fun capabilities():JSONObject=objectReply(request("GET","/api/v1/capabilities"))
+  private fun mutation(endpoint:String,value:JSONObject):JSONObject {
+    val bytes=value.toString().toByteArray();require(bytes.size<=65536){"操作参数过大，请分批处理"}
+    val lease=DeviceGroups.fileLease(config)
+    val nonce=ByteArray(32).also{SecureRandom().nextBytes(it)}
+    val id="${System.currentTimeMillis()}."+Base64.encodeToString(nonce,Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+    val header="X-RHFiles-Operation-Id"
+    val initial=try{request("POST",endpoint,body=bytes.toRequestBody(JSON),headers=mapOf(header to id))}catch(e:HttpFailure){throw e}catch(_:IOException){null}
+    fun result(response:Response):JSONObject?=response.use{
+      lease()
+      if(it.code==202){require(it.header(header)==id){"远端任务标识不匹配，未重复操作"};null}
+      else {require(it.header(header)==null||it.header(header)==id){"远端任务标识不匹配"};val text=String(it.body!!.byteStream().readBytesBounded(65536),Charsets.UTF_8);if(text.isBlank())JSONObject()else JSONObject(text)}
+    }
+    if(initial!=null)result(initial)?.let{return it}
+    val deadline=System.nanoTime()+TimeUnit.MINUTES.toNanos(15);var failures=0
+    repeat(200){
+      lease();check(System.nanoTime()<deadline){"远端操作结果未确认；没有重复发送操作，请核对目标及回收站"}
+      val start=System.nanoTime()
+      val response=try{request("GET","/api/v1/operations/$id")}catch(e:HttpFailure){throw IOException("远端操作回执不可用（HTTP ${e.status}）；没有重复发送操作，请核对目标及回收站",e)}catch(e:IOException){if(++failures>=3)throw IOException("远端操作结果未确认；没有重复发送操作，请核对目标及回收站",e);null}
+      if(response!=null){require(response.header(header)==id){response.close();"远端任务标识不匹配，未重复操作"};result(response)?.let{return it};failures=0}
+      // New hosts wait on completion. Bound polling against older hosts too.
+      val elapsed=TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-start)
+      if(elapsed<250)Thread.sleep(250-elapsed)
+    }
+    error("远端操作结果未确认；没有重复发送操作，请核对目标及回收站")
+  }
+  fun recycleMany(entries:List<Pair<String,String?>>):JSONObject {
+    require(entries.isNotEmpty()&&entries.size<=32){"每批最多 32 项"}
+    val cap=capabilities();require(cap.optBoolean("recycleBin")&&cap.getJSONObject("permissions").optBoolean("delete")){"目标电脑不支持回收站或未授予删除权限，文件已保留"}
+    val features=cap.optJSONArray("features")?:org.json.JSONArray()
+    if((0 until features.length()).any{features.optString(it)=="batch-recycle"})return mutation("/api/v1/recycle-batch-checked",JSONObject().put("entries",org.json.JSONArray(entries.map{(path,revision)->JSONObject().put("path","/$path").put("revision",revision?:JSONObject.NULL)})))
+    val recycled=org.json.JSONArray();val errors=org.json.JSONArray()
+    for((path,selected)in entries){
+      try{val revision=selected?:objectReply(request("GET","/api/v1/stat","/$path")).getString("revision");val reply=mutation("/api/v1/recycle-checked",JSONObject().put("path","/$path").put("revision",revision));recycled.put(JSONObject().put("path","/$path").put("receipt",reply.getString("receipt")))}
+      catch(e:Exception){errors.put(JSONObject().put("path","/$path").put("message",e.message?:"移入回收站失败"));break}
+    }
+    return JSONObject().put("recycled",recycled).put("errors",errors)
+  }
+  fun mutate(action:String,relative:String,destination:String?=null){require(action in listOf("mkdir","rename","delete"));val v=JSONObject().put("path","/$relative");if(destination!=null)v.put("destination","/$destination");mutation("/api/v1/$action",v)}
   /** Retain one bounded chunk until HEAD confirms its offset. Never replay a
    * non-idempotent whole-file PUT after a transport failure. */
   fun upload(relative:String,input:InputStream,length:Long,progress:(Int)->Unit) {

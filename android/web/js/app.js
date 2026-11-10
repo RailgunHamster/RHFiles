@@ -713,12 +713,15 @@
   }
   async function remove(paths) {
     if (blocked() || !paths.length) return;
-      const recycle = api.featuresAvailable() && paths.every(p=>!api.isVirtual(p));
-      const confirmed = await ui.confirm('删除 ' + paths.length + ' 项？', (recycle ? '移入 RHFiles 回收站，可在首页恢复。\n' : '本次为永久删除，无法撤销。\n') + paths.slice(0,3).map(fmt.baseName).join('\n'), recycle ? '移入回收站' : '永久删除');
+      const localRecycle=api.featuresAvailable()&&paths.every(p=>!api.isVirtual(p));
+      const policy=localRecycle?{recycle:true,kind:'local',message:'移入 RHFiles 回收站，可在首页恢复。'}:api.featuresAvailable()?await api.deletePolicy(paths):{recycle:false,kind:'permanent',message:'本次为永久删除，无法撤销。'};
+      const recycle=policy.recycle;
+      const confirmed = await ui.confirm('删除 ' + paths.length + ' 项？', policy.message+'\n'+paths.slice(0,3).map(fmt.baseName).join('\n'), recycle ? '移入回收站' : '永久删除');
     if (!confirmed) return;
     const start = { ...state.route };
     await task('正在删除 ' + paths.length + ' 项', async () => {
-      const report = recycle ? await api.runJob('trash',{sources:paths}) : await api.deleteEntries({ paths, permanent: true });
+      const revisions=Object.fromEntries(state.entries.filter(e=>paths.includes(e.path)&&e.revision).map(e=>[e.path,e.revision]));
+      const report = policy.kind==='local' ? await api.runJob('trash',{sources:paths}) : await api.deleteEntries({ paths, permanent: !recycle,revisions });
       const deleted = new Set(report.deleted || []);
       const position=captureListPosition(deleted);
       state.entries = state.entries.filter(item => !deleted.has(item.path));

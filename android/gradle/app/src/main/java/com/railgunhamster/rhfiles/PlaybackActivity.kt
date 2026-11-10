@@ -103,19 +103,25 @@ class PlaybackActivity:AppCompatActivity() {
   private var rhProgress:LinearLayout?=null
   private var rhQueueLabel:TextView?=null
   private var rhQueueSeek:SeekBar?=null
+  private val deleteIo=java.util.concurrent.Executors.newSingleThreadExecutor()
+  private var deleteJob:String?=null
+  private var deletingSelected:String?=null
+  private var deletePending=false
+  private var deleteDialog:androidx.appcompat.app.AlertDialog?=null
   private val rhUi=android.os.Handler(android.os.Looper.getMainLooper())
   private val rhTick=object:Runnable{override fun run(){if(rhWindow!=null&&player!=null){updateRhProgress();if(header.visibility==View.VISIBLE)rhUi.postDelayed(this,500)}}}
   override fun onCreate(savedInstanceState:Bundle?) {
     super.onCreate(savedInstanceState)
     NativeAutomation.install(this);active=java.lang.ref.WeakReference(this)
     onBackPressedDispatcher.addCallback(this){if(isRhVideo())rhUiAction(JSONObject().put("command","back"))else finish()}
-    path=intent.getStringExtra("path") ?: run{finish();return}
+    path=savedInstanceState?.getString("filePath")?:intent.getStringExtra("path") ?: run{finish();return}
     storage=NativeStorage(applicationContext)
     try {
       source=if(storage.isRemote(path)||path.startsWith("rhvideo://"))Uri.parse(path) else if(storage.isDocument(path))storage.docUri(path) else {
         val file=storage.local(path);require(file.isFile && file.canRead()) {"文件不存在或没有读取权限"};Uri.fromFile(file)
       }
-      queue=PlaybackQueue.parse(JSONObject().put("path",path).put("name",intent.getStringExtra("name")).put("queue",JSONArray(intent.getStringExtra("queue")?:"[]")))
+      queue=PlaybackQueue.parse(JSONObject().put("path",path).put("name",intent.getStringExtra("name")).put("queue",JSONArray(savedInstanceState?.getString("fileQueue")?:intent.getStringExtra("queue")?:"[]")))
+      deleteJob=savedInstanceState?.getString("deleteJob");deletingSelected=savedInstanceState?.getString("deletingSelected")
       rhTicket=intent.getStringExtra("rhvideoPlaylist")
       rhTicket?.let{ticket->
         val lease=intent.getStringExtra("rhvideoLease");val first=RhVideoClient.get(this).playbackWindow(ticket,0,lease)
@@ -187,6 +193,7 @@ class PlaybackActivity:AppCompatActivity() {
     playerView.setOnTouchListener(mediaPageTouch)
     playerView.setControllerVisibilityListener(PlayerView.ControllerVisibilityListener{visibility->header.visibility=if(failure.visibility==View.VISIBLE)View.VISIBLE else visibility;rhProgress?.visibility=visibility;rhUi.removeCallbacks(rhTick);if(visibility==View.VISIBLE)rhTick.run()})
     playerView.hideController();header.visibility=View.GONE;paintRhActions()
+    deleteJob?.let{job->deletingSelected?.let{selected->header.visibility=View.VISIBLE;titleView.text="正在删除…";rhUi.post{watchDelete(job,selected)}}}
   }
   override fun onPause(){mediaPageTouch?.cancel();super.onPause()}
   private fun dp(value:Int)=(value*resources.displayMetrics.density).toInt()
@@ -205,6 +212,7 @@ class PlaybackActivity:AppCompatActivity() {
     return try{RhVideoClient.get(this).closePlayback(rhTicket!!,w.lease,direction,whole,targetIndex)}finally{finish()}
   }
   internal fun automationState():JSONObject {
+    if(deleteJob!=null&&player==null)return JSONObject().put("opened",true).put("deleting",true).put("path",path).put("index",index).put("count",queue.size).put("inputId",rhInputId).put("jobId",deleteJob)
     val engine=player?:error("播放器尚未就绪")
     engine.videoDecoderCounters?.ensureUpdated()
     val currentPosition=engine.currentPosition
@@ -219,6 +227,7 @@ class PlaybackActivity:AppCompatActivity() {
     if(args.has("expectedPath"))require(args.getString("expectedPath")==path){"播放文件已改变，请重新读取状态"}
     if(args.has("expectedInputId"))require(args.getLong("expectedInputId")==rhInputId){"播放输入已改变，请重新读取状态"}
     val command=args.getString("command")
+    if(command=="delete"){require(!isRhVideo()){"媒体库请使用暂存标记"};requestDelete();return automationState()}
     rhWindow?.let{w->try{RhVideoClient.get(this).checkPlayback(rhTicket!!,w.lease)}catch(e:Exception){if(command in listOf("back","close")){rhClosing=true;finish();return JSONObject().put("closed",true).put("stale",true)}else throw e}}
     if(command=="back"||command=="close")return closeRhPlayback(whole=command=="close")
     if(command in PlayerTracks.commands)engine.trackSelectionParameters=PlayerTracks.change(engine.currentTracks,engine.trackSelectionParameters,args)
@@ -262,7 +271,7 @@ class PlaybackActivity:AppCompatActivity() {
     if(event.keyCode==KeyEvent.KEYCODE_BACK){if(event.action==KeyEvent.ACTION_UP && !event.isCanceled)onBackPressedDispatcher.onBackPressed();return true}
     return super.dispatchKeyEvent(event)
   }
-  override fun onStart(){super.onStart();if(::source.isInitialized)try{rhWindow?.let{RhVideoClient.get(this).checkPlayback(rhTicket!!,it.lease)};startPlayer()}catch(e:Exception){Toast.makeText(this,e.message,Toast.LENGTH_LONG).show();finish()}}
+  override fun onStart(){super.onStart();if(::source.isInitialized&&deleteJob==null)try{rhWindow?.let{RhVideoClient.get(this).checkPlayback(rhTicket!!,it.lease)};startPlayer()}catch(e:Exception){Toast.makeText(this,e.message,Toast.LENGTH_LONG).show();finish()}}
   private fun requestRhRotationRestart(){
     val owner=player?:return;val input=rhInputId
     rhUi.post{if(player===owner&&rhInputId==input&&!rhClosing&&!isFinishing)restartRhRotation(owner)}
@@ -410,6 +419,8 @@ class PlaybackActivity:AppCompatActivity() {
     menu.menu.findItem(4).isVisible=source.scheme !in listOf("remote","rhvideo")
     menu.menu.findItem(3).setCheckable(true).setChecked(player?.repeatMode==Player.REPEAT_MODE_ONE)
     val rotateInput=rhInputId
+    val deleteInput=rhInputId;val deletePath=path
+    if(!isRhVideo())menu.menu.add(0,10,0,"删除当前文件").isEnabled=!deletePending&&deleteJob==null
     (playerView as? RhVideoPlayerView)?.let{view->menu.menu.add(0,8,2,"智能旋转").setCheckable(true).setChecked(view.autoRotate)}
     rhWindow?.let{w->val error=RhVideoClient.get(this).favoriteState("video",currentRhId(),w.generation).optString("favoriteError");if(error.isNotEmpty()&&error!="null")menu.menu.add(0,9,4,"收藏失败 · 查看详情")}
     rhWindow?.takeIf{it.options.optBoolean("reference")}?.let{w->
@@ -429,9 +440,57 @@ class PlaybackActivity:AppCompatActivity() {
       7->rhUiAction(JSONObject().put("command","playlist.options").put("options",JSONObject().put("portraitOnly",rhWindow?.options?.optBoolean("portraitOnly")!=true)))
       8->rhUiAction(JSONObject().put("command","autoRotate").put("expectedInputId",rotateInput))
       9->rhUiAction(JSONObject().put("command","favorite.error").put("expectedInputId",rotateInput))
+      10->rhUiAction(JSONObject().put("command","delete").put("expectedInputId",deleteInput).put("expectedPath",deletePath))
     };true};menu.show()
   }
-  override fun onSaveInstanceState(outState:Bundle){player?.let(selectionMemory::remember);outState.putFloat("rhLocalGain",player?.let{RhVideoVolume.local(it)}?:rhLocalGain);outState.putInt("index",player?.currentMediaItemIndex?:index);outState.putInt("rhGlobalIndex",(rhWindow?.offset?:0)+(player?.currentMediaItemIndex?:index));outState.putLong("position",player?.currentPosition ?: position);outState.putBoolean("play",player?.playWhenReady ?: play);super.onSaveInstanceState(outState)}
+  private fun requestDelete(){
+    check(!deletePending&&deleteJob==null){"正在处理删除"};val selected=path;val input=rhInputId;val selectedName=queue[index].name
+    deletePending=true
+    deleteIo.execute{
+      try{
+        val policy=DeletePolicy.describe(storage,listOf(selected))
+        rhUi.post{
+          if(isFinishing||isDestroyed||path!=selected||rhInputId!=input){deletePending=false;return@post}
+          deleteDialog=androidx.appcompat.app.AlertDialog.Builder(this).setTitle("删除 $selectedName？").setMessage(policy.getString("message"))
+            .setNegativeButton("取消",null).setPositiveButton(if(policy.getBoolean("recycle"))"移入回收站"else"永久删除"){_,_->
+              if(path==selected&&rhInputId==input&&deleteJob==null)beginDelete(selected,policy)
+              else Toast.makeText(this,"播放文件已改变，未删除",Toast.LENGTH_LONG).show()
+            }.create().also{dialog->dialog.setOnDismissListener{deletePending=false;deleteDialog=null};dialog.show()}
+        }
+      }catch(error:Exception){rhUi.post{deletePending=false;if(!isFinishing&&!isDestroyed)Toast.makeText(this,error.message,Toast.LENGTH_LONG).show()}}
+    }
+  }
+  private fun beginDelete(selected:String,policy:JSONObject){
+    val engine=player?:return;play=engine.playWhenReady;position=engine.currentPosition
+    // Release the network range reader and OS file handle before recycling.
+    selectionMemory.remember(engine);RhVideoVolume.untrack(engine);playerView.player=null;engine.release();player=null
+    val args=JSONObject().put("sources",JSONArray(listOf(selected))).put("permanent",!policy.getBoolean("recycle"))
+    queue.firstOrNull{it.path==selected}?.revision?.let{args.put("revisions",JSONObject().put(selected,it))}
+    try{deleteJob=FileTasks.start(this,if(policy.getString("kind")=="local")"trash"else"delete",args)}
+    catch(error:Exception){deletePending=false;Toast.makeText(this,error.message,Toast.LENGTH_LONG).show();startPlayer();return}
+    val job=deleteJob!!
+    deletingSelected=selected;titleView.text="正在删除…";header.visibility=View.VISIBLE;moreButton.isEnabled=false
+    rhUi.post{watchDelete(job,selected)}
+  }
+  private fun watchDelete(job:String,selected:String){
+      if(isFinishing||isDestroyed||deleteJob!=job)return
+      val result=FileTasks.status(this,job)
+      if(result.getString("state") in listOf("queued","scanning","running","paused")){rhUi.postDelayed({watchDelete(job,selected)},250);return}
+      deleteJob=null;deletingSelected=null;moreButton.isEnabled=true
+      val completed=result.optJSONArray("completed")?:JSONArray()
+      if((0 until completed.length()).any{completed.optString(it)==selected}){
+        val selectedName=queue.first{it.path==selected}.name;val next=PlaybackQueue.afterDelete(queue,selected);queue=next.first;index=next.second
+        if(queue.isEmpty()){Toast.makeText(this,"已删除，文件夹内没有其他视频",Toast.LENGTH_SHORT).show();finish();return}
+        sources=queue.map{item->if(storage.isRemote(item.path))Uri.parse(item.path)else if(storage.isDocument(item.path))storage.docUri(item.path)else Uri.fromFile(storage.local(item.path))}
+        path=queue[index].path;source=sources[index];position=0;play=true;titleView.text=queue[index].name;title=queue[index].name
+        playerView.setShowNextButton(queue.size>1);playerView.setShowPreviousButton(queue.size>1)
+        Toast.makeText(this,"已删除 $selectedName",Toast.LENGTH_SHORT).show()
+      }else{
+        Toast.makeText(this,result.optJSONArray("failures")?.optJSONObject(0)?.optString("message")?.takeIf{it.isNotBlank()}?:result.optString("message","删除失败，请核对目标"),Toast.LENGTH_LONG).show();play=false
+      }
+      if(lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED))startPlayer()
+  }
+  override fun onSaveInstanceState(outState:Bundle){if(!isRhVideo()){outState.putString("filePath",path);outState.putString("fileQueue",PlaybackQueue.json(queue));outState.putString("deleteJob",deleteJob);outState.putString("deletingSelected",deletingSelected)};player?.let(selectionMemory::remember);outState.putFloat("rhLocalGain",player?.let{RhVideoVolume.local(it)}?:rhLocalGain);outState.putInt("index",player?.currentMediaItemIndex?:index);outState.putInt("rhGlobalIndex",(rhWindow?.offset?:0)+(player?.currentMediaItemIndex?:index));outState.putLong("position",player?.currentPosition ?: position);outState.putBoolean("play",player?.playWhenReady ?: play);super.onSaveInstanceState(outState)}
   override fun onStop(){rhUi.removeCallbacks(rhTick);rhEndMessage?.cancel();rhEndMessage=null;rememberRhPlaylist();player?.let{selectionMemory.remember(it);index=it.currentMediaItemIndex;position=it.currentPosition;rhTicket?.let{ticket->RhVideoClient.get(this).rememberPlayback(ticket,(rhWindow?.offset?:0)+index,position,it.duration)};play=it.playWhenReady;rhLocalGain=RhVideoVolume.local(it);RhVideoVolume.untrack(it);playerView.player=null;(playerView as? RhVideoPlayerView)?.unbindRotationEngine(it);it.release()};player=null;window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);super.onStop()}
-  override fun onDestroy(){rhFavoriteErrorDialog?.dismiss();rhFavoriteErrorDialog=null;rhEvents?.close();rhEvents=null;if(active.get()===this)active.clear();super.onDestroy()}
+  override fun onDestroy(){deleteDialog?.dismiss();deleteDialog=null;deleteIo.shutdown();rhUi.removeCallbacksAndMessages(null);rhFavoriteErrorDialog?.dismiss();rhFavoriteErrorDialog=null;rhEvents?.close();rhEvents=null;if(active.get()===this)active.clear();super.onDestroy()}
 }
