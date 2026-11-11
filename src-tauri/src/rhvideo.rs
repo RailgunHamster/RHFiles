@@ -1348,6 +1348,10 @@ pub(crate) async fn client_window_configured(
                     .inner_size(size.0, size.1)
                     .min_inner_size(minimum.0, minimum.1)
                     .maximized(maximized)
+                    // Wry 0.55 can fail the entire WebView2 creation when
+                    // MoveFocus returns E_INVALIDARG. The file viewer calls
+                    // show and set_focus once the window has been built.
+                    .focused(label != crate::file_viewer::LABEL)
                     .with_environment(platform.environment()),
             )
             .build()

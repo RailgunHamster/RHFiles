@@ -475,6 +475,7 @@ impl SeekState{
 struct Api {
     version:String,
     prebuilt_index:bool,
+    bundled_runtime: Option<PathBuf>,
     new: unsafe extern "C" fn(i32, *const *const c_char) -> Ptr,
     release: unsafe extern "C" fn(Ptr),
     media_new: unsafe extern "C" fn(Ptr, *const c_char) -> Ptr,
@@ -652,8 +653,11 @@ impl Api {
                         .map_err(|_| concat!("VLC 缺少接口：", $name))?
                 };
             }
+            let bundled_runtime = (prebuilt_index && std::env::current_exe().ok()
+                .and_then(|exe| exe.parent().map(|parent| parent.join("vlc")))
+                .as_ref() == Some(&path)).then_some(path);
             Ok(Self {
-                version,prebuilt_index,
+                version,prebuilt_index,bundled_runtime,
                 new: function!("libvlc_new"),
                 release: function!("libvlc_release"),
                 media_new: function!("libvlc_media_new_location"),
@@ -910,6 +914,11 @@ impl Engine {
         Ok(())
     }
     fn open(&mut self, url: &str, title: String, seconds: f64) -> Result<(), String> {
+        self.open_with_media_options(url, title, seconds, &[])
+    }
+    fn open_with_media_options(
+        &mut self, url: &str, title: String, seconds: f64, media_options: &[&CStr],
+    ) -> Result<(), String> {
         if let Some(timing)=&self.file_timing{timing.stop();}
         // Mark the attempt before any fallible preparation. An unsuccessful
         // attempt is never evidence that an existing surface has no pixels.
@@ -936,6 +945,9 @@ impl Engine {
             for option in [format!(":network-caching={}",network_cache_ms()), ":http-proxy=".to_owned()] {
                 let option = CString::new(option).unwrap();
                 (self.api.media_option)(media, option.as_ptr());
+            }
+            for option in media_options {
+                (self.api.media_option_flag)(media, option.as_ptr(), 0x2);
             }
             // VLC 3 repeats only positive counts, and only at EOF (not errors).
             // Keep the input/decoder alive rather than reopening it each loop.

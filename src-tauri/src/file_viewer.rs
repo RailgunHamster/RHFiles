@@ -7,7 +7,7 @@ use rhfiles_service::connection::DevicePath;
 use crate::types::CancelFlag;
 #[cfg(windows)]
 use crate::rhvideo_player::file_player;
-const LABEL:&str="window-file-viewer";
+pub(crate) const LABEL:&str="window-file-viewer";
 static SESSION:Mutex<Option<Session>>=Mutex::new(None);
 static SEQUENCE:AtomicU64=AtomicU64::new(0);
 static WINDOW:AtomicU64=AtomicU64::new(0);
@@ -108,6 +108,11 @@ async fn dispatch(app:AppHandle,action:String,args:Value,cancel:tauri::State<'_,
             };
             #[cfg(windows)]
             if let Some(attempt)=attempt {
+                if let Err(error)=attempt.recover_initial_surface(&app).await {
+                    if let Ok(mut session)=SESSION.lock(){*session=None;}
+                    let _=window.destroy();
+                    return Err(error);
+                }
                 let entry=&state.entries[index];
                 file_player::start(app.clone(),entry.path.clone(),entry.name.clone(),attempt,prepared);
             }

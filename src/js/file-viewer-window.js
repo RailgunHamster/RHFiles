@@ -159,12 +159,16 @@
     panel.hidden=!diagnosticsOpen||button.hidden;
     const startup=video?.startup;
     const phases={window:text('正在打开查看器…','Opening viewer…'),source:text('正在连接视频来源…','Connecting to video source…'),player:text('正在初始化播放器…','Initializing player…'),firstFrame:text('正在等待首帧…','Waiting for first frame…'),output:text('正在显示首帧…','Showing first frame…')};
+    const stageLabels={read:text('读取视频数据','Reading video data'),stream:text('识别视频流','Opening video stream'),decoder:text('启动解码器或解码','Starting decoder or decoding'),videoOutput:text('初始化视频输出','Initializing video output'),presentation:text('显示首帧','Displaying first frame')};
+    const waitingAt=stageLabels[startup?.stages?.waitingAt];
+    const status=startup?.phase==='ready'?text('首帧就绪','First frame ready'):
+      startup?.phase==='stalled'?[text('首帧等待超时','First frame timed out'),waitingAt].filter(Boolean).join(' · '):
+      startup?.phase==='firstFrame'&&waitingAt?waitingAt:phases[startup?.phase]||text('正在准备视频…','Opening video…');
     if(startup?.error)error(startup.error);
-    else if(!rendered&&!button.hidden)$('video-startup-status').textContent=phases[startup?.phase]||text('正在准备视频…','Opening video…');
+    else if(!rendered&&!button.hidden)$('video-startup-status').textContent=status;
     if(panel.hidden)return;
     $('video-diagnostics-title').textContent=button.textContent;
     const source={local:text('本地文件','Local file'),smb:'SMB',device:text('RHFiles 设备','RHFiles device')}[startup?.transport];
-    const status=startup?.phase==='ready'?text('首帧就绪','First frame ready'):phases[startup?.phase]||text('正在准备视频…','Opening video…');
     $('video-diagnostics-summary').textContent=[source,startup?.reused?text('已复用播放器','Player reused'):null,startup?.error||status].filter(Boolean).join(' · ');
     const stages=startup?.stages;
     const init=startup?.vlcInit;
@@ -181,8 +185,11 @@
         [text('创建 VLC 实例','Create VLC instance'),init.instanceMs],
         [text('创建 VLC 播放器','Create VLC player'),init.playerCreateMs],
       ] : []),
+      ...(startup?.pluginWarmup?[[text('后台读取 VLC 插件','Background VLC plugin reads'),
+        startup.pluginWarmup.elapsedMs==null?text('进行中','In progress'):startup.pluginWarmup.elapsedMs]]:[]),
       [text('画布排队','Surface dispatch'),startup?.surfaceQueueMs],
       [text('画布创建与初始化','Surface creation and setup'),startup?.surfaceInitMs],
+      ...(startup?.surfaceInlineError?[[text('首次创建画布','First canvas attempt'),startup.surfaceInlineError]]:[]),
       [text('来源准备','Source setup'),startup?.sourceMs],
       [text('切换播放输入','Switch playback input'),stages?.inputSwitchMs],
       [text('开始播放至读到数据','Play to first input data'),stages?.firstReadMs],
@@ -190,13 +197,17 @@
       ...(startup?.transport==='device'?[[text('远程首字节','Remote first byte'),startup.firstRemoteByteMs]]:[]),
       [text('播放缓冲','Playback buffering'),stages?.bufferingMs],
       [text('缓冲后等解码器','Decoder wait after buffering'),stages?.decoderWaitMs],
-      [text('解码器就绪至解码首帧','Decoder ready to first picture'),stages?.decodeMs],
+      [text('视频解码器加载与初始化','Load and initialize video decoder'),stages?.decoderInitMs],
+      [text('开始播放至启动视频输出','Play to video output setup'),stages?.videoOutputSetupAtMs],
+      [text('视频输出初始化','Initialize video output'),stages?.videoOutputSetupMs],
+      [text('解码器就绪至首张画面','Decoder ready to first picture'),stages?.decodeMs],
       [text('开始播放至解码首帧','Play to first decoded picture'),stages?.decodedAtMs],
       [text('解码至检测到 VLC 输出','Decoded to observed VLC output'),stages?.outputMs],
       [text('打开至网页视口就绪','Open to WebView viewport'),startup?.frontendViewportAtMs],
       [text('首帧显示排队','First-frame display dispatch'),startup?.layoutQueueMs],
       [text('首帧显示布局','First-frame display layout'),startup?.layoutMs],
       [text('VLC 输出至画布显示','VLC output to visible surface'),startup?.revealMs],
+      ...(startup?.firstFrameTimeoutMs!=null?[[text('首帧等待超时','First-frame deadline'),startup.firstFrameTimeoutMs]]:[]),
       [text('总等待','Total wait'),startup?.elapsedMs],
     ];
     $('video-diagnostics-steps').replaceChildren(...rows.map(([label,value])=>{

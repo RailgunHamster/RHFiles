@@ -7,6 +7,8 @@ use std::{
 };
 
 static FILE_ENGINE: Mutex<Option<Engine>> = Mutex::new(None);
+#[path = "file_video_warmup.rs"]
+mod warmup;
 static ATTEMPT: Mutex<Option<Arc<Attempt>>> = Mutex::new(None);
 static PLAY: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -30,6 +32,7 @@ struct Startup {
     surface_init_ms: Option<u64>,
     surface_create_window_ms: Option<u64>,
     surface_mode: Option<&'static str>,
+    surface_inline_error: Option<String>,
     player_init_ms: Option<u64>,
     vlc_init: Option<VlcInitTimings>,
     source_ms: Option<u64>,
@@ -41,6 +44,7 @@ struct Startup {
     frontend_viewport_at_ms: Option<u64>,
     reveal_origin: Option<&'static str>,
     total_ms: Option<u64>,
+    first_frame_timeout_ms: Option<u64>,
     reused: bool,
     failure: Option<(String, u64)>,
 }
@@ -53,7 +57,7 @@ pub(crate) struct Attempt {
     remote: Arc<MediaReadTiming>,
     input: OnceLock<u64>,
     startup: Mutex<Startup>,
-    initial_surface: Mutex<Option<Result<PendingSurface, String>>>,
+    initial_surface: Mutex<Option<PendingSurface>>,
     initial_rect: OnceLock<[i32; 4]>,
 }
 
@@ -114,10 +118,24 @@ impl Attempt {
     }
 
     pub(crate) fn prepare_initial_surface(&self, window: &tauri::WebviewWindow) {
-        let result = make_surface(window, self, None);
-        if let Ok(mut slot) = self.initial_surface.lock() {
-            *slot = Some(result);
+        let result = window.hwnd().map_err(|e| e.to_string())
+            .and_then(|parent| make_surface(window, HWND(parent.0), self, None));
+        match result {
+            Ok(surface) => {
+                if let Ok(mut slot) = self.initial_surface.lock() { *slot = Some(surface); }
+            }
+            Err(error) => self.update(|timing| timing.surface_inline_error = Some(error)),
         }
+    }
+
+    pub(crate) async fn recover_initial_surface(self: &Arc<Self>, app: &AppHandle) -> Result<(), String> {
+        let failed_inline = self.startup.lock().map_err(|_| "播放器诊断不可用")?
+            .surface_inline_error.is_some();
+        if failed_inline {
+            let surface = create_video_surface(app, self.clone()).await?;
+            *self.initial_surface.lock().map_err(|_| "播放器画布状态不可用")? = Some(surface);
+        }
+        Ok(())
     }
 
     fn observe_frame(&self, engine: &Engine) -> bool {
@@ -181,6 +199,8 @@ impl Attempt {
             "player"
         } else if timing.output.is_some() {
             "output"
+        } else if timing.first_frame_timeout_ms.is_some() {
+            "stalled"
         } else {
             "firstFrame"
         };
@@ -191,9 +211,12 @@ impl Attempt {
             "surfaceQueueMs": timing.surface_queue_ms, "surfaceInitMs": timing.surface_init_ms,
             "surfaceCreateWindowMs":timing.surface_create_window_ms,
             "surfaceMode": timing.surface_mode,
+            "surfaceInlineError": timing.surface_inline_error,
             "playerInitMs": timing.player_init_ms, "vlcInit": timing.vlc_init, "sourceMs": timing.source_ms,
+            "pluginWarmup": warmup::snapshot(),
             "firstRemoteByteMs": self.remote.first_byte_ms(),
             "inputToFrameMs": timing.input_to_frame_ms, "totalMs": timing.total_ms,
+            "firstFrameTimeoutMs": timing.first_frame_timeout_ms,
             "layoutQueueMs": timing.layout_queue_ms, "layoutMs": timing.layout_ms,
             "layoutConfiguredAtMs":timing.layout_configured_at_ms,"revealOrigin":timing.reveal_origin,
             "frontendViewportAtMs":timing.frontend_viewport_at_ms,
@@ -227,6 +250,9 @@ pub(crate) fn prepare(attempt: Arc<Attempt>) -> Prepared {
             drop(engine.startup_trace.take());
             engine.file_timing =
                 file_video_timing::Binding::install(&engine.api._library, engine.instance);
+            if let Some(runtime) = engine.api.bundled_runtime.as_deref().filter(|_| !warmup::started()) {
+                tauri::async_runtime::spawn_blocking(move || warmup::read_plugins(runtime));
+            }
             engine
         });
         attempt.update(|timing| {
@@ -238,11 +264,12 @@ pub(crate) fn prepare(attempt: Arc<Attempt>) -> Prepared {
 }
 
 pub(crate) async fn prewarm_library() -> Result<(), String> {
-    if LOADED_API.get().is_some() {
-        return Ok(());
-    }
     tauri::async_runtime::spawn_blocking(|| {
-        Api::shared(&mut VlcInitTimings::default(), true).map(|_| ())
+        let api = Api::shared(&mut VlcInitTimings::default(), true)?;
+        if let Some(runtime) = &api.bundled_runtime {
+            warmup::read_plugins(runtime);
+        }
+        Ok(())
     })
     .await
     .map_err(|error| error.to_string())?
@@ -375,6 +402,7 @@ fn show_empty_canvas(surface: Surface, width: i32, height: i32) -> bool {
 
 fn make_surface(
     view: &tauri::WebviewWindow,
+    parent: HWND,
     attempt: &Attempt,
     enqueued: Option<Instant>,
 ) -> Result<PendingSurface, String> {
@@ -382,7 +410,6 @@ fn make_surface(
     if !attempt.current() {
         return Err("查看内容已切换".into());
     }
-    let parent = HWND(view.hwnd().map_err(|e| e.to_string())?.0);
     let mut rect = RECT::default();
     unsafe { GetClientRect(parent, &mut rect) }.map_err(|e| e.to_string())?;
     let creating = Instant::now();
@@ -437,13 +464,29 @@ async fn create_video_surface(
     attempt: Arc<Attempt>,
 ) -> Result<PendingSurface, String> {
     let view = app.get_webview_window(LABEL).ok_or("查看器已关闭")?;
-    let (tx, rx) = tokio::sync::oneshot::channel();
     let enqueued = Instant::now();
-    app.run_on_main_thread(move || {
-        let _ = tx.send(make_surface(&view, &attempt, Some(enqueued)));
-    })
-    .map_err(|e| e.to_string())?;
-    rx.await.map_err(|_| "播放器画布创建结束".to_owned())?
+    // The inline attempt can run before Wry registers the new HWND. Resolve
+    // it on a later UI turn and stop waiting if this selection has changed.
+    for delay in [0, 50, 150, 300] {
+        if delay > 0 { tokio::time::sleep(Duration::from_millis(delay)).await; }
+        if !attempt.current() { return Err("查看内容已切换".into()); }
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let view = view.clone();
+        let attempt = attempt.clone();
+        app.run_on_main_thread(move || {
+            let result = view.hwnd().map(|parent| make_surface(&view, HWND(parent.0), &attempt, Some(enqueued)));
+            let _ = tx.send(result);
+        }).map_err(|e| e.to_string())?;
+        let result = tokio::time::timeout(Duration::from_secs(2), rx)
+            .await.map_err(|_| "播放器窗口等待画布创建超时".to_owned())?
+            .map_err(|_| "播放器画布创建结束".to_owned())?;
+        match result {
+            Ok(surface) => return surface,
+            Err(tauri::Error::RawHandleError(_)) => continue,
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    Err("播放器窗口尚未就绪，无法创建视频画布".into())
 }
 
 async fn hide_previous_frame(app: &AppHandle, surface: Surface) -> Result<(), String> {
@@ -500,7 +543,7 @@ async fn open(
                 .map_err(|_| "播放器画布状态不可用")?
                 .take();
             match initial {
-                Some(surface) => surface,
+                Some(surface) => Ok(surface),
                 None => create_video_surface(app, attempt.clone()).await,
             }
         };
@@ -537,6 +580,14 @@ async fn open(
         attempt.update(|timing| timing.source_ms = Some(millis(started)));
         Ok::<_, String>(source)
     };
+    let media_options: &[&CStr] = match std::path::Path::new(&path).extension()
+        .and_then(std::ffi::OsStr::to_str).map(str::to_ascii_lowercase).as_deref() {
+        // MP4-family files usually contain streams handled by avcodec.
+        // Both module lists keep VLC's normal fallback for mislabeled files
+        // and codecs that need another decoder.
+        Some("mp4" | "m4v" | "mov" | "3gp") => &[c":demux=mp4,any", c":codec=avcodec,any"],
+        _ => &[],
+    };
     let (engine, source) = tokio::join!(engine, source);
     let mut engine = engine?;
     let attempt = attempt.clone();
@@ -546,7 +597,7 @@ async fn open(
             if !attempt.current() || !engine.surface.current() {
                 return Err("查看内容已切换".into());
             }
-            engine.open(&source, title, 0.)?;
+            engine.open_with_media_options(&source, title, 0., media_options)?;
             Ok(())
         })();
         let mut slot = FILE_ENGINE.lock().map_err(|_| "播放器状态不可用")?;
@@ -657,13 +708,16 @@ async fn watch_first_frame(app: &AppHandle, attempt: &Arc<Attempt>) {
                     engine.input_id,
                     engine.compatibility,
                 )))
-            } else if unsafe { (engine.api.state)(engine.player as Ptr) } == 7 {
+            } else if matches!(unsafe { (engine.api.state)(engine.player as Ptr) }, 6 | 7) {
                 Some(None)
             } else {
                 None
             }
         });
         if let Some(result) = finished {
+            if result.is_none() {
+                attempt.fail("VLC 未能输出视频画面".into());
+            }
             if let Some((surface, input, compatibility)) =
                 result.filter(|_| attempt.initial_rect.get().is_none())
             {
@@ -671,9 +725,15 @@ async fn watch_first_frame(app: &AppHandle, attempt: &Arc<Attempt>) {
             } else {
                 attempt.notify(app);
             }
-            break;
+            return;
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    if attempt.current() {
+        // Keep listening through ordinary state polling. A late frame may
+        // still be displayed, and its startup timings remain available.
+        attempt.update(|timing| timing.first_frame_timeout_ms = Some(millis(attempt.started)));
+        attempt.notify(app);
     }
 }
 pub(crate) async fn request(app: AppHandle, action: &str, args: Value) -> Result<Value, String> {

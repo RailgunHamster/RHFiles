@@ -84,7 +84,8 @@ test('Windows playback reports startup stages and reuses the player for a differ
       assert.equal(result.playerInitMs === null, result.reused);
       assert.equal(result.vlcInit === null, result.reused);
       assert.equal(result.surfaceMs === null, result.reused);
-      assert.equal(result.surfaceMode, result.reused ? 'reused' : 'inline');
+      assert.equal(result.surfaceMode, result.reused ? 'reused' : result.surfaceInlineError ? 'queued' : 'inline');
+      assert.equal(result.firstFrameTimeoutMs, null);
       if (!result.reused) {
         const init = result.vlcInit;
         const needsLoad = cold && timings.length === 0;
@@ -95,10 +96,15 @@ test('Windows playback reports startup stages and reuses the player for a differ
           if (!cold) assert.ok(Number.isInteger(init.prewarm?.[key]), `${key} is recorded for prewarm`);
         }
         assert.ok(result.playerInitMs >= init.instanceMs + init.playerCreateMs + (init.dllLoadMs ?? 0));
-        assert.equal(result.surfaceQueueMs, 0, 'initial canvas is created in the window callback');
+        if (result.surfaceMode === 'inline') assert.equal(result.surfaceQueueMs, 0);
+        else assert.ok(Number.isInteger(result.surfaceQueueMs), 'canvas recovery records the dispatch wait');
         assert.ok(result.surfaceInitMs >= result.surfaceCreateWindowMs);
+        assert.ok(Number.isInteger(result.stages?.videoOutputSetupMs), 'a new VLC video output records module initialization');
       }
-      for (const key of ['firstReadMs', 'bufferingMs', 'decodeMs', 'decodedAtMs', 'outputMs']) {
+      if (!cold) {
+        assert.ok(result.pluginWarmup.filesRead > 0 && Number.isInteger(result.pluginWarmup.elapsedMs));
+      }
+      for (const key of ['firstReadMs', 'bufferingMs', 'decoderInitMs', 'decodeMs', 'decodedAtMs', 'outputMs']) {
         assert.ok(Number.isInteger(result.stages?.[key]), `${key} is measured for ${transport}: ${JSON.stringify(result.stages)}`);
       }
       for (const key of ['layoutQueueMs', 'layoutMs', 'revealMs']) assert.ok(Number.isInteger(result[key]), `${key} is measured`);
@@ -114,7 +120,7 @@ test('Windows playback reports startup stages and reuses the player for a differ
 
     let playback = await play(files[0], 'local');
     await api(page, 'media.viewer.video.diagnostics.set', {open: true});
-    assert.match(await page.evaluate("document.getElementById('video-diagnostics').innerText"), /首帧就绪.*加载 VLC DLL.*创建 VLC 实例.*创建 VLC 播放器.*画布排队.*播放缓冲.*解码至检测到 VLC 输出.*总等待/s);
+    assert.match(await page.evaluate("document.getElementById('video-diagnostics').innerText"), /首帧就绪.*加载 VLC DLL.*创建 VLC 实例.*创建 VLC 播放器.*画布排队.*播放缓冲.*视频解码器加载与初始化.*视频输出初始化.*解码至检测到 VLC 输出.*总等待/s);
     playback = await play(files[1], 'local', playback.video.inputId);
     assert.equal((await api(page, 'media.viewer.video.diagnostics')).startup.reused, true);
     await closeViewer();
@@ -164,6 +170,20 @@ test('Windows playback reports startup stages and reuses the player for a differ
       await api(page, 'media.viewer.video.control', {command: 'seek', value: 20000});
       await until(async () => (await api(page, 'media.viewer.state')).video?.positionMs >= 19500, 'seek through a real device range');
     }
+    const mislabeled = path.join(directory, 'matroska-with-mp4-extension.mp4');
+    execFileSync(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-i', files[1],
+      '-map', '0', '-c', 'copy', '-f', 'matroska', mislabeled], {windowsHide: true, timeout: 20000});
+    await play(mislabeled, 'local', playback.video.inputId);
+
+    const malformed = path.join(directory, 'malformed.mp4');
+    await fs.writeFile(malformed, 'This is not an MP4 file.');
+    await api(app, 'media.viewer.open', {path: malformed});
+    const failed = await until(async () => {
+      const state = await api(page, 'media.viewer.state');
+      return state.path === malformed && state.video?.startup?.phase === 'failed' && state;
+    }, 'an unreadable video shows the first-frame error', 25000);
+    assert.ok(failed.video.startup.error);
+    assert.equal(failed.rendered, false);
     await fs.writeFile(path.join(app.artifactDir, 'video-startup-timings.json'), JSON.stringify(timings, null, 2));
   } finally {
     page?.close();
