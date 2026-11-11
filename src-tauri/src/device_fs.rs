@@ -318,12 +318,17 @@ struct Asset {
 #[derive(Default)]
 pub(crate) struct MediaReadTiming {
     requested: OnceLock<Instant>,
-    first_byte_ms: OnceLock<u64>,
+    first_byte: OnceLock<Instant>,
 }
 impl MediaReadTiming {
     #[cfg(windows)]
     pub(crate) fn first_byte_ms(&self) -> Option<u64> {
-        self.first_byte_ms.get().copied()
+        Some(self.first_byte_at()?.duration_since(*self.requested.get()?).as_millis() as u64)
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn first_byte_at(&self) -> Option<Instant> {
+        self.first_byte.get().copied()
     }
 }
 
@@ -517,9 +522,7 @@ async fn stream(RoutePath(id): RoutePath<String>, method: Method, headers: Heade
                 Some(bytes) => {
                     if !bytes.is_empty() {
                         if let Some(timing) = timing.take() {
-                            if let Some(start) = timing.requested.get() {
-                                timing.first_byte_ms.get_or_init(|| start.elapsed().as_millis() as u64);
-                            }
+                            timing.first_byte.get_or_init(Instant::now);
                         }
                     }
                     Ok::<_, std::io::Error>(Some((bytes, (source, lease, permit, timing))))

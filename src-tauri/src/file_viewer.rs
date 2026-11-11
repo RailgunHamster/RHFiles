@@ -85,19 +85,28 @@ async fn dispatch(app:AppHandle,action:String,args:Value,cancel:tauri::State<'_,
             let prepared=if existing.is_none(){attempt.as_ref().map(|attempt|file_player::prepare(attempt.clone()))}else{None};
             #[cfg(windows)]
             let window_started=std::time::Instant::now();
-            let window=if let Some(window)=existing{window}else{
+            let window=if let Some(window)=existing{
+                #[cfg(windows)]
+                if let Some(attempt)=&attempt{attempt.window_ready(window_started);}
+                window
+            }else{
                 let title=if state.language=="en"{"RHFiles · Media viewer"}else{"RHFiles · 媒体查看器"};
-                let window=crate::rhvideo::client_window(app.clone(),LABEL,"file-viewer.html",title,(1120.,780.),(500.,360.)).await?;
                 let epoch=WINDOW.fetch_add(1,Ordering::SeqCst)+1;
+                #[cfg(windows)]
+                let initialize={let attempt=attempt.clone();move |window:&tauri::WebviewWindow|{
+                    if let Some(attempt)=attempt{attempt.window_ready(window_started);attempt.prepare_initial_surface(window);}
+                }};
+                #[cfg(not(windows))]
+                let initialize=|_:&tauri::WebviewWindow|{};
+                let window=crate::rhvideo::client_window_configured(app.clone(),LABEL,"file-viewer.html",title,(1120.,780.),(500.,360.),true,initialize).await?;
                 window.on_window_event(move|event|if matches!(event,WindowEvent::Destroyed)&&WINDOW.compare_exchange(epoch,epoch+1,Ordering::SeqCst,Ordering::SeqCst).is_ok(){if let Ok(mut s)=SESSION.lock(){*s=None;}stop_video();});window
             };
             #[cfg(windows)]
             if let Some(attempt)=attempt {
-                attempt.window_ready(window_started);
                 let entry=&state.entries[index];
                 file_player::start(app.clone(),entry.path.clone(),entry.name.clone(),attempt,prepared);
             }
-            window.set_title(&format!("{} · RHFiles",state.entries[state.index].name)).map_err(|e|e.to_string())?;window.maximize().map_err(|e|e.to_string())?;window.emit("file-viewer-changed",json!({"generation":generation})).map_err(|e|e.to_string())?;window.show().map_err(|e|e.to_string())?;window.set_focus().map_err(|e|e.to_string())?;Ok(json!(state))
+            window.set_title(&format!("{} · RHFiles",state.entries[state.index].name)).map_err(|e|e.to_string())?;window.emit("file-viewer-changed",json!({"generation":generation})).map_err(|e|e.to_string())?;window.show().map_err(|e|e.to_string())?;window.set_focus().map_err(|e|e.to_string())?;Ok(json!(state))
         }
         "state"=>Ok(SESSION.lock().map_err(|_|"查看器状态不可用")?.as_ref().map(|s|json!(s)).unwrap_or(json!({"opened":false}))),
         "window.state"=>{current(&args)?;let w=app.get_webview_window(LABEL).ok_or("查看器已关闭")?;Ok(json!({"maximized":w.is_maximized().map_err(|e|e.to_string())?,"fullscreen":w.is_fullscreen().map_err(|e|e.to_string())?}))}

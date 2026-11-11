@@ -18,7 +18,7 @@
   function paintVolume(){const value=volumeJob?.value??video?.volume??100;if(!volumeDragging)$('volume').value=String(value);$('video-volume-value').textContent=Math.round(value)+'%';}
   function fullVideo(){return fullscreen&&state?.kind==='video';}
   function paintChrome(){document.body.classList.toggle('video-fullscreen',fullVideo());document.body.classList.toggle('video-controls-visible',controlsVisible);}
-  function showControls(){clearTimeout(chromeTimer);if(!fullVideo())return;const changed=!controlsVisible;controlsVisible=true;paintChrome();if(changed)void bounds().catch(error);if(diagnosticsOpen)return;chromeTimer=setTimeout(()=>{if(volumeDragging||seekDragging||chromeHover){showControls();return;}controlsVisible=false;paintChrome();void bounds().catch(error);},2200);}
+  function showControls(){clearTimeout(chromeTimer);if(!fullVideo())return;const changed=!controlsVisible;controlsVisible=true;paintChrome();if(changed)void bounds().catch(error);if(diagnosticsOpen)return;chromeTimer=setTimeout(()=>{if(!rendered||volumeDragging||seekDragging||chromeHover){showControls();return;}controlsVisible=false;paintChrome();void bounds().catch(error);},2200);}
   async function setFullscreen(value){await windowApi.setFullscreen(value);fullscreen=value;controlsVisible=true;paintChrome();if(fullVideo())showControls();await bounds();return {fullscreen};}
   async function toggleFullscreen(){return setFullscreen(!await windowApi.isFullscreen());}
   async function setVolume(value){
@@ -94,7 +94,7 @@
     await navigator.clipboard.writeText(path);hideImageMenu();return {copied:true,path};
   }
   applyLanguage();
-  function error(value){$('message').textContent=String(value.message||value);}
+  function error(value){const target=state?.kind==='video'?'video-startup-status':'message';$(target).textContent=String(value.message||value);}
   function paintAuto(value){autoSpeed=value.speed;$('auto-scroll').textContent=value.running?text('暂停滚动','Pause'):text('自动滚动','Auto scroll');$('auto-scroll').setAttribute('aria-keyshortcuts','Space');$('auto-speed').value=value.speed;$('auto-speed-number').value=value.speed;$('auto-speed-multiplier').textContent=(value.speed/60).toFixed(1)+'×';$('auto-speed').title=text('滚动速度 ','Scroll speed ')+(value.speed/60).toFixed(1)+'×';}
   function autoControl(command,value){if(focused&&command!=='pause')throw Error(text('请先退出专注浏览','Exit focused image viewing first'));if(state?.kind!=='image'||state.mode!=='continuous')throw Error(text('请先打开连续图片浏览','Open continuous image browsing first'));if(command==='start'||command==='toggle'&&!auto.state().running){zoom=1;x=y=0;}return command==='speed'?auto.setSpeed(value):auto[command]();}
   function header(){if(!state)return;const i=index(),shown=caption();$('title').textContent=shown.name;$('title').title=shown.name;document.title=shown.name+' · RHFiles';$('counter').textContent=(shown.index+1)+' / '+state.entries.length;$('previous').disabled=state.kind==='image'?state.entries.length<2:i===0;$('next').disabled=state.kind==='image'?state.entries.length<2:i===state.entries.length-1;for(const mode of ['paged','continuous'])$('mode-'+mode).setAttribute('aria-pressed',String(state.mode===mode));imageProgress();}
@@ -138,7 +138,7 @@
     $('track').style.transform=continuous?'':`translateX(${-(position-center)*$('viewport').clientWidth}px)`;transform();
     boundary.update(continuous?[...stripFrames.values()]:wanted.map(at=>({slot:at,index:strip.item(at),left:(at-position)*$('viewport').clientWidth})),{width:$('viewport').clientWidth,count:state.entries.length,zoom,...(continuous?{cycle:Math.floor(Math.round(position)/state.entries.length)}:{})});
   }
-  function clear(){focusLeave();hideImageMenu();boundary.clear();auto?.pause();auto=null;++epoch;clearTimeout(poll);clearTimeout(chromeTimer);volumeJob=null;volumeDragging=false;wheelDelta=0;chromeHover=false;document.body.classList.remove('video-fullscreen');video=null;rendered=false;pointer=null;imageSeeking=false;zoom=1;angle=x=y=0;for(const p of pages.values())p.querySelector('img').removeAttribute('src');pages.clear();sources.clear();$('track').replaceChildren();$('track').style.transform='';$('message').textContent='';}
+  function clear(){focusLeave();hideImageMenu();boundary.clear();auto?.pause();auto=null;++epoch;clearTimeout(poll);clearTimeout(chromeTimer);volumeJob=null;volumeDragging=false;wheelDelta=0;chromeHover=false;document.body.classList.remove('video-fullscreen');video=null;rendered=false;pointer=null;imageSeeking=false;zoom=1;angle=x=y=0;for(const p of pages.values())p.querySelector('img').removeAttribute('src');pages.clear();sources.clear();$('track').replaceChildren();$('track').style.transform='';$('message').textContent='';$('video-startup-status').textContent='';}
   async function select(at){
     if(!state)return;if(closing)throw Error(text('查看器正在关闭','The viewer is closing'));const generation=state.generation;
     if(selectionTask){await selectionTask.catch(()=>{});if(generation!==state.generation)throw Error(text('查看内容已改变','The viewed content changed'));return select(at);}
@@ -158,21 +158,34 @@
     button.setAttribute('aria-expanded',String(diagnosticsOpen));
     panel.hidden=!diagnosticsOpen||button.hidden;
     const startup=video?.startup;
-    const phases={window:text('正在打开查看器…','Opening viewer…'),source:text('正在连接视频来源…','Connecting to video source…'),player:text('正在初始化播放器…','Initializing player…'),firstFrame:text('正在等待首帧…','Waiting for first frame…')};
+    const phases={window:text('正在打开查看器…','Opening viewer…'),source:text('正在连接视频来源…','Connecting to video source…'),player:text('正在初始化播放器…','Initializing player…'),firstFrame:text('正在等待首帧…','Waiting for first frame…'),output:text('正在显示首帧…','Showing first frame…')};
     if(startup?.error)error(startup.error);
-    else if(!rendered)$('message').textContent=phases[startup?.phase]||text('正在准备视频…','Opening video…');
+    else if(!rendered&&!button.hidden)$('video-startup-status').textContent=phases[startup?.phase]||text('正在准备视频…','Opening video…');
     if(panel.hidden)return;
     $('video-diagnostics-title').textContent=button.textContent;
     const source={local:text('本地文件','Local file'),smb:'SMB',device:text('RHFiles 设备','RHFiles device')}[startup?.transport];
     const status=startup?.phase==='ready'?text('首帧就绪','First frame ready'):phases[startup?.phase]||text('正在准备视频…','Opening video…');
     $('video-diagnostics-summary').textContent=[source,startup?.reused?text('已复用播放器','Player reused'):null,startup?.error||status].filter(Boolean).join(' · ');
+    const stages=startup?.stages;
     const rows=[
       [text('窗口创建','Viewer window'),startup?.windowMs],
       [text('VLC 初始化','VLC initialization'),startup?.playerInitMs],
-      [text('视频画布','Video surface'),startup?.surfaceMs],
+      [text('画布排队','Surface dispatch'),startup?.surfaceQueueMs],
+      [text('画布创建与初始化','Surface creation and setup'),startup?.surfaceInitMs],
       [text('来源准备','Source setup'),startup?.sourceMs],
+      [text('切换播放输入','Switch playback input'),stages?.inputSwitchMs],
+      [text('开始播放至读到数据','Play to first input data'),stages?.firstReadMs],
+      [text('首次读取 I/O','First read I/O'),stages?.readWaitMs],
       ...(startup?.transport==='device'?[[text('远程首字节','Remote first byte'),startup.firstRemoteByteMs]]:[]),
-      [text('开始读取至首帧','Input start to first frame'),startup?.inputToFrameMs],
+      [text('播放缓冲','Playback buffering'),stages?.bufferingMs],
+      [text('缓冲后等解码器','Decoder wait after buffering'),stages?.decoderWaitMs],
+      [text('解码器就绪至解码首帧','Decoder ready to first picture'),stages?.decodeMs],
+      [text('开始播放至解码首帧','Play to first decoded picture'),stages?.decodedAtMs],
+      [text('解码至检测到 VLC 输出','Decoded to observed VLC output'),stages?.outputMs],
+      [text('打开至网页视口就绪','Open to WebView viewport'),startup?.frontendViewportAtMs],
+      [text('首帧显示排队','First-frame display dispatch'),startup?.layoutQueueMs],
+      [text('首帧显示布局','First-frame display layout'),startup?.layoutMs],
+      [text('VLC 输出至画布显示','VLC output to visible surface'),startup?.revealMs],
       [text('总等待','Total wait'),startup?.elapsedMs],
     ];
     $('video-diagnostics-steps').replaceChildren(...rows.map(([label,value])=>{
@@ -210,9 +223,14 @@
         $('toggle').textContent=result.pauseRequested||result.state===4?text('继续','Play'):result.state===6?text('重播','Replay'):text('暂停','Pause');
         failure=result.presentationError||result.seekError||(result.state===7?text('播放失败，可使用系统应用打开','Playback failed. Try the system app.'):null);
         if(result.renderedFrames>0&&!rendered){
-          await bounds();
+          const alreadyVisible=result.startup?.phase==='ready';
+          const reveal=alreadyVisible?{visible:true}:await bounds();
           if(token!==epoch)return;
-          $('message').textContent='';rendered=true;
+          if(reveal?.visible){
+            if(reveal.startup)video.startup={...video.startup,...reveal.startup};
+            $('video-startup-status').textContent='';rendered=true;
+            if(alreadyVisible&&changedInput)void bounds().catch(e=>{if(token===epoch)error(e);});
+          }
         }else if(changedInput||result.restoringPausedFrame||result.pendingSeekMs!=null)await bounds();
       }
       if(token!==epoch)return;

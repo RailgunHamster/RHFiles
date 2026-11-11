@@ -63,7 +63,7 @@ test('filesystem media viewer: real images, continuous input, native video, inde
     fs.writeFileSync(path.join(app.artifactDir,'file-viewer-images.png'),Buffer.from((await page.send('Page.captureScreenshot',{format:'png'})).data,'base64'));
     await main('media.viewer.open',{path:path.join(directory,'sample.mkv')});await until(async()=>(await call('media.viewer.state')).kind==='video','filesystem video mode');
     const ready=()=>until(async()=>{const s=await call('media.viewer.state');return s.video?.renderedFrames>3&&s.video.positionMs>500&&s;},'native filesystem video frames',45000);
-    state=await ready();assert.equal(state.video.engine,'libVLC');assert.equal(state.video.videoWidth,320);assert.equal(state.video.videoHeight,180);assert.ok(state.video.decodedAudioBlocks>0);assert.ok(!state.video.presentationError);
+    state=await ready();assert.equal(state.video.engine,'libVLC');assert.equal(state.video.videoWidth,320);assert.equal(state.video.videoHeight,180);assert.ok(state.video.decodedAudioBlocks>0);assert.ok(!state.video.presentationError);assert.equal(state.video.startup.surfaceMode,'queued');assert.ok(Number.isInteger(state.video.startup.surfaceQueueMs));
     const oldScope={generation:state.generation,selection:state.selection,expectedInput:state.video.inputId};
     const key=async(value,code,vk)=>{await page.send('Input.dispatchKeyEvent',{type:'keyDown',key:value,code,windowsVirtualKeyCode:vk});await page.send('Input.dispatchKeyEvent',{type:'keyUp',key:value,code,windowsVirtualKeyCode:vk});};
     const decoder=()=>page.evaluate(`__TAURI__.core.invoke('file_viewer_request',{action:'video.state',args:${JSON.stringify(oldScope)}})`);

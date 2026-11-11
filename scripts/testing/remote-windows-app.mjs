@@ -15,9 +15,10 @@ export async function launchRemoteWindowsApp(){
   await ps(`$ErrorActionPreference='Stop';New-Item -ItemType Directory -Path '${directory}'|Out-Null`);
   for(const[source,name]of [[executable,'RHFiles.exe'],[path.join(root,'scripts/testing/remote-windows-app.ps1'),'bootstrap.ps1']])await run('scp',['-q','-o','BatchMode=yes','-o','ConnectTimeout=5',source,'40608@railgunhamster:'+directory.replaceAll('\\','/')+'/'+name],'',120000);
   const hash=(await ps(`(Get-FileHash -Algorithm SHA256 -LiteralPath '${directory}\\RHFiles.exe').Hash`)).trim().toLowerCase();if(hash!==expected)throw Error('Remote QA executable hash mismatch');
-  let remote,tunnel,socket;const pending=new Map(),fixtures=new Set();let sequence=0,firewall=false;
+  let remote,tunnel,socket;const pending=new Map(),fixtures=new Set(),fixtureTunnels=[];let sequence=0,firewall=false;
   const close=async()=>{
     socket?.close();tunnel?.kill();
+    for(const fixtureTunnel of fixtureTunnels)fixtureTunnel.kill();
     for(const value of pending.values()){clearTimeout(value.timer);value.reject(Error('Owned QA session closed'));}pending.clear();
     if(firewall)await ps(`Remove-NetFirewallRule -Name '${task}' -ErrorAction SilentlyContinue`);
     await ps(`$ErrorActionPreference='Stop';Unregister-ScheduledTask -TaskName '${task}' -Confirm:$false -ErrorAction SilentlyContinue;if(Test-Path -LiteralPath '${directory}\\ready.json'){$s=Get-Content -Raw -LiteralPath '${directory}\\ready.json'|ConvertFrom-Json;$p=Get-CimInstance Win32_Process -Filter ('ProcessId='+$s.pid);if($p -and $p.ExecutablePath -eq '${directory}\\RHFiles.exe'){& taskkill.exe /PID $s.pid /T /F|Out-Null}}`).catch(()=>{});
@@ -62,6 +63,24 @@ export async function launchRemoteWindowsApp(){
       firewall=true;
       await ps(`$ErrorActionPreference='Stop';New-NetFirewallRule -Name '${task}' -DisplayName '${task}' -Direction Inbound -Action Allow -Profile Any -Protocol TCP -LocalAddress '${serverIp}' -RemoteAddress '${clientIp}' -LocalPort ${port} -Program '${directory}\\RHFiles.exe'|Out-Null`);
     };
-    return {evaluate,writeNative,uploadFixture,allowInboundTestConnection,close,directory,hash:expected};
+    const forwardFixturePort=async port=>{
+      if(!Number.isInteger(port)||port<1024||port>65535)throw Error('Expected a valid owned fixture port');
+      // Keep the port identical so the service's signed loopback endpoint
+      // remains the address the client verifies. The HTTP service stays remote.
+      const forward=spawn('ssh',[...sshArgs,'-N','-o','ExitOnForwardFailure=yes','-L',`127.0.0.1:${port}:127.0.0.1:${port}`],{windowsHide:true,stdio:'ignore'});
+      fixtureTunnels.push(forward);
+      let failure;
+      forward.on('error',error=>{failure=error;});
+      await until(()=>{
+        if(failure||forward.exitCode!==null)throw failure||Error('Owned fixture forwarding exited');
+        return new Promise(resolve=>{
+          const check=net.createConnection({host:'127.0.0.1',port});
+          check.once('error',()=>resolve(false));
+          check.once('connect',()=>{check.destroy();resolve(true);});
+        });
+      },'owned SSH file-service forward',5000);
+      return `https://127.0.0.1:${port}`;
+    };
+    return {evaluate,writeNative,uploadFixture,allowInboundTestConnection,forwardFixturePort,close,directory,hash:expected};
   }catch(error){await close();throw error;}
 }

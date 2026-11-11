@@ -101,6 +101,17 @@ impl Frame {
         let Some(_guard) = self.lease() else {
             return false;
         };
+        self.render_pixels()
+    }
+    pub fn try_render(&self)->bool {
+        let Ok(mut busy)=self.gate.try_lock() else {return false;};
+        if *busy {return false;}
+        *busy=true;
+        drop(busy);
+        let _guard=Lease(self);
+        self.render_pixels()
+    }
+    fn render_pixels(&self)->bool {
         unsafe {
             let pixels = &*self.pixels.get();
             if pixels.dib==0 {

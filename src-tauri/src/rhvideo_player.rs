@@ -29,6 +29,8 @@ mod grid_host;
 pub(crate) mod shared_media;
 #[path="file_player.rs"]
 pub(crate) mod file_player;
+#[path="file_video_timing.rs"]
+mod file_video_timing;
 
 const LABEL: &str = "window-rhvideo-player";
 const CONTROLS_HEIGHT:f64=196.;
@@ -665,6 +667,7 @@ struct Engine {
     url: String,
     open_started: std::time::Instant,
     first_frame_ms: std::sync::atomic::AtomicU64,
+    file_timing: Option<file_video_timing::Binding>,
     #[cfg(debug_assertions)]
     startup_trace:Option<crate::rhvideo_trace::Binding>,
 }
@@ -774,6 +777,7 @@ impl Engine {
             url: String::new(),
             open_started: std::time::Instant::now(),
             first_frame_ms: std::sync::atomic::AtomicU64::new(0),
+            file_timing: None,
             #[cfg(debug_assertions)]
             startup_trace,
         })
@@ -847,6 +851,7 @@ impl Engine {
         Ok(())
     }
     fn open(&mut self, url: &str, title: String, seconds: f64) -> Result<(), String> {
+        if let Some(timing)=&self.file_timing{timing.stop();}
         // Mark the attempt before any fallible preparation. An unsuccessful
         // attempt is never evidence that an existing surface has no pixels.
         self.surface_history.begin_input();
@@ -922,6 +927,7 @@ impl Engine {
             }
             trace_startup(self.open_started,"audio-ready");
             (self.api.set_volume)(self.player as Ptr,self.output_gain());
+            if let Some(timing)=&self.file_timing{timing.start(self.open_started);}
             if (self.api.play)(self.player as Ptr) != 0 {
                 return Err("原生播放器无法开始播放".into());
             }
@@ -1069,6 +1075,7 @@ pub fn maintain_independent_outputs()->bool{
 }
 impl Drop for Engine {
     fn drop(&mut self) {
+        drop(self.file_timing.take());
         #[cfg(debug_assertions)]
         drop(self.startup_trace.take());
         unsafe {

@@ -1321,6 +1321,19 @@ pub(crate) async fn client_window(
     size: (f64, f64),
     minimum: (f64, f64),
 ) -> Result<tauri::WebviewWindow, String> {
+    client_window_configured(app,label,url,title,size,minimum,false,|_|{}).await
+}
+
+pub(crate) async fn client_window_configured(
+    app: AppHandle,
+    label: &'static str,
+    url: &'static str,
+    title: &'static str,
+    size: (f64, f64),
+    minimum: (f64, f64),
+    maximized: bool,
+    initialize: impl FnOnce(&tauri::WebviewWindow) + Send + 'static,
+) -> Result<tauri::WebviewWindow, String> {
     #[cfg(windows)]
     {
         // Reuse the actual controller environment, not merely a nominal data
@@ -1334,9 +1347,11 @@ pub(crate) async fn client_window(
                     .title(title)
                     .inner_size(size.0, size.1)
                     .min_inner_size(minimum.0, minimum.1)
+                    .maximized(maximized)
                     .with_environment(platform.environment()),
             )
             .build()
+            .inspect(initialize)
             .inspect(crate::rhvideo_player::install_library_host_lifetime)
             .inspect(crate::rhvideo_player::install_window_trace)
             .inspect(|window|{
@@ -1357,9 +1372,11 @@ pub(crate) async fn client_window(
             tauri::WebviewWindowBuilder::new(&app, label, tauri::WebviewUrl::App(url.into()))
                 .title(title)
                 .inner_size(size.0, size.1)
-                .min_inner_size(minimum.0, minimum.1),
+                .min_inner_size(minimum.0, minimum.1)
+                .maximized(maximized),
         )
         .build()
+        .inspect(initialize)
         .map_err(|e| e.to_string())
     }
 }
