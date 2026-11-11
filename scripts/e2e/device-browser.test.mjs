@@ -7,6 +7,8 @@ test('desktop group protocol browses real shared files in ordinary tabs with bou
   const a=await launchApp({desktopId:'device-browser-host'}),b=await launchApp({desktopId:'device-browser-client',emulateFocus:true});
   const root=path.join(a.directory,'only-fixture-files');fs.mkdirSync(root);fs.mkdirSync(path.join(root,'中文 % #'));
   fs.writeFileSync(path.join(root,'中文 % #','A.txt'),'fixture · 中文预览 0123456789');fs.writeFileSync(path.join(root,'中文 % #','a-lower.txt'),'lower');fs.writeFileSync(path.join(root,'image.bmp'),bitmap());
+  fs.writeFileSync(path.join(root,'中文 % #','data.json'),'{"value":9007199254740993}');
+  fs.writeFileSync(path.join(root,'中文 % #','truncated.json'),'{}'+' '.repeat(40000)+'null');
   fs.mkdirSync(path.join(root,'pages'));for(let i=0;i<2011;i++)fs.writeFileSync(path.join(root,'pages','item-'+i+'.txt'),'fixture');
   execFileSync('attrib.exe',['+H','+S',root],{windowsHide:true}); // Same backing attributes as C:\ and D:\, only on this owned fixture.
   try{
@@ -41,6 +43,12 @@ test('desktop group protocol browses real shared files in ordinary tabs with bou
     const content=await invoke(b,'files.list');assert(content.entries.some(e=>e.name==='A.txt'));assert.equal((await invoke(b,'navigation.state')).path,child);
     const textPath=child+'/A.txt';await invoke(b,'selection.set',{paths:[textPath]});
     await until(()=>b.evaluate("document.getElementById('preview-content').textContent.includes('中文预览')"),'remote text preview');
+    for(const [name, expected] of [['data.json',null],['truncated.json','incomplete']]){
+      await invoke(b,'selection.set',{paths:[child+'/'+name]});
+      await until(async()=>(await invoke(b,'preview.json.state')).open,'remote JSON preview');
+      assert.equal((await invoke(b,'preview.json.mode.set',{mode:'tree'})).treeError,expected);
+      if(!expected)assert.equal(await b.evaluate("document.querySelector('.json-tree-number')?.textContent"),'9007199254740993');
+    }
     // Only this private fixture's text clipboard adapter is captured. The
     // packaged copy handlers, local group state and shortcut routing are real;
     // this test must never overwrite the user's Windows clipboard.

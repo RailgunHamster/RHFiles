@@ -217,6 +217,20 @@ button:focus-visible,[role=option]:focus-visible { outline:3px solid var(--accen
 .text-preview-header strong{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .text-preview button{min-height:40px;padding:8px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--text);font:inherit}
 .text-preview-tools{display:flex;flex-wrap:wrap;gap:8px;padding-top:12px;flex:none}
+.text-preview-json-modes{display:inline-flex;gap:2px;padding:2px;border:1px solid var(--line);border-radius:11px;background:var(--surface)}
+.text-preview-json-modes button{border-color:transparent;background:transparent;min-height:36px;padding-inline:10px}
+.text-preview-json-modes button[aria-pressed="true"]{border-color:var(--line);background:var(--bg);color:var(--accent);font-weight:600}
+.text-preview-tools button[hidden]{display:none}
+.json-tree-view{font:13px/1.6 ui-monospace,monospace;color:var(--text);overflow:auto}
+.json-tree-children{margin-inline-start:7px;padding-inline-start:9px;border-inline-start:1px solid var(--line)}
+.json-tree-row{padding:5px 0;min-width:7em;overflow-wrap:anywhere;white-space:pre-wrap}
+summary.json-tree-row{min-height:40px;align-content:center;cursor:pointer;border-radius:7px}
+summary.json-tree-row:active{background:var(--surface)}
+.json-tree-key,.json-tree-number,.json-tree-literal{color:var(--accent)}
+.json-tree-count{margin-inline:7px;color:var(--muted);font-size:.9em}
+.json-tree-pager{display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin-block:6px}
+.json-tree-pager button:disabled{opacity:.45}
+.json-tree-message{margin:0;overflow-wrap:anywhere}
 .text-preview>.muted{flex:none;overflow-wrap:anywhere;margin:12px 0}
 .text-preview-content{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;user-select:text;padding-bottom:20px}
 .text-preview-source,.text-preview-markdown pre{margin:0;font:13px/1.65 ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere;tab-size:4}

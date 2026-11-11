@@ -6,7 +6,7 @@ let checks=0;const check=(value,label)=>{assert.ok(value,label);console.log('ok 
 await context.addInitScript(()=>{
   const local='/storage/emulated/0',remote='remote://aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/',pixel='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="150" height="700"><rect width="150" height="700" fill="teal"/></svg>');
   const entry=(name,kind,parent)=>({name,kind,path:parent+'/'+name,isDir:false,size:1024,modifiedMs:1});
-  const m=window.__previewQA={calls:[],remote,local,job:null,jobReads:0,texts:{'settings.json':'{"名字":"测试","items":[1,2]}','notes.md':'# 中文标题\n\n**粗体**\n\n| A | B |\n|---|---|\n|一|二|\n\n<script>window.__pwn=true</script>\n<img src="https://example.invalid/probe" onerror="window.__pwn=true">','huge.log':'中文日志\n'.repeat(100000),'delayed.json':'{"late":true}'}};
+  const m=window.__previewQA={calls:[],remote,local,job:null,jobReads:0,texts:{'settings.json':'{"名字":"测试","items":[1,2]}','wide.json':JSON.stringify({items:Array.from({length:70},(_,index)=>index),html:'<img src="https://example.invalid/tree">'}),'invalid.json':'{"broken":','notes.md':'# 中文标题\n\n**粗体**\n\n| A | B |\n|---|---|\n|一|二|\n\n<script>window.__pwn=true</script>\n<img src="https://example.invalid/probe" onerror="window.__pwn=true">','huge.log':'中文日志\n'.repeat(100000),'delayed.json':'{"late":true}'}};
   m.entries=['a.jpg','b.jpg','c.jpg','d.jpg','e.jpg','f.jpg'].map(name=>entry(name,'image',local));m.remoteEntries=Object.keys(m.texts).map(name=>entry(name,'document',remote.slice(0,-1))).concat(entry('sample.apk','apk',remote.slice(0,-1)));
   window.__TAURI_INTERNALS__={convertFileSrc:()=>pixel,invoke:async(command,args={})=>{switch(command){case 'get_permission_status':return {manageExternalStorage:true,sharedStorageReadable:true};case 'index_status':return {entryCount:1,indexing:false};case 'index_start':return;case 'app_info':return {version:'preview-qa'};case 'debug_note':return;case 'get_logs':return {entries:[]};case 'list_dir':return {path:args.path,entries:m.entries};default:throw Error('Unmocked Rust '+command)}}};
   window.RHFilesNative={postMessage(raw){const {id,command,args={}}=JSON.parse(raw);m.calls.push({command,args});Promise.resolve().then(async()=>{switch(command){
@@ -31,7 +31,18 @@ try{
   await page.locator('#filelist .name').getByText('settings.json',{exact:true}).click();await page.waitForFunction(()=>document.querySelector('.text-preview-source')?.textContent.includes('\n  "名字"'));
   check((await call('preview.text.state')).mode==='formatted','remote JSON is formatted through the viewing path');
   check(await page.evaluate(()=>!__previewQA.calls.some(row=>row.command==='job.start'||row.command==='read_text_preview')),'text viewing starts no download and uses the native storage adapter');
-  await page.locator('[data-preview-action=mode]').click();check(await page.locator('.text-preview-source').textContent()==='{"名字":"测试","items":[1,2]}','original JSON remains available');
+  await page.locator('[data-preview-action=tree]').click();
+  await page.locator('summary.json-tree-row').filter({hasText:'"items"'}).click();
+  check((await call('preview.text.state')).mode==='tree'&&await page.getByText('[1]:',{exact:true}).count()===1,'remote JSON tree opens nested array entries');
+  await page.locator('[data-preview-action=source]').click();check(await page.locator('.text-preview-source').textContent()==='{"名字":"测试","items":[1,2]}','original JSON remains available');
+  await page.locator('[data-preview-action=close]').click();await page.locator('#filelist .name').getByText('wide.json',{exact:true}).click();
+  await call('preview.text.control',{command:'tree'});await page.locator('summary.json-tree-row').filter({hasText:'"items"'}).click();
+  check(await page.getByText('[64]:',{exact:true}).count()===0,'only the first child page is mounted');
+  await page.locator('.json-tree-pager button').last().click();
+  check(await page.getByText('[64]:',{exact:true}).count()===1&&await page.locator('.json-tree-view img').count()===0,'later tree entries are reachable and JSON strings remain text');
+  await page.locator('[data-preview-action=close]').click();await page.locator('#filelist .name').getByText('invalid.json',{exact:true}).click();
+  await call('preview.text.control',{command:'tree'});
+  check((await call('preview.text.state')).treeError==='invalid','malformed JSON shows a tree error with source available');
   await page.locator('[data-preview-action=close]').click();await page.locator('#filelist .name').getByText('notes.md',{exact:true}).click();await page.locator('.text-preview-markdown h1').waitFor();
   check(await page.locator('.text-preview-markdown table').count()===1,'Markdown headings, emphasis and GFM tables render');
   check(await page.locator('.text-preview-markdown script,.text-preview-markdown img,.text-preview-markdown iframe').count()===0&&await page.evaluate(()=>!window.__pwn)&&!external.length,'Markdown cannot execute HTML or fetch external images');

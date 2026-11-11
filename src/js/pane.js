@@ -16,6 +16,7 @@ function convertFileSrc(filePath) {
 // --- preview pane ---
 let _previewRequestToken = 0;
 let _previewedFile = null;
+let _jsonPreview = null;
 const TEXT_PREVIEW_MAX_CHARS = 40000;
 const TEXT_PREVIEW_MAX_LINES = 1200;
 const IMAGE_PREVIEW_MODES = new Set(['contain', 'cover', 'width', 'actual']);
@@ -419,6 +420,7 @@ function previewRequestIsCurrent(token, path, isRight) {
 
 async function updatePreviewForSelection() {
   if (!G.previewOn || G.inspectorTab !== 'preview') return;
+  _jsonPreview = null;
   dispose3DPreview();
   const isRight = G.lastActivePane === 'right';
   const sel = getSelectedPaths(isRight);
@@ -593,6 +595,7 @@ async function updatePreviewForSelection() {
       const lineCount = preview.text_content.split("\n").length;
       renderPreviewMetaCard(file, { lineEndings, lineCount });
       content.innerHTML = renderTextPreview(preview.text_content, extL, file.name);
+      if (extL === 'json') mountJsonPreview(content, preview, file, requestToken, isRight);
     } else {
       content.innerHTML = `<div class="preview-empty">
         <div style="font-size:48px;">${bigFileIcon(file)}</div>
@@ -949,6 +952,58 @@ function renderTextPreview(text, ext, fileName) {
   return '<div class="preview-code-shell preview-lang-' + esc(language.id) + '">' +
     '<div class="preview-code-toolbar"><span class="preview-language">' + esc(language.label) + '</span>' + truncated + '</div>' +
     body + '</div>';
+}
+
+function jsonPreviewState() {
+  const preview = _jsonPreview;
+  return preview?.current() ? { open: true, mode: preview.mode, treeError: preview.result?.error ?? null } : { open: false };
+}
+
+function setJsonPreviewMode(mode) {
+  const preview = _jsonPreview;
+  if (!preview?.current() || !['source', 'tree'].includes(mode)) throw Error(t('preview.json.unavailable'));
+  if (mode === 'tree' && !preview.result) {
+    preview.result = RHFilesJsonTree.parse(preview.text, preview.truncated);
+    RHFilesJsonTree.mount(preview.tree, preview.result, {
+      count: count => t('group.items', { count }),
+      previous: t('preview.json.previous'), next: t('preview.json.next'),
+      incomplete: t('preview.json.incomplete'), invalid: t('preview.json.invalid'), limit: t('preview.json.limit'),
+    });
+  }
+  preview.mode = mode;
+  preview.source.hidden = mode !== 'source';
+  preview.tree.hidden = mode !== 'tree';
+  for (const [value, button] of preview.buttons) button.setAttribute('aria-pressed', String(value === mode));
+  return jsonPreviewState();
+}
+
+function mountJsonPreview(content, preview, file, token, isRight) {
+  const shell = content.querySelector('.preview-code-shell');
+  const source = shell.querySelector('.preview-text');
+  const tree = document.createElement('div');
+  tree.className = 'json-tree-view';
+  tree.hidden = true;
+  shell.append(tree);
+  const group = document.createElement('div');
+  group.className = 'preview-json-modes';
+  group.setAttribute('role', 'group');
+  group.setAttribute('aria-label', t('preview.json.mode'));
+  const buttons = new Map();
+  for (const mode of ['source', 'tree']) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.dataset.jsonMode = mode;
+    button.textContent = t('preview.json.' + mode);
+    button.setAttribute('aria-pressed', String(mode === 'source'));
+    RHFilesUI.listen(button, 'click', () => setJsonPreviewMode(mode), undefined, 'desktop.preview.json.' + mode);
+    group.append(button);
+    buttons.set(mode, button);
+  }
+  shell.querySelector('.preview-code-toolbar').append(group);
+  _jsonPreview = {
+    text: preview.text_content, truncated: preview.truncated === true, source, tree, buttons, mode: 'source',
+    current: () => previewRequestIsCurrent(token, file.path, isRight),
+  };
 }
 
 function _token(kind, value) {

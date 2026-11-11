@@ -395,6 +395,7 @@ pub fn read_file_preview(path: String) -> Result<FilePreview, String> {
         Ok(FilePreview {
             preview_type: "image".to_string(),
             text_content: None,
+            truncated: false,
             image_data: thumb_b64,
             size: metadata.len(),
         })
@@ -402,10 +403,12 @@ pub fn read_file_preview(path: String) -> Result<FilePreview, String> {
         // The preview is intentionally bounded. The UI applies a second,
         // smaller rendering limit before syntax highlighting, so unusually
         // large/minified files cannot monopolize the WebView thread.
-        let text = enumerator::read_file_text(&p, 65_536)?;
+        const TEXT_LIMIT: u64 = 65_536;
+        let text = enumerator::read_file_text(&p, TEXT_LIMIT)?;
         Ok(FilePreview {
             preview_type: "text".to_string(),
             text_content: Some(text),
+            truncated: metadata.len() > TEXT_LIMIT,
             image_data: None,
             size: metadata.len(),
         })
@@ -413,6 +416,7 @@ pub fn read_file_preview(path: String) -> Result<FilePreview, String> {
         Ok(FilePreview {
             preview_type: "binary".to_string(),
             text_content: None,
+            truncated: false,
             image_data: None,
             size: metadata.len(),
         })

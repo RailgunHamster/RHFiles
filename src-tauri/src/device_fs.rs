@@ -275,7 +275,7 @@ pub async fn device_fs(action: String, args: Value) -> Result<Value, String> {
             let detail = stat(&path).await?;
             if detail["size"] == 0 {
                 return Ok(
-                    json!({"preview_type":"text","text_content":"","image_data":null,"size":0}),
+                    json!({"preview_type":"text","text_content":"","truncated":false,"image_data":null,"size":0}),
                 );
             }
             let mut source = request(
@@ -294,15 +294,12 @@ pub async fn device_fs(action: String, args: Value) -> Result<Value, String> {
                     break;
                 }
             }
-            let is_text = crate::system::is_probably_text_content(&data);
-            let text = is_text.then(|| {
-                String::from_utf8_lossy(&data)
-                    .chars()
-                    .take(40000)
-                    .collect::<String>()
-            });
+            let decoded = crate::system::is_probably_text_content(&data).then(|| String::from_utf8_lossy(&data));
+            let end = decoded.as_ref().and_then(|text| text.char_indices().nth(40000)).map(|(index, _)| index);
+            let truncated = decoded.is_some() && (end.is_some() || detail["size"].as_u64().is_some_and(|size| size > data.len() as u64));
+            let text = decoded.as_deref().map(|text| &text[..end.unwrap_or(text.len())]);
             Ok(
-                json!({"preview_type":if is_text{"text"}else{"binary"},"text_content":text,"image_data":null,"size":detail["size"]}),
+                json!({"preview_type":if text.is_some(){"text"}else{"binary"},"text_content":text,"truncated":truncated,"image_data":null,"size":detail["size"]}),
             )
         }
         _ => Err("[unsupported] 不支持的设备文件操作".into()),

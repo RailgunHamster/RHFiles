@@ -5,6 +5,8 @@ const app=await launchApp();
 try{
   const folder=path.join(app.directory,'files');fs.mkdirSync(folder);
   for(const name of ['a.txt','b.txt'])fs.writeFileSync(path.join(folder,name),'Unique preview '+name);
+  fs.writeFileSync(path.join(folder,'settings.json'),'{"items":[9007199254740993],"html":"<img src=x>"}');
+  fs.writeFileSync(path.join(folder,'truncated.json'),'{}'+' '.repeat(65535)+'null');
   const nested=path.join(folder,'nested');fs.mkdirSync(nested);fs.writeFileSync(path.join(nested,'child.txt'),'Unique nested child');
   await app.evaluate(`navigateTo(${JSON.stringify(folder)})`);
   const click=async(selector,button='left')=>{
@@ -28,6 +30,19 @@ try{
       await rightClick('.column-col:nth-child(2) .column-item');await assertPreview('child.txt');
       assert.equal(await app.evaluate('getSelectedPaths()[0].path'),path.join(nested,'child.txt'));await app.evaluate('removeContextMenu()');
     }
+  }
+  const invoke=(id,args={})=>app.evaluate(`RHFilesAPI.invoke(${JSON.stringify(id)},${JSON.stringify(args)})`);
+  for(const name of ['settings.json','truncated.json']){
+    await invoke('selection.set',{paths:[path.join(folder,name)]});
+    await until(async()=>(await invoke('preview.json.state')).open,'JSON preview is ready');
+    assert.equal((await invoke('preview.json.state')).mode,'source');
+    assert.equal((await invoke('preview.json.mode.set',{mode:'tree'})).treeError,name==='truncated.json'?'incomplete':null);
+    if(name==='settings.json'){
+      await click('.json-tree-children summary.json-tree-row');
+      assert.equal(await app.evaluate("document.querySelector('.json-tree-number')?.textContent"),'9007199254740993');
+      assert.equal(await app.evaluate("document.querySelector('.json-tree-view img')"),null);
+    }
+    await invoke('preview.json.mode.set',{mode:'source'});
   }
   await app.evaluate(`G.layout='details';toggleDualPane(true);rpNavigateTo(${JSON.stringify(folder)})`);
   await app.evaluate('setPreviewPaneVisible(true,false)');

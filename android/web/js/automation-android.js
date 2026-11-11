@@ -13,7 +13,7 @@ const androidAutomation=(()=>{
     register('updates.history.state',apiSchema(),()=>androidUpdates.historyState(),'read');
     register('history.list',apiSchema(),()=>({entries:androidHistory.list(),limit:androidHistoryModel.limit}),'read','Read device-local visited locations, including network and device-group folders');
     register('preview.text.state',apiSchema(),()=>androidTextPreview.state(),'read');
-    register('preview.text.control',apiSchema({command:{type:'string',enum:['source','reading','formatted','more','copy','close','previousPart','nextPart']}},['command']),p=>androidTextPreview.control(p.command));
+    register('preview.text.control',apiSchema({command:{type:'string',enum:['source','reading','formatted','tree','more','copy','close','previousPart','nextPart']}},['command']),p=>androidTextPreview.control(p.command));
     register('preview.text.read',apiSchema({path:string,maxBytes:{type:'integer',minimum:1,maximum:1048576}},['path']),p=>api.readTextPreview(p),'read','Bounded, content-probed local/network/device-group text read; creates no download task');
     register('preview.text.open',apiSchema({path:string,name:string},['path','name']),p=>androidTextPreview.open(p));
     register('gallery.state',apiSchema(),()=>androidGallery.state(),'read');

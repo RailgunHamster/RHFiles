@@ -235,6 +235,7 @@ pub struct ArchiveEntry {
 pub struct FilePreview {
     pub preview_type: String,
     pub text_content: Option<String>,
+    pub truncated: bool,
     pub image_data: Option<String>,
     pub size: u64,
 }
