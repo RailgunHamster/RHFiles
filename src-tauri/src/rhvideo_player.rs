@@ -7,7 +7,8 @@ use serde_json::{json, Value};
 use std::{
     ffi::{c_char, c_void, CStr, CString},
     path::PathBuf,
-    sync::Mutex,
+    sync::{Mutex, OnceLock},
+    time::Instant,
 };
 use tauri::{AppHandle, Manager, WindowEvent, Emitter};
 use windows::{
@@ -528,6 +529,34 @@ struct Api {
     // The library must outlive all function pointers and native objects.
     _library: Library,
 }
+
+#[derive(Clone, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VlcLibraryTimings {
+    library_wait_ms: Option<u64>,
+    runtime_lookup_ms: Option<u64>,
+    dll_load_ms: Option<u64>,
+    api_setup_ms: Option<u64>,
+}
+
+#[derive(Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VlcInitTimings {
+    worker_queue_ms: Option<u64>,
+    #[serde(flatten)]
+    library: VlcLibraryTimings,
+    instance_ms: Option<u64>,
+    player_create_ms: Option<u64>,
+    library_reused: bool,
+    prewarm: Option<VlcLibraryTimings>,
+}
+
+static LOADED_API: OnceLock<(Api, Option<VlcLibraryTimings>)> = OnceLock::new();
+static API_LOAD: Mutex<()> = Mutex::new(());
+
+fn elapsed_ms(started: Instant) -> u64 {
+    started.elapsed().as_millis() as u64
+}
 fn directory() -> Option<PathBuf> {
     let mut candidates = Vec::new();
     if let Ok(exe) = std::env::current_exe() {
@@ -547,7 +576,7 @@ fn directory() -> Option<PathBuf> {
     })
 }
 pub fn available() -> bool {
-    directory().is_some()
+    LOADED_API.get().is_some() || directory().is_some()
 }
 #[cfg(any(debug_assertions,feature="rhvideo-host-trace"))]
 pub(crate) fn diagnostic_trace(args:&Value)->Result<Value,String>{
@@ -571,19 +600,43 @@ fn bundled_plugin_index(path:&std::path::Path,version:&str)->bool{
         std::fs::metadata(path.join("plugins/plugins.dat")).is_ok_and(|m|m.is_file()&&m.len()>=1024)
 }
 impl Api {
-    unsafe fn load() -> Result<Self, String> {
-        let path = directory()
-            .ok_or("原生播放内核文件不完整。请完整解压或修复 RHFiles 安装，保留 vlc 目录；不会改用网页播放。")?;
+    fn shared(timing: &mut VlcInitTimings, prewarming: bool) -> Result<&'static Self, String> {
+        let _loading = if LOADED_API.get().is_none() {
+            let waiting = Instant::now();
+            let guard = API_LOAD.lock().map_err(|_| "VLC 内核加载状态不可用")?;
+            timing.library.library_wait_ms = Some(elapsed_ms(waiting));
+            Some(guard)
+        } else {
+            None
+        };
+        if let Some((api, prewarm)) = LOADED_API.get() {
+            timing.library_reused = true;
+            timing.prewarm = prewarm.clone();
+            return Ok(api);
+        }
+        // Keep the DLL and export table mapped after a successful load.
+        // Each engine still owns its VLC instance and player.
+        let api = Self::load(&mut timing.library)?;
+        Ok(&LOADED_API.get_or_init(|| (api, prewarming.then(|| timing.library.clone()))).0)
+    }
+
+    fn load(timing: &mut VlcLibraryTimings) -> Result<Self, String> {
+        let looking_up = Instant::now();
+        let path = directory();
+        timing.runtime_lookup_ms = Some(elapsed_ms(looking_up));
+        let path = path.ok_or("原生播放内核文件不完整。请完整解压或修复 RHFiles 安装，保留 vlc 目录；不会改用网页播放。")?;
         // LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS.
-        let lib: Library = unsafe {
+        let loading = Instant::now();
+        let lib = unsafe {
             libloading::os::windows::Library::load_with_flags(
                 path.join("libvlc.dll"),
                 0x100 | 0x1000,
             )
-        }
-        .map_err(|_| "无法加载原生播放内核；请修复 RHFiles 的 vlc 目录，或使用兼容的 64 位 VLC 3.x")?
-        .into();
-        unsafe {
+        };
+        timing.dll_load_ms = Some(elapsed_ms(loading));
+        let lib: Library = lib.map_err(|_| "无法加载原生播放内核；请修复 RHFiles 的 vlc 目录，或使用兼容的 64 位 VLC 3.x")?.into();
+        let resolving = Instant::now();
+        let result = (|| unsafe {
             let version = lib
                 .get::<unsafe extern "C" fn() -> *const c_char>(b"libvlc_get_version\0")
                 .map_err(|_| "VLC 版本接口不可用")?;
@@ -635,12 +688,14 @@ impl Api {
                 video_formats: function!("libvlc_video_set_format_callbacks"),
                 _library: lib,
             })
-        }
+        })();
+        timing.api_setup_ms = Some(elapsed_ms(resolving));
+        result
     }
 }
 struct Engine {
     shared_gain: bool,
-    api: Api,
+    api: &'static Api,
     instance: usize,
     player: usize,
     child: usize,
@@ -688,15 +743,15 @@ impl Engine {
         Self::new_with_rotation(surface,0)
     }
     fn new_with_rotation(surface:Surface,rotation:i32)->Result<Self,String>{
-        let mut engine=Self::prepare(rotation)?;
+        let mut engine=Self::prepare(rotation,&mut VlcInitTimings::default())?;
         engine.bind_surface(surface);
         Ok(engine)
     }
     // No window or input is touched here. The file viewer can initialize VLC
     // while WebView2 creates the window on its owning thread.
-    fn prepare(rotation:i32)->Result<Self,String>{
-        let started=std::time::Instant::now();
-        let api = unsafe { Api::load()? };
+    fn prepare(rotation:i32,timing:&mut VlcInitTimings)->Result<Self,String>{
+        let started=Instant::now();
+        let api = Api::shared(timing, false)?;
         trace_startup(started,"library-loaded");
         let compatibility=unsafe{GetSystemMetrics(SM_REMOTESESSION)!=0}||std::env::var_os("RHFILES_VLC_COMPATIBILITY").is_some();
         let mut options = vec![
@@ -737,7 +792,9 @@ impl Engine {
         // only to media_add_option changes our flag but not rendered pixels.
         if rotation!=0&&!compatibility{options.push(CString::new("--video-filter=transform").unwrap());options.push(CString::new(format!("--transform-type={rotation}")).unwrap());}
         let pointers = options.iter().map(|s| s.as_ptr()).collect::<Vec<_>>();
+        let creating_instance=Instant::now();
         let instance = unsafe { (api.new)(pointers.len() as i32, pointers.as_ptr()) };
+        timing.instance_ms=Some(elapsed_ms(creating_instance));
         trace_startup(started,"instance-created");
         if instance.is_null() {
             return Err("VLC 原生内核初始化失败".into());
@@ -746,7 +803,9 @@ impl Engine {
         let startup_trace=match unsafe{crate::rhvideo_trace::Binding::install(&api._library,instance as usize)}{
             Ok(trace)=>trace,Err(error)=>{unsafe{(api.release)(instance)};return Err(error);}
         };
+        let creating_player=Instant::now();
         let player = unsafe { (api.player_new)(instance) };
+        timing.player_create_ms=Some(elapsed_ms(creating_player));
         trace_startup(started,"player-created");
         if player.is_null() {
             #[cfg(debug_assertions)]

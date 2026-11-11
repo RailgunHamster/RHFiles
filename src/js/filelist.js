@@ -422,6 +422,7 @@ function renderFiles(tabOrPane, listId, countId, selId, isRight) {
   }
 
   if (countId) updateStatus(tabOrPane, countId, selId);
+  desktopMediaViewer.prewarmVideoLibrary(entries);
 
   const currentEntries = entries;
   scheduleFileHeaderGeometry();

@@ -167,9 +167,20 @@
     const status=startup?.phase==='ready'?text('首帧就绪','First frame ready'):phases[startup?.phase]||text('正在准备视频…','Opening video…');
     $('video-diagnostics-summary').textContent=[source,startup?.reused?text('已复用播放器','Player reused'):null,startup?.error||status].filter(Boolean).join(' · ');
     const stages=startup?.stages;
+    const init=startup?.vlcInit;
     const rows=[
       [text('窗口创建','Viewer window'),startup?.windowMs],
       [text('VLC 初始化','VLC initialization'),startup?.playerInitMs],
+      ...(init ? [
+        [text('VLC 初始化任务排队','VLC worker queue'),init.workerQueueMs],
+        ...(init.libraryWaitMs>0?[[text('等待 VLC DLL 加载','Wait for VLC DLL loader'),init.libraryWaitMs]]:[]),
+        ...(init.runtimeLookupMs!=null?[[text('定位 VLC 运行库','Locate VLC runtime'),init.runtimeLookupMs]]:[]),
+        [text('加载 VLC DLL','Load VLC DLL'),init.libraryReused?text('已加载','Already loaded'):init.dllLoadMs],
+        ...(init.prewarm?[[text('后台预加载 VLC DLL','Background VLC DLL load'),init.prewarm.dllLoadMs]]:[]),
+        ...(init.apiSetupMs!=null?[[text('读取 VLC 接口与插件索引','Resolve VLC exports and plugin index'),init.apiSetupMs]]:[]),
+        [text('创建 VLC 实例','Create VLC instance'),init.instanceMs],
+        [text('创建 VLC 播放器','Create VLC player'),init.playerCreateMs],
+      ] : []),
       [text('画布排队','Surface dispatch'),startup?.surfaceQueueMs],
       [text('画布创建与初始化','Surface creation and setup'),startup?.surfaceInitMs],
       [text('来源准备','Source setup'),startup?.sourceMs],
@@ -190,7 +201,7 @@
     ];
     $('video-diagnostics-steps').replaceChildren(...rows.map(([label,value])=>{
       const item=document.createElement('div'),dt=document.createElement('dt'),dd=document.createElement('dd');
-      dt.textContent=label;dd.textContent=value==null?'—':value.toLocaleString()+' ms';
+      dt.textContent=label;dd.textContent=typeof value==='number'?value.toLocaleString()+' ms':value??'—';
       item.append(dt,dd);return item;
     }));
   }

@@ -9,6 +9,7 @@ import {cdpSession} from '../rhfiles-api.mjs';
 
 const api = (app, id, args = {}) => app.evaluate(`RHFilesAPI.invoke(${JSON.stringify(id)},${JSON.stringify(args)})`);
 const native = (app, id, args = {}) => app.evaluate(`call(${JSON.stringify(id)},${JSON.stringify(args)})`);
+const cold = process.env.RHFILES_VIDEO_QA_COLD === '1';
 
 test('Windows playback reports startup stages and reuses the player for a different input', {timeout: 240000}, async () => {
   const app = await launchApp();
@@ -26,7 +27,22 @@ test('Windows playback reports startup stages and reuses the player for a differ
         ...(index === 0 ? ['-movflags', '+faststart'] : []), file], {windowsHide: true, timeout: 20000});
     }
     await app.evaluate("setLang('zh');G.settings.autoUpdateEnabled=false;G.previewOn=false;true");
+    if (cold) {
+      // Explicit viewer opens still work with the system-player preference.
+      await api(app, 'media.preferences.set', {videoOpenWith: 'system'});
+    } else {
+      await app.evaluate(`{
+        const original = call;
+        call = async (...args) => {
+          const result = await original(...args);
+          if (args[0] === 'file_viewer_request' && args[1]?.action === 'video.prewarm') window.prewarmFinished = true;
+          return result;
+        };
+        true;
+      }`);
+    }
     await api(app, 'navigation.open', {path: directory});
+    if (!cold) await until(() => app.evaluate('window.prewarmFinished === true'), 'listing triggers VLC DLL prewarm');
     const viewerTarget = async () => (await (await fetch(`http://127.0.0.1:${app.port}/json/list`)).json())
       .find(row => new URL(row.url).pathname === '/file-viewer.html');
 
@@ -66,9 +82,19 @@ test('Windows playback reports startup stages and reuses the player for a differ
       assert.ok(Number.isInteger(result.windowMs) && Number.isInteger(result.sourceMs));
       assert.ok(result.inputToFrameMs > 0 && result.totalMs >= result.inputToFrameMs);
       assert.equal(result.playerInitMs === null, result.reused);
+      assert.equal(result.vlcInit === null, result.reused);
       assert.equal(result.surfaceMs === null, result.reused);
       assert.equal(result.surfaceMode, result.reused ? 'reused' : 'inline');
       if (!result.reused) {
+        const init = result.vlcInit;
+        const needsLoad = cold && timings.length === 0;
+        assert.equal(init.libraryReused, !needsLoad);
+        for (const key of ['workerQueueMs', 'instanceMs', 'playerCreateMs']) assert.ok(Number.isInteger(init[key]), `${key} is measured`);
+        for (const key of ['runtimeLookupMs', 'dllLoadMs', 'apiSetupMs']) {
+          assert.equal(Number.isInteger(init[key]), needsLoad, `${key} belongs to the cold DLL load`);
+          if (!cold) assert.ok(Number.isInteger(init.prewarm?.[key]), `${key} is recorded for prewarm`);
+        }
+        assert.ok(result.playerInitMs >= init.instanceMs + init.playerCreateMs + (init.dllLoadMs ?? 0));
         assert.equal(result.surfaceQueueMs, 0, 'initial canvas is created in the window callback');
         assert.ok(result.surfaceInitMs >= result.surfaceCreateWindowMs);
       }
@@ -88,9 +114,11 @@ test('Windows playback reports startup stages and reuses the player for a differ
 
     let playback = await play(files[0], 'local');
     await api(page, 'media.viewer.video.diagnostics.set', {open: true});
-    assert.match(await page.evaluate("document.getElementById('video-diagnostics').innerText"), /首帧就绪.*画布排队.*播放缓冲.*解码至检测到 VLC 输出.*总等待/s);
+    assert.match(await page.evaluate("document.getElementById('video-diagnostics').innerText"), /首帧就绪.*加载 VLC DLL.*创建 VLC 实例.*创建 VLC 播放器.*画布排队.*播放缓冲.*解码至检测到 VLC 输出.*总等待/s);
     playback = await play(files[1], 'local', playback.video.inputId);
     assert.equal((await api(page, 'media.viewer.video.diagnostics')).startup.reused, true);
+    await closeViewer();
+    playback = await play(files[0], 'local');
 
     const smbRoot = process.env.RHFILES_VIDEO_SMB_ROOT;
     if (smbRoot) {

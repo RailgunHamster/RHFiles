@@ -31,6 +31,7 @@ struct Startup {
     surface_create_window_ms: Option<u64>,
     surface_mode: Option<&'static str>,
     player_init_ms: Option<u64>,
+    vlc_init: Option<VlcInitTimings>,
     source_ms: Option<u64>,
     input_to_frame_ms: Option<u64>,
     output: Option<Instant>,
@@ -190,7 +191,7 @@ impl Attempt {
             "surfaceQueueMs": timing.surface_queue_ms, "surfaceInitMs": timing.surface_init_ms,
             "surfaceCreateWindowMs":timing.surface_create_window_ms,
             "surfaceMode": timing.surface_mode,
-            "playerInitMs": timing.player_init_ms, "sourceMs": timing.source_ms,
+            "playerInitMs": timing.player_init_ms, "vlcInit": timing.vlc_init, "sourceMs": timing.source_ms,
             "firstRemoteByteMs": self.remote.first_byte_ms(),
             "inputToFrameMs": timing.input_to_frame_ms, "totalMs": timing.total_ms,
             "layoutQueueMs": timing.layout_queue_ms, "layoutMs": timing.layout_ms,
@@ -214,18 +215,37 @@ impl Attempt {
 }
 
 pub(crate) fn prepare(attempt: Arc<Attempt>) -> Prepared {
+    let queued = Instant::now();
     Prepared(tauri::async_runtime::spawn_blocking(move || {
         let started = Instant::now();
-        let result = Engine::prepare(0).map(|mut engine| {
+        let mut init = VlcInitTimings {
+            worker_queue_ms: Some(started.duration_since(queued).as_millis() as u64),
+            ..Default::default()
+        };
+        let result = Engine::prepare(0, &mut init).map(|mut engine| {
             #[cfg(debug_assertions)]
             drop(engine.startup_trace.take());
             engine.file_timing =
                 file_video_timing::Binding::install(&engine.api._library, engine.instance);
             engine
         });
-        attempt.update(|timing| timing.player_init_ms = Some(millis(started)));
+        attempt.update(|timing| {
+            timing.player_init_ms = Some(millis(started));
+            timing.vlc_init = Some(init);
+        });
         result
     }))
+}
+
+pub(crate) async fn prewarm_library() -> Result<(), String> {
+    if LOADED_API.get().is_some() {
+        return Ok(());
+    }
+    tauri::async_runtime::spawn_blocking(|| {
+        Api::shared(&mut VlcInitTimings::default(), true).map(|_| ())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 pub(super) fn owns_surface(child: usize) -> bool {

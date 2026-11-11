@@ -2,6 +2,20 @@
 const desktopMediaViewer=(()=>{
   const image=new Set('png jpg jpeg webp gif bmp ico tif tiff avif svg'.split(' ')),video=new Set('mp4 mkv mov avi webm m4v wmv flv mpeg mpg ts mts m2ts 3gp ogv'.split(' '));
   const kind=file=>{if(!file||file.is_dir)return null;const ext=String(file.extension||file.name?.split('.').pop()||file.path?.split('.').pop()||'').toLowerCase();return image.has(ext)?'image':video.has(ext)?'video':ext==='pdf'?'pdf':null;};
+  const windowsViewerPath=/^(?:[A-Za-z]:[\\/]|\\\\|rhfiles-device:\/\/)/;
+  let prewarmRequested=false;
+  function prewarmVideoLibrary(entries){
+    if(prewarmRequested||!/Win/i.test(navigator.platform)||get().videoOpenWith==='system')return;
+    if(!entries.some(entry=>!entry.archive_entry&&kind(entry)==='video'&&windowsViewerPath.test(entry.path)))return;
+    prewarmRequested=true;
+    const warm=()=>{
+      if(get().videoOpenWith==='system'){prewarmRequested=false;return;}
+      // Playback reports any error from its own initialization and can retry.
+      void call('file_viewer_request',{action:'video.prewarm',args:{}}).catch(()=>{});
+    };
+    if(window.requestIdleCallback)window.requestIdleCallback(warm,{timeout:1500});
+    else setTimeout(warm,0);
+  }
   const get=()=>({videoSeekSeconds:Number.isInteger(G.settings.videoSeekSeconds)&&G.settings.videoSeekSeconds>=1&&G.settings.videoSeekSeconds<=600?G.settings.videoSeekSeconds:5,pdfOpenWith:G.settings.pdfOpenWith==='system'?'system':'rhfiles',imageOpenWith:G.settings.imageOpenWith==='system'?'system':'rhfiles',videoOpenWith:G.settings.videoOpenWith==='system'?'system':'rhfiles',imageBrowseMode:G.settings.imageBrowseMode==='continuous'?'continuous':'paged'});
   function set(value){if(value.videoSeekSeconds!==undefined&&(!Number.isInteger(value.videoSeekSeconds)||value.videoSeekSeconds<1||value.videoSeekSeconds>600))throw Error('Invalid seek interval');const allowed={pdfOpenWith:['system','rhfiles'],imageOpenWith:['system','rhfiles'],videoOpenWith:['system','rhfiles'],imageBrowseMode:['paged','continuous']};for(const [key,values]of Object.entries(allowed))if(value[key]!==undefined&&!values.includes(value[key]))throw Error('Invalid media preference');for(const key of [...Object.keys(allowed),'videoSeekSeconds'])if(value[key]!==undefined){G.settings[key]=value[key];const input=document.getElementById('settings-'+key);if(input){input.value=value[key];for(const button of input.querySelectorAll('[data-media-mode]'))button.setAttribute('aria-pressed',String(button.dataset.mediaMode===value[key]));}}saveSettings();return get();}
   async function open(path,file,isRight,force=false){
@@ -9,7 +23,7 @@ const desktopMediaViewer=(()=>{
     file=file||entries.find(e=>e.path===path)||{path,name:path.split(/[\\/]/).pop()};
     if(kind(file)==='pdf'){if(!force&&get().pdfOpenWith==='system')return false;await call('pdf_viewer_request',{action:'open',args:{path,name:file.name,language:typeof _lang==='string'?_lang:G.settings.language}});return true;}
     if(!/Win/i.test(navigator.platform))return false;
-    if(!/^(?:[A-Za-z]:[\\/]|\\\\|rhfiles-device:\/\/)/.test(path))return false;
+    if(!windowsViewerPath.test(path))return false;
     const type=kind(file);if(!type||!force&&get()[type+'OpenWith']==='system')return false;
     let queue=entries.filter(e=>kind(e)===type&&!e.archive_entry).slice(0,5000);if(!queue.some(e=>e.path===path))queue=[file];
     const unique=[...new Map(queue.map(e=>[e.path,{path:e.path,name:e.name||e.path.split(/[\\/]/).pop()}])).values()];
@@ -32,5 +46,5 @@ const desktopMediaViewer=(()=>{
     else if(p.status==='failed')failOperationTask(p.operationId,p.error);
     else if(p.status==='complete')completeOperationTask(p.operationId);
   }).catch(console.error);
-  return {kind,get,set,open,settingsHtml,bind,register};
+  return {kind,get,set,open,prewarmVideoLibrary,settingsHtml,bind,register};
 })();

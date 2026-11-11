@@ -64,6 +64,11 @@ pub async fn file_viewer_request(app:AppHandle,action:String,mut args:Value,canc
 }
 async fn dispatch(app:AppHandle,action:String,args:Value,cancel:tauri::State<'_,CancelFlag>)->Result<Value,String>{
     match action.as_str(){
+        #[cfg(windows)]
+        "video.prewarm"=>{
+            file_player::prewarm_library().await?;
+            Ok(Value::Null)
+        }
         "open"=>{
             #[cfg(windows)]
             let started=std::time::Instant::now();
