@@ -685,7 +685,13 @@ impl Engine {
         Self::new_with_rotation(surface,0)
     }
     fn new_with_rotation(surface:Surface,rotation:i32)->Result<Self,String>{
-        let child=surface.child;
+        let mut engine=Self::prepare(rotation)?;
+        engine.bind_surface(surface);
+        Ok(engine)
+    }
+    // No window or input is touched here. The file viewer can initialize VLC
+    // while WebView2 creates the window on its owning thread.
+    fn prepare(rotation:i32)->Result<Self,String>{
         let started=std::time::Instant::now();
         let api = unsafe { Api::load()? };
         trace_startup(started,"library-loaded");
@@ -745,33 +751,13 @@ impl Engine {
             unsafe { (api.release)(instance) };
             return Err("无法创建原生播放器".into());
         }
-        let mut frame = Box::new(crate::rhvideo_frame::Frame::new(child));
-        frame.rotation.store(rotation,std::sync::atomic::Ordering::Relaxed);
-        // Keep the bounded GDI presenter for RDP/headless sessions. Ordinary
-        // desktops use VLC's own native video output and hardware selection;
-        // no RGBA copy, browser transport or artificial 1080p ceiling there.
-        unsafe {
-            (api.set_hwnd)(player, child as Ptr);
-            (api.key_input)(player, 0);
-            (api.mouse_input)(player, 0);
-            if compatibility {
-                (api.video_callbacks)(
-                    player,
-                    Some(crate::rhvideo_frame::lock),
-                    Some(crate::rhvideo_frame::unlock),
-                    Some(crate::rhvideo_frame::display),
-                    (&mut *frame as *mut crate::rhvideo_frame::Frame).cast(),
-                );
-                (api.video_formats)(player, Some(crate::rhvideo_frame::setup), None);
-            }
-        }
         Ok(Self {
             shared_gain: false,
             api,
             instance: instance as usize,
             player: player as usize,
-            child,
-            surface,
+            child:0,
+            surface:Surface{child:0,generation:0},
             surface_history:Default::default(),
             input_id:0,
             seek:Mutex::new(SeekState::default()),
@@ -779,7 +765,7 @@ impl Engine {
             muted:false,last_volume:100,repeat_input:false,
             paused_preview:Mutex::new(None),pause_requested:std::sync::atomic::AtomicBool::new(false),hold_audio:std::sync::atomic::AtomicBool::new(false),
             title: String::new(),
-            frame,
+            frame:Box::new(crate::rhvideo_frame::Frame::new(0)),
             clock: Mutex::new(crate::rhvideo_clock::Clock::new()),
             compatibility,
             media: 0,
@@ -791,6 +777,25 @@ impl Engine {
             #[cfg(debug_assertions)]
             startup_trace,
         })
+    }
+    fn bind_surface(&mut self,surface:Surface){
+        debug_assert_eq!(self.child,0);
+        self.child=surface.child;
+        self.surface=surface;
+        self.frame=Box::new(crate::rhvideo_frame::Frame::new(self.child));
+        self.frame.rotation.store(self.rotation,std::sync::atomic::Ordering::Relaxed);
+        // Ordinary desktops use native VLC video output. RDP and headless
+        // sessions use the bounded GDI presenter.
+        let player=self.player as Ptr;
+        unsafe {
+            (self.api.set_hwnd)(player,self.child as Ptr);
+            (self.api.key_input)(player,0);
+            (self.api.mouse_input)(player,0);
+            if self.compatibility{
+                (self.api.video_callbacks)(player,Some(crate::rhvideo_frame::lock),Some(crate::rhvideo_frame::unlock),Some(crate::rhvideo_frame::display),(&mut *self.frame as *mut crate::rhvideo_frame::Frame).cast());
+                (self.api.video_formats)(player,Some(crate::rhvideo_frame::setup),None);
+            }
+        }
     }
     fn viewport(&self)->(u32,u32){
         let mut rect=RECT::default();unsafe{if GetClientRect(HWND(self.child as Ptr),&mut rect).is_ok(){return ((rect.right-rect.left).max(1) as u32,(rect.bottom-rect.top).max(1) as u32);}}

@@ -15,11 +15,13 @@ export async function launchRemoteWindowsApp(){
   await ps(`$ErrorActionPreference='Stop';New-Item -ItemType Directory -Path '${directory}'|Out-Null`);
   for(const[source,name]of [[executable,'RHFiles.exe'],[path.join(root,'scripts/testing/remote-windows-app.ps1'),'bootstrap.ps1']])await run('scp',['-q','-o','BatchMode=yes','-o','ConnectTimeout=5',source,'40608@railgunhamster:'+directory.replaceAll('\\','/')+'/'+name],'',120000);
   const hash=(await ps(`(Get-FileHash -Algorithm SHA256 -LiteralPath '${directory}\\RHFiles.exe').Hash`)).trim().toLowerCase();if(hash!==expected)throw Error('Remote QA executable hash mismatch');
-  let remote,tunnel,socket;const pending=new Map();let sequence=0;
+  let remote,tunnel,socket;const pending=new Map(),fixtures=new Set();let sequence=0,firewall=false;
   const close=async()=>{
     socket?.close();tunnel?.kill();
     for(const value of pending.values()){clearTimeout(value.timer);value.reject(Error('Owned QA session closed'));}pending.clear();
+    if(firewall)await ps(`Remove-NetFirewallRule -Name '${task}' -ErrorAction SilentlyContinue`);
     await ps(`$ErrorActionPreference='Stop';Unregister-ScheduledTask -TaskName '${task}' -Confirm:$false -ErrorAction SilentlyContinue;if(Test-Path -LiteralPath '${directory}\\ready.json'){$s=Get-Content -Raw -LiteralPath '${directory}\\ready.json'|ConvertFrom-Json;$p=Get-CimInstance Win32_Process -Filter ('ProcessId='+$s.pid);if($p -and $p.ExecutablePath -eq '${directory}\\RHFiles.exe'){& taskkill.exe /PID $s.pid /T /F|Out-Null}}`).catch(()=>{});
+    for(const file of fixtures)await ps(`Remove-Item -LiteralPath '${file}' -ErrorAction SilentlyContinue`);
   };
   try{
     // Execute our reviewed bootstrap as an encoded command. Do not change
@@ -46,6 +48,20 @@ export async function launchRemoteWindowsApp(){
       const value=await ps(`$ErrorActionPreference='Stop';$payload=[Console]::In.ReadToEnd()|ConvertFrom-Json;$a=New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $payload.arguments -WorkingDirectory '${directory}';$p=New-ScheduledTaskPrincipal -UserId 'RAILGUNHAMSTER\\40608' -LogonType Interactive -RunLevel Limited;try{Register-ScheduledTask -TaskName '${name}' -Action $a -Principal $p|Out-Null;Start-ScheduledTask -TaskName '${name}';for($attempt=0;$attempt -lt 40;$attempt++){if(Test-Path -LiteralPath '${output}'){Get-Content -Raw -LiteralPath '${output}';exit 0};Start-Sleep -Milliseconds 500};throw 'Owned Windows write timed out'}finally{Stop-ScheduledTask -TaskName '${name}' -ErrorAction SilentlyContinue;Unregister-ScheduledTask -TaskName '${name}' -Confirm:$false -ErrorAction SilentlyContinue}`,JSON.stringify({arguments:'-NoProfile -WindowStyle Hidden -EncodedCommand '+Buffer.from(source,'utf16le').toString('base64')}));
       const result=JSON.parse(value);if(!result.ok)throw Error(result.message);
     };
-    return {evaluate,writeNative,close,directory,hash:expected};
+    const uploadFixture=async(source,name)=>{
+      if(!/^fixture-[a-z0-9-]+\.[a-z0-9]+$/.test(name))throw Error('Expected an owned fixture name');
+      const fixtureDirectory=path.win32.join(directory,'fixtures');
+      if(!fixtures.size)await ps(`New-Item -ItemType Directory -Path '${fixtureDirectory}' -Force|Out-Null`);
+      const target=path.win32.join(fixtureDirectory,name);
+      fixtures.add(target);
+      await run('scp',['-q','-o','BatchMode=yes','-o','ConnectTimeout=5',source,'40608@railgunhamster:'+target.replaceAll('\\','/')],'',120000);
+      return target;
+    };
+    const allowInboundTestConnection=async({serverIp,clientIp,port})=>{
+      if(!net.isIPv4(serverIp)||!net.isIPv4(clientIp)||!Number.isInteger(port)||port<1024||port>65535)throw Error('Expected a specific pair of IPv4 addresses and a test port');
+      firewall=true;
+      await ps(`$ErrorActionPreference='Stop';New-NetFirewallRule -Name '${task}' -DisplayName '${task}' -Direction Inbound -Action Allow -Profile Any -Protocol TCP -LocalAddress '${serverIp}' -RemoteAddress '${clientIp}' -LocalPort ${port} -Program '${directory}\\RHFiles.exe'|Out-Null`);
+    };
+    return {evaluate,writeNative,uploadFixture,allowInboundTestConnection,close,directory,hash:expected};
   }catch(error){await close();throw error;}
 }

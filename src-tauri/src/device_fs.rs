@@ -250,7 +250,7 @@ pub async fn device_fs(action: String, args: Value) -> Result<Value, String> {
                 .await
                 .map_err(|_| "[timed_out] 搜索超过 15 秒，请缩小范围；未继续后台遍历".to_string())?
         }
-        "resource" => Ok(json!({"url":resource(path).await?})),
+        "resource" => Ok(json!({"url":resource(path, None).await?})),
         "thumbnail" => {
             let mut source = request(
                 &path,
@@ -312,11 +312,29 @@ struct Asset {
     path: DevicePath,
     lease: FileLease,
     touched: Instant,
+    timing: Option<Arc<MediaReadTiming>>,
+}
+
+#[derive(Default)]
+pub(crate) struct MediaReadTiming {
+    requested: OnceLock<Instant>,
+    first_byte_ms: OnceLock<u64>,
+}
+impl MediaReadTiming {
+    #[cfg(windows)]
+    pub(crate) fn first_byte_ms(&self) -> Option<u64> {
+        self.first_byte_ms.get().copied()
+    }
+}
+
+#[cfg(windows)]
+pub(crate) async fn media_resource(path: &str, timing: Arc<MediaReadTiming>) -> Result<String, String> {
+    resource(DevicePath::parse(path)?, Some(timing)).await
 }
 static ASSETS: OnceLock<Mutex<HashMap<String, Asset>>> = OnceLock::new();
 static BROKER: tokio::sync::OnceCell<u16> = tokio::sync::OnceCell::const_new();
 static STREAMS: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
-async fn resource(path: DevicePath) -> Result<String, String> {
+async fn resource(path: DevicePath, timing: Option<Arc<MediaReadTiming>>) -> Result<String, String> {
     let lease = connector()?.file_lease(&path.group, &path.peer)?;
     let port = *BROKER
         .get_or_try_init(|| async {
@@ -356,6 +374,7 @@ async fn resource(path: DevicePath) -> Result<String, String> {
             path,
             lease,
             touched: Instant::now(),
+            timing,
         },
     );
     Ok(format!("http://127.0.0.1:{port}/device/{id}"))
@@ -412,10 +431,10 @@ async fn stream(RoutePath(id): RoutePath<String>, method: Method, headers: Heade
         .and_then(|mut map| {
             map.get_mut(&id).map(|a| {
                 a.touched = Instant::now();
-                (a.path.clone(), a.lease.clone())
+                (a.path.clone(), a.lease.clone(), a.timing.clone())
             })
         });
-    let Some((path, lease)) = entry else {
+    let Some((path, lease, timing)) = entry else {
         return failure(StatusCode::NOT_FOUND);
     };
     if lease.check().is_err() {
@@ -432,6 +451,11 @@ async fn stream(RoutePath(id): RoutePath<String>, method: Method, headers: Heade
         .get("range")
         .and_then(|v| v.to_str().ok())
         .map(str::to_owned);
+    if method == Method::GET {
+        if let Some(timing) = &timing {
+            timing.requested.get_or_init(Instant::now);
+        }
+    }
     let source = request(
         &path,
         FileRequest::Content {
@@ -486,11 +510,20 @@ async fn stream(RoutePath(id): RoutePath<String>, method: Method, headers: Heade
         return response.body(Body::empty()).unwrap();
     }
     let body = futures_util::stream::try_unfold(
-        (source, lease, permit),
-        |(mut source, lease, permit)| async move {
+        (source, lease, permit, timing),
+        |(mut source, lease, permit, mut timing)| async move {
             lease.check().map_err(std::io::Error::other)?;
             match source.chunk().await.map_err(std::io::Error::other)? {
-                Some(bytes) => Ok::<_, std::io::Error>(Some((bytes, (source, lease, permit)))),
+                Some(bytes) => {
+                    if !bytes.is_empty() {
+                        if let Some(timing) = timing.take() {
+                            if let Some(start) = timing.requested.get() {
+                                timing.first_byte_ms.get_or_init(|| start.elapsed().as_millis() as u64);
+                            }
+                        }
+                    }
+                    Ok::<_, std::io::Error>(Some((bytes, (source, lease, permit, timing))))
+                }
                 None => Ok(None),
             }
         },
