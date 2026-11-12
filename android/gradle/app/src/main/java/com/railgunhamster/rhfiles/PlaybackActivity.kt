@@ -72,6 +72,7 @@ class PlaybackActivity:AppCompatActivity() {
   private lateinit var playerView:PlayerView
   private var mediaPageTouch:MediaPageTouch?=null
   private var filePlaybackTouch:FilePlaybackTouch?=null
+  private var fileVideoSheet:View?=null
   private lateinit var pageHint:TextView
   private val clearPageHint=Runnable{pageHint.visibility=View.GONE}
   private val selectionMemory by lazy {ViewModelProvider(this,object:ViewModelProvider.Factory{
@@ -119,7 +120,10 @@ class PlaybackActivity:AppCompatActivity() {
   override fun onCreate(savedInstanceState:Bundle?) {
     super.onCreate(savedInstanceState)
     NativeAutomation.install(this);active=java.lang.ref.WeakReference(this)
-    onBackPressedDispatcher.addCallback(this){if(isRhVideo())rhUiAction(JSONObject().put("command","back"))else finish()}
+    onBackPressedDispatcher.addCallback(this){
+      if(fileVideoSheet!=null)closeFileVideoSheet()
+      else if(isRhVideo())rhUiAction(JSONObject().put("command","back"))else finish()
+    }
     path=savedInstanceState?.getString("filePath")?:intent.getStringExtra("path") ?: run{finish();return}
     storage=NativeStorage(applicationContext)
     try {
@@ -219,7 +223,11 @@ class PlaybackActivity:AppCompatActivity() {
     playerView.hideController();header.visibility=View.GONE;paintRhActions()
     deleteJob?.let{job->deletingSelected?.let{selected->header.visibility=View.VISIBLE;titleView.text="正在删除…";rhUi.post{watchDelete(job,selected)}}}
   }
-  override fun onPause(){if(filePlaybackTouch!=null)filePlaybackTouch?.cancel()else mediaPageTouch?.cancel();super.onPause()}
+  override fun onPause(){
+    if(filePlaybackTouch!=null)filePlaybackTouch?.cancel()else mediaPageTouch?.cancel()
+    closeFileVideoSheet(showControls=false)
+    super.onPause()
+  }
   private fun dp(value:Int)=(value*resources.displayMetrics.density).toInt()
   private fun usesFileVideoControls()=rhWindow==null&&intent.getStringExtra("kind")!="audio"
   private fun installFileVideoControls(root:View){
@@ -271,12 +279,68 @@ class PlaybackActivity:AppCompatActivity() {
     val engine=player?:return
     val input=rhInputId
     val rates=listOf(.5f,.75f,1f,1.25f,1.5f,1.75f,2f)
+    fun select(rate:Float){rhUiAction(JSONObject().put("command","rate").put("value",rate).put("expectedInputId",input))}
+    if(usesFileVideoControls()){
+      openFileVideoSheet(R.string.file_player_speed_title){body->
+        for(group in rates.chunked(4)){
+          val row=LinearLayout(this)
+          for(rate in group){
+            val option=Button(this).apply{
+              text=rateLabel(rate)+"×";isAllCaps=false;setTextColor(Color.WHITE)
+              backgroundTintList=null
+              setBackgroundResource(if(rate==engine.playbackParameters.speed)R.drawable.rhfiles_playback_primary else R.drawable.rhfiles_playback_chip)
+              setOnClickListener{select(rate);closeFileVideoSheet()}
+            }
+            row.addView(option,LinearLayout.LayoutParams(0,dp(48),1f).apply{marginEnd=dp(4)})
+          }
+          body.addView(row,LinearLayout.LayoutParams(-1,-2))
+        }
+      }
+      return
+    }
     androidx.appcompat.app.AlertDialog.Builder(this).setTitle(R.string.file_player_speed_title)
       .setSingleChoiceItems(rates.map{rateLabel(it)+"×"}.toTypedArray(),rates.indexOf(engine.playbackParameters.speed)){dialog,selected->
-        rhUiAction(JSONObject().put("command","rate").put("value",rates[selected]).put("expectedInputId",input))
+        select(rates[selected])
         dialog.dismiss()
         playerView.showController()
       }.setNegativeButton(android.R.string.cancel,null).show()
+  }
+  private fun closeFileVideoSheet(showControls:Boolean=true){
+    val sheet=fileVideoSheet?:return
+    fileVideoSheet=null
+    (sheet.parent as? FrameLayout)?.removeView(sheet)
+    playerView.importantForAccessibility=View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
+    if(showControls)playerView.showController()
+  }
+  private fun openFileVideoSheet(title:Int,content:(LinearLayout)->Unit){
+    closeFileVideoSheet()
+    val parent=playerView.parent as FrameLayout
+    val overlay=FrameLayout(this).apply{setBackgroundColor(0x77000000);setOnClickListener{closeFileVideoSheet()}}
+    val panel=LinearLayout(this).apply{
+      orientation=LinearLayout.VERTICAL;isClickable=true;setPadding(dp(16),dp(8),dp(16),dp(14))
+      background=GradientDrawable().apply{cornerRadius=dp(24).toFloat();setColor(0xFF201C2A.toInt())}
+    }
+    val bar=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL}
+    bar.addView(TextView(this).apply{setText(title);textSize=18f;setTextColor(Color.WHITE)},LinearLayout.LayoutParams(0,dp(48),1f).apply{gravity=Gravity.CENTER_VERTICAL})
+    bar.addView(Button(this).apply{
+      setText(android.R.string.ok);isAllCaps=false;setTextColor(Color.WHITE);backgroundTintList=null;setBackgroundResource(R.drawable.rhfiles_playback_chip)
+      setOnClickListener{closeFileVideoSheet()}
+    },LinearLayout.LayoutParams(dp(64),dp(48)))
+    panel.addView(bar)
+    val body=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL}
+    content(body)
+    panel.addView(ScrollView(this).apply{addView(body)},LinearLayout.LayoutParams(-1,-2,1f))
+    val width=(parent.width-dp(24)).coerceIn(dp(1),dp(560))
+    overlay.addView(panel,FrameLayout.LayoutParams(width,-2,Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply{topMargin=dp(12);bottomMargin=dp(12)})
+    overlay.addOnLayoutChangeListener{_,left,_,right,_,_,_,_,_->
+      val target=(right-left-dp(24)).coerceIn(dp(1),dp(560))
+      if(panel.layoutParams.width!=target){panel.layoutParams.width=target;panel.requestLayout()}
+    }
+    parent.addView(overlay,FrameLayout.LayoutParams(-1,-1))
+    fileVideoSheet=overlay
+    playerView.hideController()
+    playerView.importantForAccessibility=View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+    ViewCompat.setAccessibilityPaneTitle(panel,getString(title))
   }
   private fun isRhVideo()=::path.isInitialized&&path.startsWith("rhvideo://")
   private fun currentRhId():String {val w=rhWindow?:error("当前不是媒体库视频");return w.ids[(player?.currentMediaItemIndex?:w.index).coerceIn(0,w.ids.lastIndex)]}
@@ -308,6 +372,7 @@ class PlaybackActivity:AppCompatActivity() {
     if(args.has("expectedPath"))require(args.getString("expectedPath")==path){"播放文件已改变，请重新读取状态"}
     if(args.has("expectedInputId"))require(args.getLong("expectedInputId")==rhInputId){"播放输入已改变，请重新读取状态"}
     val command=args.getString("command")
+    if(command=="back"&&fileVideoSheet!=null){closeFileVideoSheet();return automationState()}
     if(command=="delete"){require(!isRhVideo()){"媒体库请使用暂存标记"};requestDelete();return automationState()}
     rhWindow?.let{w->try{RhVideoClient.get(this).checkPlayback(rhTicket!!,w.lease)}catch(e:Exception){if(command in listOf("back","close")){rhClosing=true;finish();return JSONObject().put("closed",true).put("stale",true)}else throw e}}
     if(command=="back"||command=="close")return closeRhPlayback(whole=command=="close")
@@ -333,8 +398,9 @@ class PlaybackActivity:AppCompatActivity() {
       "fit","fill"->{resize=if(command=="fit")AspectRatioFrameLayout.RESIZE_MODE_FIT else AspectRatioFrameLayout.RESIZE_MODE_ZOOM;playerView.resizeMode=resize;paintFileVideoControls()}
       "controls.show"->playerView.showController();"controls.hide"->playerView.hideController()
       "speed.options"->showSpeedOptions()
-      "shortcuts"->{require(usesFileVideoControls());androidx.appcompat.app.AlertDialog.Builder(this).setTitle(R.string.file_player_shortcuts_title)
-        .setMessage(R.string.file_player_shortcuts_body).setPositiveButton(android.R.string.ok,null).show()}
+      "shortcuts"->{require(usesFileVideoControls());openFileVideoSheet(R.string.file_player_shortcuts_title){body->
+        body.addView(TextView(this).apply{setText(R.string.file_player_shortcuts_body);textSize=14f;setTextColor(0xFFE1DAEA.toInt());setLineSpacing(dp(2).toFloat(),1f)})
+      }}
       "favorite.error"->showRhFavoriteError()
       "options"->{
         playerView.showController()
@@ -352,7 +418,7 @@ class PlaybackActivity:AppCompatActivity() {
   // System edge Back and hardware Back must both return to the file list.
   override fun dispatchKeyEvent(event:KeyEvent):Boolean {
     if(event.keyCode==KeyEvent.KEYCODE_BACK){if(event.action==KeyEvent.ACTION_UP && !event.isCanceled)onBackPressedDispatcher.onBackPressed();return true}
-    if(usesFileVideoControls()&&player!=null){
+    if(usesFileVideoControls()&&player!=null&&fileVideoSheet==null){
       val command=when {
         event.hasNoModifiers()&&event.keyCode==KeyEvent.KEYCODE_SPACE->"toggle"
         event.hasNoModifiers()&&event.keyCode==KeyEvent.KEYCODE_J->"rewind"

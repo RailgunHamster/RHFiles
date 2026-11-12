@@ -772,6 +772,6 @@ public class SmbUpdateInstrumentation extends Instrumentation {
                 result.putString("downloadStatus",status.toString());
             }
             result.putString("pass","true");finish(Activity.RESULT_OK,result);
-        }catch(Throwable error){try{screenshot("failure");}catch(Throwable ignored){}result.putString("pass","false");result.putString("error",android.util.Log.getStackTraceString(error));finish(Activity.RESULT_CANCELED,result);}
+        }catch(Throwable error){try{if(activity==null)capture("failure");else screenshot("failure");}catch(Throwable ignored){}result.putString("pass","false");result.putString("error",android.util.Log.getStackTraceString(error));finish(Activity.RESULT_CANCELED,result);}
     }
 }
