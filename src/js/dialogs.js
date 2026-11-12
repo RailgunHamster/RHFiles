@@ -755,12 +755,10 @@ let _newFileDest = "";
 let _newFileIsRight = false;
 
 function newFileTemplateExt(tpl) {
-  if (!tpl) return "";
-  if (tpl.extension) return String(tpl.extension);
-  return String(tpl.ext || "").replace(/^\./, "");
+  return String(tpl?.extension || tpl?.ext || "").replace(/^\./, "");
 }
 
-function newFileTemplateLabel(tpl) {
+function newFileTemplateLabelKey(extension) {
   const keyByExtension = {
     txt: 'template.textFile', md: 'template.markdownFile', html: 'template.htmlFile',
     css: 'template.cssFile', js: 'template.jsFile', py: 'template.pythonFile',
@@ -768,8 +766,8 @@ function newFileTemplateLabel(tpl) {
     yaml: 'template.yamlFile', yml: 'template.yamlFile', sh: 'template.shellFile',
     bat: 'template.batchFile',
   };
-  const key = keyByExtension[newFileTemplateExt(tpl).toLowerCase()];
-  return key ? t(key) : (tpl?.name || newFileTemplateExt(tpl));
+  const ext = extension.toLowerCase();
+  return Object.hasOwn(keyByExtension, ext) ? keyByExtension[ext] : null;
 }
 
 async function showNewFileDialog(isRight) {
@@ -798,8 +796,13 @@ async function showNewFileDialog(isRight) {
   _newFileTemplates = templates;
   container.innerHTML = templates.map((tpl, i) => {
     const ext = newFileTemplateExt(tpl);
-    const icon = (typeof fileIcon === "function") ? fileIcon({ name: tpl.name || ext, extension: ext, is_dir: false, size: 0 }) : "";
-    return `<div class="newfile-template${i === 0 ? " selected" : ""}" data-idx="${i}" onclick="selectNewFileTemplate(${i})"><span class="nft-icon">${icon}</span><span class="nft-name">${esc(newFileTemplateLabel(tpl))}</span></div>`;
+    const key = newFileTemplateLabelKey(ext);
+    const icon = templateFileIcon(ext);
+    return `<button type="button" class="newfile-template${i === 0 ? " selected" : ""}" aria-pressed="${i === 0}" data-idx="${i}" onclick="selectNewFileTemplate(${i})">
+      <span class="nft-icon" aria-hidden="true">${icon}</span>
+      <span class="nft-name"${key ? ` data-i18n="${key}"` : ""}>${esc(key ? t(key) : tpl.name || ext)}</span>
+      <span class="nft-extension">${ext ? "." + esc(ext) : ""}</span>
+    </button>`;
   }).join("");
   nameInput.value = t('dialog.newFileDefault') + (templates.length ? "." + newFileTemplateExt(templates[0]) : ".txt");
   RHFilesUI.assign(nameInput,"keydown",e => {
@@ -813,8 +816,11 @@ async function showNewFileDialog(isRight) {
 function selectNewFileTemplate(idx) {
   const tpl = _newFileTemplates[idx];
   if (!tpl) return;
-  document.querySelectorAll("#newfile-templates .newfile-template").forEach(el =>
-    el.classList.toggle("selected", parseInt(el.dataset.idx) === idx));
+  document.querySelectorAll("#newfile-templates .newfile-template").forEach(el => {
+    const selected = Number(el.dataset.idx) === idx;
+    el.classList.toggle("selected", selected);
+    el.setAttribute("aria-pressed", String(selected));
+  });
   const input = document.getElementById("newfile-name");
   if (!input) return;
   let base = input.value.trim();

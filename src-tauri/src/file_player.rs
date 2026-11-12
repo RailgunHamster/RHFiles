@@ -52,6 +52,8 @@ struct Startup {
 pub(crate) struct Attempt {
     generation: u64,
     selection: u64,
+    volume: u8,
+    rate: Option<f32>,
     started: Instant,
     transport: &'static str,
     remote: Arc<MediaReadTiming>,
@@ -75,7 +77,7 @@ fn millis(since: Instant) -> u64 {
 }
 
 impl Attempt {
-    pub(crate) fn new(generation: u64, selection: u64, path: &str, started: Instant) -> Arc<Self> {
+    pub(crate) fn new(generation: u64, selection: u64, path: &str, started: Instant, volume: u8, rate: Option<f32>) -> Arc<Self> {
         let transport = if path.starts_with("rhfiles-device:") {
             "device"
         } else if matches!(std::path::Path::new(path).components().next(),
@@ -88,6 +90,8 @@ impl Attempt {
         Arc::new(Self {
             generation,
             selection,
+            volume,
+            rate,
             started,
             transport,
             remote: Arc::default(),
@@ -597,7 +601,11 @@ async fn open(
             if !attempt.current() || !engine.surface.current() {
                 return Err("查看内容已切换".into());
             }
+            engine.requested_volume = i32::from(attempt.volume);
             engine.open_with_media_options(&source, title, 0., media_options)?;
+            if let Some(rate) = attempt.rate {
+                unsafe { (engine.api.set_rate)(engine.player as Ptr, rate); }
+            }
             Ok(())
         })();
         let mut slot = FILE_ENGINE.lock().map_err(|_| "播放器状态不可用")?;
@@ -736,7 +744,7 @@ async fn watch_first_frame(app: &AppHandle, attempt: &Arc<Attempt>) {
         attempt.notify(app);
     }
 }
-pub(crate) async fn request(app: AppHandle, action: &str, args: Value) -> Result<Value, String> {
+pub(crate) async fn request(app: AppHandle, action: &str, mut args: Value) -> Result<Value, String> {
     let attempt = ATTEMPT
         .lock()
         .map_err(|_| "播放器状态不可用")?
@@ -873,7 +881,23 @@ pub(crate) async fn request(app: AppHandle, action: &str, args: Value) -> Result
         if args["expectedInput"].as_u64() != Some(engine.input_id) {
             return Err("播放输入已改变，旧操作未执行".into());
         }
-        control_engine(engine, &args)?;
+        if args["command"] == "toggle" {
+            let playback = unsafe { (engine.api.state)(engine.player as Ptr) };
+            if (3..=6).contains(&playback) {
+                let resume = matches!(playback, 5 | 6) || engine.pause_requested.load(Ordering::Relaxed);
+                args["command"] = json!(if resume { "resume" } else { "pause" });
+            }
+        }
+        if args["command"] == "resume" {
+            if !engine.resume_input()? {
+                let rate = unsafe { (engine.api.rate)(engine.player as Ptr) };
+                // Restart through the file viewer's normal path so the new VLC
+                // input is paired with a new attempt, layout and source lease.
+                return Ok(json!({"restartRate": if (0.25..=4.0).contains(&rate) { rate } else { 1.0 }}));
+            }
+        } else if args["command"] != "toggle" {
+            control_engine(engine, &args)?;
+        }
     }
     let mut state = engine.state();
     if attempt.observe_frame(engine) {

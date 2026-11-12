@@ -93,6 +93,24 @@ function fileIcon(file, forPreview) {
   return _builtinIcon(file, forPreview);
 }
 
+const _TEMPLATE_ICON_BADGES = {
+  html: ['</>', '#b54729'], css: ['#', '#345bb9'], js: ['JS', '#866100'],
+  py: ['PY', '#286a9c'], rs: ['RS', '#8f5332'], json: ['{}', '#386660'],
+  xml: ['<>', '#a15a2e'], yaml: ['YML', '#7954a0'], yml: ['YML', '#7954a0'],
+  sh: ['>_', '#39704b'],
+};
+
+function templateFileIcon(extension) {
+  const ext = extension.toLowerCase();
+  if (!Object.hasOwn(_TEMPLATE_ICON_BADGES, ext)) return _builtinIcon({extension:ext,is_dir:false});
+  const [mark, color] = _TEMPLATE_ICON_BADGES[ext];
+  return `<svg viewBox="0 0 20 20" fill="none">
+    <path d="M4 1.5h7.5L17 7v10a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 3 17V3a1.5 1.5 0 0 1 1-1.5Z" fill="${color}" fill-opacity=".12" stroke="${color}"/>
+    <path d="M11.5 1.5V7H17" stroke="${color}" stroke-linejoin="round"/>
+    <text x="10" y="14" text-anchor="middle" fill="${color}" font-family="monospace" font-size="6" font-weight="700">${esc(mark)}</text>
+  </svg>`;
+}
+
 function _systemIconSync(file, forPreview) {
   return _systemIconMarkup(file, forPreview ? 32 : 16);
 }

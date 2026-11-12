@@ -11,13 +11,17 @@ pub(crate) const LABEL:&str="window-file-viewer";
 static SESSION:Mutex<Option<Session>>=Mutex::new(None);
 static SEQUENCE:AtomicU64=AtomicU64::new(0);
 static WINDOW:AtomicU64=AtomicU64::new(0);
-static OPEN:tokio::sync::Mutex<()>=tokio::sync::Mutex::const_new(());
+struct ViewerOperations {
+    session_volume: Option<u8>,
+}
+static OPEN: tokio::sync::Mutex<ViewerOperations> =
+    tokio::sync::Mutex::const_new(ViewerOperations { session_volume: None });
 #[derive(Clone,Serialize,Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Entry {path:String,name:String}
 #[derive(Clone,Serialize)]
 #[serde(rename_all="camelCase")]
-struct Session {generation:u64,selection:u64,index:usize,kind:String,mode:String,language:String,entries:Vec<Entry>}
+struct Session {generation:u64,selection:u64,index:usize,kind:String,mode:String,language:String,video_volume:u8,entries:Vec<Entry>}
 fn next()->Result<u64,String>{let n=SEQUENCE.fetch_add(1,Ordering::SeqCst)+1;if n>9_007_199_254_740_991{return Err("查看器身份已耗尽，请重启应用".into())}Ok(n)}
 fn kind(path:&str)->Option<&'static str>{
     let ext=path.rsplit('.').next()?.to_ascii_lowercase();
@@ -45,6 +49,35 @@ async fn show_image_maximized(window: &tauri::WebviewWindow) -> Result<(), Strin
         let _ = tx.send(());
     }).map_err(|e| e.to_string())?;
     rx.await.map_err(|_| "无法显示图片查看器".to_owned())
+}
+
+fn select_entry(
+    app: &AppHandle,
+    mut state: Session,
+    index: usize,
+    #[cfg(windows)] started: std::time::Instant,
+    #[cfg(windows)] replay_rate: Option<f32>,
+) -> Result<Session, String> {
+    let window = app.get_webview_window(LABEL).ok_or("查看器已关闭")?;
+    let previous = state.selection;
+    state.index = index;
+    state.selection = next()?;
+    {
+        let mut slot = SESSION.lock().map_err(|_| "查看器状态不可用")?;
+        if !slot.as_ref().is_some_and(|s| s.generation == state.generation && s.selection == previous) {
+            return Err("查看内容已改变".into());
+        }
+        *slot = Some(state.clone());
+    }
+    let entry = &state.entries[index];
+    window.set_title(&format!("{} · RHFiles", entry.name)).map_err(|e| e.to_string())?;
+    #[cfg(windows)]
+    if state.kind == "video" {
+        let attempt = file_player::Attempt::new(state.generation, state.selection, &entry.path, started, state.video_volume, replay_rate);
+        attempt.window_ready(std::time::Instant::now());
+        file_player::start(app.clone(), entry.path.clone(), entry.name.clone(), attempt, None);
+    }
+    Ok(state)
 }
 
 async fn save_image(app:AppHandle,args:Value,cancel:tauri::State<'_,CancelFlag>)->Result<Value,String>{
@@ -93,16 +126,18 @@ async fn dispatch(app:AppHandle,action:String,args:Value,cancel:tauri::State<'_,
             let index=args["index"].as_u64().filter(|v|(*v as usize)<entries.len()).ok_or("媒体索引无效")? as usize;
             let media_kind=kind(&entries[index].path).unwrap();if entries.iter().any(|e|kind(&e.path)!=Some(media_kind)){return Err("媒体列表不能混合图片与视频".into())}
             let mode=args["mode"].as_str().unwrap_or("paged");if !["paged","continuous"].contains(&mode){return Err("图片浏览模式无效".into())}
-            let _open=OPEN.lock().await;
+            let operations=OPEN.lock().await;
             let language=args["language"].as_str().filter(|v|["zh","en"].contains(v)).unwrap_or("").to_owned();
-            let generation=next()?;let state=Session{generation,selection:next()?,index,kind:media_kind.into(),mode:mode.into(),language,entries};
+            let default_volume = args["videoDefaultVolume"].as_u64().filter(|value| *value <= 100).unwrap_or(100) as u8;
+            let video_volume = operations.session_volume.unwrap_or(default_volume);
+            let generation=next()?;let state=Session{generation,selection:next()?,index,kind:media_kind.into(),mode:mode.into(),language,video_volume,entries};
             *SESSION.lock().map_err(|_|"查看器状态不可用")?=Some(state.clone());
             if media_kind!="video"{stop_video();}
             let existing=app.get_webview_window(LABEL);
             let initial_page = (cfg!(windows) && existing.is_none() && media_kind == "image")
                 .then(|| std::sync::Arc::new(tokio::sync::Notify::new()));
             #[cfg(windows)]
-            let attempt=(media_kind=="video").then(||file_player::Attempt::new(generation,state.selection,&state.entries[index].path,started));
+            let attempt=(media_kind=="video").then(||file_player::Attempt::new(generation,state.selection,&state.entries[index].path,started,state.video_volume,None));
             #[cfg(windows)]
             let prepared=if existing.is_none(){attempt.as_ref().map(|attempt|file_player::prepare(attempt.clone()))}else{None};
             #[cfg(windows)]
@@ -157,32 +192,39 @@ async fn dispatch(app:AppHandle,action:String,args:Value,cancel:tauri::State<'_,
             #[cfg(windows)]
             let started=std::time::Instant::now();
             let _open=OPEN.lock().await;
-            let mut s=current(&args)?;
-            let prior=s.selection;
+            let s=current(&args)?;
             let index=args["index"].as_u64().filter(|v|(*v as usize)<s.entries.len()).ok_or("媒体索引无效")? as usize;
-            s.index=index;
-            s.selection=next()?;
-            {
-                let mut slot=SESSION.lock().map_err(|_|"查看器状态不可用")?;
-                if slot.as_ref().map(|v|v.selection)!=Some(prior){return Err("查看内容已改变".into())}
-                *slot=Some(s.clone());
-            }
-            if let Some(window)=app.get_webview_window(LABEL){
-                let entry=&s.entries[index];
-                window.set_title(&format!("{} · RHFiles",entry.name)).map_err(|e|e.to_string())?;
-                #[cfg(windows)]
-                if s.kind=="video" {
-                    let attempt=file_player::Attempt::new(s.generation,s.selection,&entry.path,started);
-                    attempt.window_ready(std::time::Instant::now());
-                    file_player::start(app.clone(),entry.path.clone(),entry.name.clone(),attempt,None);
-                }
-            }
-            Ok(json!(s))
+            Ok(json!(select_entry(&app,s,index,#[cfg(windows)] started,#[cfg(windows)] None)?))
         }
         "mode"=>{let mut s=current(&args)?;let mode=args["mode"].as_str().filter(|v|["paged","continuous"].contains(v)).ok_or("图片浏览模式无效")?;s.mode=mode.into();{let mut slot=SESSION.lock().map_err(|_|"查看器状态不可用")?;if !slot.as_ref().is_some_and(|v|v.generation==s.generation&&v.selection==s.selection){return Err("查看内容已改变".into())}*slot=Some(s.clone());}app.emit("file-viewer-preference",json!({"imageBrowseMode":mode})).map_err(|e|e.to_string())?;Ok(json!(s))}
         "close"=>{current(&args)?;if let Some(w)=app.get_webview_window(LABEL){w.close().map_err(|e|e.to_string())?;}Ok(json!({"closed":true}))}
         "image.saveAs"=>save_image(app,args,cancel).await,
-        "video.state"|"video.control"|"video.bounds"=>{current(&args)?;#[cfg(windows)]return crate::rhvideo_player::file_player::request(app,&action,args).await;#[cfg(not(windows))]Err("此平台暂未提供内置视频内核".into())}
+        #[cfg(windows)]
+        "video.control"=>{
+            let started = std::time::Instant::now();
+            let mut operations = OPEN.lock().await;
+            let state = current(&args)?;
+            let volume_change = args["command"] == "volume";
+            let result = file_player::request(app.clone(), &action, args).await?;
+            if let Some(rate) = result["restartRate"].as_f64() {
+                let index = state.index;
+                return Ok(json!({"replay": select_entry(&app,state,index,started,Some(rate as f32))?}));
+            }
+            if volume_change {
+                let volume = result["volume"].as_u64().filter(|v| *v <= 100).ok_or("音量范围是 0–100")? as u8;
+                operations.session_volume = Some(volume);
+                if let Some(session) = SESSION.lock().map_err(|_| "查看器状态不可用")?.as_mut()
+                    .filter(|s| s.generation == state.generation && s.selection == state.selection)
+                {
+                    session.video_volume = volume;
+                }
+            }
+            Ok(result)
+        }
+        #[cfg(windows)]
+        "video.state"|"video.bounds"=>{current(&args)?;file_player::request(app,&action,args).await}
+        #[cfg(not(windows))]
+        "video.state"|"video.control"|"video.bounds"=>{current(&args)?;Err("此平台暂未提供内置视频内核".into())}
         _=>Err("未知媒体查看器操作".into())
     }
 }

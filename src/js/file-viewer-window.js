@@ -13,9 +13,17 @@
   function focusLeave(){if(!focused)return focusState();++focusEpoch;focused=null;if(focusPointer)try{$('image-focus-stage').releasePointerCapture(focusPointer.id);}catch{}focusPointer=null;$('image-focus-stage').classList.remove('dragging');$('image-focus-image').onload=$('image-focus-image').onerror=null;$('image-focus-image').removeAttribute('src');$('image-focus').hidden=true;document.body.classList.remove('image-focused');hideImageMenu();$('viewport').focus({preventScroll:true});header();return focusState();}
   async function focusEnter(at){at=imageIndex(at);if(selectionTask||loading)throw Error(text('请等待图片切换完成','Wait for image navigation'));auto?.pause();hideImageMenu();pointer=null;const token=++focusEpoch;focused={index:at,zoom:1,angle,x:0,y:0,loading:true,error:''};$('image-focus-title').textContent=state.entries[at].name;$('image-focus-image').alt=state.entries[at].name;$('image-focus').hidden=false;document.body.classList.add('image-focused');const image=$('image-focus-image');image.onload=image.onerror=null;image.removeAttribute('src');image.onload=()=>{if(token===focusEpoch&&focused){focused.loading=false;paintFocus();}};image.onerror=()=>{if(token===focusEpoch&&focused){focused.loading=false;focused.error=text('图片无法解码，可使用系统应用打开','Cannot decode this image. Try the system app.');paintFocus();}};paintFocus();header();$('image-focus-stage').focus({preventScroll:true});try{const url=await source(state.entries[at]);if(token===focusEpoch&&focused)image.src=url;}catch(e){if(token===focusEpoch&&focused){focused.loading=false;focused.error=String(e.message||e);paintFocus();}}return focusState();}
   let volumeJob=null,volumeDragging=false,fullscreen=false,controlsVisible=true,chromeTimer=null,wheelDelta=0,chromeHover=false,controlRevision=0;
-  let diagnosticsOpen=false,videoPolling=null;
+  let diagnosticsOpen=false,videoPolling=null,pendingToggle=false;
   function seekSeconds(){try{const value=JSON.parse(localStorage.getItem('rhfiles-settings')||'{}').videoSeekSeconds;return Number.isInteger(value)&&value>=1&&value<=600?value:5;}catch{return 5;}}
-  function paintVolume(){const value=volumeJob?.value??video?.volume??100;if(!volumeDragging)$('volume').value=String(value);$('video-volume-value').textContent=Math.round(value)+'%';}
+  function paintVolume(){const value=volumeJob?.value??video?.volume??state?.videoVolume??100;if(!volumeDragging)$('volume').value=String(value);$('video-volume-value').textContent=Math.round(value)+'%';}
+  const playbackReady=()=>video?.opened===true&&[3,4,5,6].includes(video.state);
+  function paintPlaybackToggle(){
+    const ready=playbackReady();
+    const stopped=video?.state===5||video?.state===6;
+    $('toggle').disabled=!ready||pendingToggle;
+    $('toggle').textContent=stopped?text('重播','Replay'):!ready?text('播放','Play'):
+      video.pauseRequested?text('继续','Play'):text('暂停','Pause');
+  }
   function fullVideo(){return fullscreen&&state?.kind==='video';}
   function paintChrome(){document.body.classList.toggle('video-fullscreen',fullVideo());document.body.classList.toggle('video-controls-visible',controlsVisible);}
   function showControls(){clearTimeout(chromeTimer);if(!fullVideo())return;const changed=!controlsVisible;controlsVisible=true;paintChrome();if(changed)void bounds().catch(error);if(diagnosticsOpen)return;chromeTimer=setTimeout(()=>{if(!rendered||volumeDragging||seekDragging||chromeHover){showControls();return;}controlsVisible=false;paintChrome();void bounds().catch(error);},2200);}
@@ -138,7 +146,7 @@
     $('track').style.transform=continuous?'':`translateX(${-(position-center)*$('viewport').clientWidth}px)`;transform();
     boundary.update(continuous?[...stripFrames.values()]:wanted.map(at=>({slot:at,index:strip.item(at),left:(at-position)*$('viewport').clientWidth})),{width:$('viewport').clientWidth,count:state.entries.length,zoom,...(continuous?{cycle:Math.floor(Math.round(position)/state.entries.length)}:{})});
   }
-  function clear(){focusLeave();hideImageMenu();boundary.clear();auto?.pause();auto=null;++epoch;clearTimeout(poll);clearTimeout(chromeTimer);volumeJob=null;volumeDragging=false;wheelDelta=0;chromeHover=false;document.body.classList.remove('video-fullscreen');video=null;rendered=false;pointer=null;imageSeeking=false;zoom=1;angle=x=y=0;for(const p of pages.values())p.querySelector('img').removeAttribute('src');pages.clear();sources.clear();$('track').replaceChildren();$('track').style.transform='';$('message').textContent='';$('video-startup-status').textContent='';}
+  function clear(){focusLeave();hideImageMenu();boundary.clear();auto?.pause();auto=null;++epoch;clearTimeout(poll);clearTimeout(chromeTimer);volumeJob=null;volumeDragging=false;pendingToggle=false;wheelDelta=0;chromeHover=false;document.body.classList.remove('video-fullscreen');video=null;rendered=false;pointer=null;imageSeeking=false;zoom=1;angle=x=y=0;for(const p of pages.values())p.querySelector('img').removeAttribute('src');pages.clear();sources.clear();$('track').replaceChildren();$('track').style.transform='';$('message').textContent='';$('video-startup-status').textContent='';}
   async function select(at){
     if(!state)return;if(closing)throw Error(text('查看器正在关闭','The viewer is closing'));const generation=state.generation;
     if(selectionTask){await selectionTask.catch(()=>{});if(generation!==state.generation)throw Error(text('查看内容已改变','The viewed content changed'));return select(at);}
@@ -149,7 +157,26 @@
     try{await task;if(wrapped&&generation===state.generation&&state.index===at)boundary.notify(wrapped);return snapshot();}finally{if(selectionTask===task){selectionTask=null;loading=false;}}
   }
   async function seekImage(at){if(state?.kind!=='image'||!Number.isInteger(at)||at<0||at>=state.entries.length)throw Error(text('图片位置无效','Invalid image index'));auto?.pause();imageSeeking=false;pointer=null;return select(at);}
-  async function videoControl(command,value){if(command==='volume')return setVolume(value);if(!video?.opened)throw Error(text('播放器尚未就绪','Player is not ready'));++controlRevision;const token=epoch,input=video.inputId,result=await native('video.control',{...scope(),expectedInput:input,command,...(value===undefined?{}:{value})});if(token===epoch){++controlRevision;video=result;}return result;}
+  async function videoControl(command,value){
+    if(command==='volume')return setVolume(value);
+    const toggle=command==='toggle';
+    if(toggle&&(!playbackReady()||loading||pendingToggle||closing))return video;
+    if(!video?.opened)throw Error(text('播放器尚未就绪','Player is not ready'));
+    const token=epoch;
+    if(toggle){pendingToggle=true;paintPlaybackToggle();}
+    ++controlRevision;
+    try{
+      const result=await native('video.control',{...scope(),expectedInput:video.inputId,command,...(value===undefined?{}:{value})});
+      if(token===epoch){
+        ++controlRevision;
+        if(result.replay)await activate(result.replay);
+        else {video=result;paintPlaybackToggle();}
+      }
+      return result;
+    }finally{
+      if(toggle&&token===epoch){pendingToggle=false;paintPlaybackToggle();}
+    }
+  }
   async function bounds(){if(!video?.opened)return;const r=$('viewport').getBoundingClientRect(),shown=fullVideo()&&controlsVisible;return native('video.bounds',{...scope(),expectedInput:video.inputId,x:r.x,y:r.y,width:r.width,height:r.height,clipTop:shown?document.querySelector('header').getBoundingClientRect().height:0,clipBottom:shown?document.querySelector('footer').getBoundingClientRect().height:0});}
   function paintVideoStartup() {
     const panel=$('video-diagnostics'), button=$('video-diagnostics-toggle');
@@ -236,13 +263,12 @@
       const revision=controlRevision,result=await native('video.state',scope());
       if(token!==epoch||revision!==controlRevision)return;
       const changedInput=video?.inputId!==result.inputId;
-      video=result;paintVolume();
+      video=result;paintVolume();paintPlaybackToggle();
       let failure;
       if(result.opened){
         $('position').textContent=clock(result.positionMs);
         $('duration').textContent=clock(result.durationMs);
         if(!seekDragging)$('seek').value=result.durationMs>0?Math.round(result.positionMs/result.durationMs*1000):0;
-        $('toggle').textContent=result.pauseRequested||result.state===4?text('继续','Play'):result.state===6?text('重播','Replay'):text('暂停','Pause');
         failure=result.presentationError||result.seekError||(result.state===7?text('播放失败，可使用系统应用打开','Playback failed. Try the system app.'):null);
         if(result.renderedFrames>0&&!rendered){
           const alreadyVisible=result.startup?.phase==='ready';
@@ -258,7 +284,7 @@
       if(token!==epoch)return;
       paintVideoStartup();
       if(failure)error(failure);
-    }catch(e){if(token===epoch)error(e);}
+    }catch(e){if(token===epoch&&!pendingToggle)error(e);}
     finally{
       if(videoPolling===job)videoPolling=null;
       if(token===epoch){if(job.again)wakeVideo();else poll=setTimeout(wakeVideo,400);}
@@ -279,7 +305,7 @@
       auto=RHFilesImageStrip.autoScroll({speed:autoSpeed,move:delta=>{if(document.hidden||state.mode!=='continuous')return false;position=strip.move(position,delta);images();return state.entries.length>1;},changed:paintAuto});
       paintAuto(auto.state());images();return;
     }
-    paintVideoStartup();
+    paintVolume();paintPlaybackToggle();paintVideoStartup();
     const token=epoch;
     controlsVisible=true;
     wakeVideo();
@@ -294,7 +320,7 @@
   async function systemOpen(at=index()){if(!Number.isInteger(at)||at<0||at>=state.entries.length)throw Error(text('文件位置无效','Invalid file index'));const path=state.entries[at].path;return path.startsWith('rhfiles-device:')?core.invoke('device_transfer',{action:'open',args:{path,command:'open_file'}}):core.invoke('open_file',{path});}
   const actions={next:()=>select(index()+1),previous:()=>select(index()-1),fit:()=>{if(focused)return focusFit();auto?.pause();zoom=1;x=y=0;transform();},zoomIn:()=>{if(focused)return focusZoom(Math.min(16,focused.zoom*1.4));auto?.pause();zoom=Math.min(8,zoom*1.4);transform();},zoomOut:()=>{if(focused)return focusZoom(Math.max(.1,focused.zoom/1.4));auto?.pause();zoom=Math.max(.25,zoom/1.4);transform();},rotate:()=>{if(focused){focused.angle=(focused.angle+90)%360;paintFocus();return focusState();}auto?.pause();angle=(angle+90)%360;images();},close,systemOpen,fullscreen:toggleFullscreen};
   const object=(properties={},required=[])=>({type:'object',properties,required,additionalProperties:false});
-  api.provideState('application',()=>({platform:'windows',window:'window-file-viewer',ready:!!state}));api.register('media.viewer.state',snapshot,{params:object(),risk:'read'});api.register('media.viewer.mode.set',p=>mode(p.mode),{params:object({mode:{enum:['paged','continuous']}},['mode']),risk:'settings'});api.register('media.viewer.video.control',p=>videoControl(p.command,p.value),{params:object({command:{enum:['pause','resume','seek','volume','rate']},value:{type:'number'}},['command']),risk:'ui'});
+  api.provideState('application',()=>({platform:'windows',window:'window-file-viewer',ready:!!state}));api.register('media.viewer.state',snapshot,{params:object(),risk:'read'});api.register('media.viewer.mode.set',p=>mode(p.mode),{params:object({mode:{enum:['paged','continuous']}},['mode']),risk:'settings'});api.register('media.viewer.video.control',p=>videoControl(p.command,p.value),{params:object({command:{enum:['toggle','pause','resume','seek','volume','rate']},value:{type:'number'}},['command']),risk:'ui'});
   api.register('media.viewer.seek',p=>seekImage(p.index),{params:object({index:{type:'integer',minimum:0,maximum:4999}},['index']),risk:'ui'});
   api.register('media.viewer.focus.state',focusState,{params:object(),risk:'read'});
   api.register('media.viewer.focus.enter',p=>focusEnter(p.index),{params:object({index:{type:'integer',minimum:0,maximum:4999}}),risk:'ui'});
@@ -322,7 +348,7 @@
   function listen(id,event,fn){RHFilesUI.listen(typeof id==='string'?$(id):id,event,fn,undefined,'desktop.file-viewer.'+(typeof id==='string'?id:'document')+'.'+event);}
   for(const [id,action]of Object.entries({previous:'previous',next:'next',fit:'fit','zoom-in':'zoomIn','zoom-out':'zoomOut',rotate:'rotate',close:'close',system:'systemOpen',fullscreen:'fullscreen'}))listen(id,'click',()=>api.invoke('media.viewer.'+action).catch(error));
   listen('video-diagnostics-toggle','click',()=>api.invoke('media.viewer.video.diagnostics.set',{open:!diagnosticsOpen}).catch(error));
-  for(const value of ['paged','continuous'])listen('mode-'+value,'click',()=>api.invoke('media.viewer.mode.set',{mode:value}).catch(error));listen('toggle','click',()=>videoControl(video?.pauseRequested||video?.state===4||video?.state===6?'resume':'pause').catch(error));listen('rate','change',()=>videoControl('rate',Number($('rate').value)).catch(error));
+  for(const value of ['paged','continuous'])listen('mode-'+value,'click',()=>api.invoke('media.viewer.mode.set',{mode:value}).catch(error));listen('toggle','click',()=>api.invoke('media.viewer.video.control',{command:'toggle'}).catch(error));listen('rate','change',()=>videoControl('rate',Number($('rate').value)).catch(error));
   listen('volume','pointerdown',()=>volumeDragging=true);listen('volume','pointerup',()=>volumeDragging=false);listen('volume','pointercancel',()=>{volumeDragging=false;paintVolume();});listen('volume','blur',()=>volumeDragging=false);
   for(const event of ['input','change'])listen('volume',event,()=>api.invoke('media.viewer.video.control',{command:'volume',value:Number($('volume').value)}).catch(error));
   listen('auto-scroll','click',()=>api.invoke('media.viewer.auto.toggle').catch(error));listen('auto-speed','input',()=>api.invoke('media.viewer.auto.speed.set',{speed:Number($('auto-speed').value)}).catch(error));
@@ -360,8 +386,9 @@
     if(!editing&&event.key==='Escape'&&diagnosticsOpen){event.preventDefault();setDiagnostics(false);return;}
     if(!editing&&event.key==='Escape'&&fullscreen){event.preventDefault();void api.invoke('media.viewer.fullscreen.set',{fullscreen:false}).catch(error);return;}
     if(state?.kind==='video')showControls();
+    if(!editing&&state?.kind==='video'&&event.key===' '){event.preventDefault();if(!event.repeat)void api.invoke('media.viewer.video.control',{command:'toggle'}).catch(error);return;}
     if(editing||event.target.tagName==='INPUT')return;
-    if(event.key===' '){if(state?.kind==='image'&&state.mode==='continuous'){event.preventDefault();if(!event.repeat)void api.invoke('media.viewer.auto.toggle').catch(error);}else if(state?.kind==='video'){event.preventDefault();if(!event.repeat)void videoControl(video?.pauseRequested||video?.state===4?'resume':'pause').catch(error);}return;}
+    if(event.key===' '){if(state?.kind==='image'&&state.mode==='continuous'){event.preventDefault();if(!event.repeat)void api.invoke('media.viewer.auto.toggle').catch(error);}return;}
     if(state?.kind==='image'&&['Home','End'].includes(event.key)){event.preventDefault();void seekImage(event.key==='Home'?0:state.entries.length-1).catch(error);return;}
     if(event.key==='ContextMenu'&&state?.kind==='image'){event.preventDefault();void api.invoke('media.viewer.context.open').catch(error);return;}
     if(state?.kind==='video'&&['ArrowLeft','ArrowRight'].includes(event.key)){event.preventDefault();if(!event.repeat)void api.invoke('media.viewer.video.skip',{seconds:(event.key==='ArrowLeft'?-1:1)*seekSeconds()}).catch(error);return;}

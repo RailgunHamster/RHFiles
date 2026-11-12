@@ -732,6 +732,26 @@ struct Engine {
 }
 impl Engine {
     fn output_gain(&self)->i32{let local=if self.muted||self.hold_audio.load(std::sync::atomic::Ordering::Relaxed){0}else{self.requested_volume};if self.shared_gain{local.clamp(0,100)}else{effective_volume(local)}}
+    /// Resume a paused input, or report that its terminal state requires a new input.
+    fn resume_input(&self) -> Result<bool, String> {
+        let restore_target = self.paused_preview.lock().map_err(|_| "暂停画面恢复不可用")?
+            .as_ref().map(|plan| plan.target);
+        self.cancel_pause_restore()?;
+        self.pause_requested.store(false, std::sync::atomic::Ordering::Relaxed);
+        if let Some(target) = restore_target {
+            self.seek.lock().map_err(|_| "跳转状态不可用")?
+                .prepare_clamped(self.input_id, target, Instant::now());
+        }
+        self.clock.lock().map_err(|_| "播放时钟不可用")?.discontinuity();
+        let player = self.player as Ptr;
+        unsafe {
+            if matches!((self.api.state)(player), 5 | 6) {
+                return Ok(false);
+            }
+            (self.api.set_pause)(player, 0);
+        }
+        Ok(true)
+    }
     fn begin_pause_restore(&self,target:i64)->Result<(),String>{
         self.hold_audio.store(true,std::sync::atomic::Ordering::Relaxed);
         *self.paused_preview.lock().map_err(|_|"暂停画面恢复不可用")?=Some(PauseFrame{target,rate:unsafe{(self.api.rate)(self.player as Ptr)},deadline:std::time::Instant::now()+std::time::Duration::from_secs(15),phase:PauseFramePhase::Priming});
@@ -2087,21 +2107,10 @@ fn control_engine(player: &mut Engine, args: &Value) -> Result<(), String> {
                 (player.api.set_pause)(p, 1);
             }
             "resume" => {
-                let restore_target=player.paused_preview.lock().map_err(|_|"暂停画面恢复不可用")?.as_ref().map(|plan|plan.target);
-                player.cancel_pause_restore()?;
-                player.pause_requested.store(false,std::sync::atomic::Ordering::Relaxed);
-                if let Some(target)=restore_target{player.seek.lock().map_err(|_|"跳转状态不可用")?.prepare_clamped(player.input_id,target,std::time::Instant::now());}
-                player
-                    .clock
-                    .lock()
-                    .map_err(|_| "播放时钟不可用")?
-                    .discontinuity();
-                if matches!((player.api.state)(p),5|6) {
+                if !player.resume_input()? {
                     let url=player.url.clone();let title=player.title.clone();let rate=(player.api.rate)(p);
                     player.open(&url,title,0.)?;
                     if rate>0. {(player.api.set_rate)(p,rate);}
-                }else{
-                    (player.api.set_pause)(p, 0);
                 }
             }
             "seek" => {

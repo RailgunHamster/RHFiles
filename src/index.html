@@ -502,16 +502,16 @@
 
 <div class="overlay" id="newfile-dialog" style="display:none">
   <div class="dialog-backdrop" onclick="closeNewFile()"></div>
-  <div class="dialog-box">
-    <div class="dialog-title">New File</div>
+  <div class="dialog-box" role="dialog" aria-modal="true" aria-labelledby="newfile-title">
+    <div class="dialog-title" id="newfile-title" data-i18n="dialog.newFileTitle">New File</div>
     <div class="dialog-row">
-      <label>Name:</label>
-      <input type="text" id="newfile-name" placeholder="file.txt">
+      <label for="newfile-name" data-i18n="dialog.newFileName">File name:</label>
+      <input type="text" id="newfile-name">
     </div>
     <div class="dialog-scroll" id="newfile-templates"></div>
     <div class="dialog-actions">
-      <button class="dialog-btn" onclick="closeNewFile()">Cancel</button>
-      <button class="dialog-btn primary" onclick="createNewFileFromDialog()">Create</button>
+      <button class="dialog-btn" onclick="closeNewFile()" data-i18n="btn.cancel">Cancel</button>
+      <button class="dialog-btn primary" onclick="createNewFileFromDialog()" data-i18n="btn.create">Create</button>
     </div>
   </div>
 </div>
