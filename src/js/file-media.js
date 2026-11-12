@@ -55,19 +55,22 @@ const desktopMediaViewer=(()=>{
     await call('file_viewer_request',{action:'open',args:{entries:unique,index:unique.findIndex(e=>e.path===path),mode:preferences.imageBrowseMode,videoDefaultVolume:preferences.videoDefaultVolume,language:typeof _lang==='string'?_lang:G.settings.language}});return true;
   }
   function settingsHtml(){
-    const zh=G.settings.language==='zh',label=(cn,en)=>zh?cn:en,p=get();
-    const selects=[['pdfOpenWith',label('打开 PDF','Open PDFs'),[['rhfiles',label('RHFiles PDF 阅读器','RHFiles PDF reader')],['system',label('系统默认应用','System default app')]]],
-      ['imageOpenWith',label('打开图片','Open images'),[['rhfiles',label('RHFiles 图片查看器','RHFiles image viewer')],['system',label('Windows 默认应用','Windows default app')]]],
-      ['videoOpenWith',label('打开视频','Open videos'),[['rhfiles',label('RHFiles 内置播放器','RHFiles built-in player')],['system',label('Windows 默认应用','Windows default app')]]],
-      ['imageBrowseMode',label('图片浏览模式','Image browsing'),[['paged',label('逐张翻页','Paged')],['continuous',label('连续滚动','Continuous scrolling')]]]];
+    const p=get();
+    const systemApp=['system',t('settings.mediaSystemApp')];
+    const selects=[
+      ['pdfOpenWith',t('settings.mediaOpenPdf'),[['rhfiles',t('settings.mediaPdfReader')],systemApp]],
+      ['imageOpenWith',t('settings.mediaOpenImage'),[['rhfiles',t('settings.mediaImageViewer')],systemApp]],
+      ['videoOpenWith',t('settings.mediaOpenVideo'),[['rhfiles',t('settings.mediaVideoPlayer')],systemApp]],
+      ['imageBrowseMode',t('settings.mediaImageMode'),[['paged',t('settings.mediaImagePaged')],['continuous',t('settings.mediaImageContinuous')]]],
+    ];
     const choices=selects.map(([key,title,options])=>'<div class="settings-row"><label for="settings-'+key+'">'+title+'</label>'+
       (key==='imageBrowseMode'?'<div id="settings-'+key+'" class="media-mode-switch" role="group" aria-label="'+title+'">'+options.map(([value,text])=>'<button type="button" data-media-mode="'+value+'" aria-pressed="'+(p[key]===value)+'">'+text+'</button>').join('')+'</div>'
       :'<select id="settings-'+key+'" data-media-preference="'+key+'">'+options.map(([value,text])=>'<option value="'+value+'"'+(p[key]===value?' selected':'')+'>'+text+'</option>').join('')+'</select>')+'</div>').join('');
     const numbers=[
-      ['videoSeekSeconds',label('方向键快进／快退（秒）','Arrow-key seek interval (seconds)'),1,600],
-      ['videoDefaultVolume',label('默认音量（%）','Default volume (%)'),0,100],
+      ['videoSeekSeconds',t('settings.mediaVideoSeekSeconds'),1,600],
+      ['videoDefaultVolume',t('settings.mediaVideoDefaultVolume'),0,100],
     ].map(([key,title,min,max])=>`<div class="settings-row"><label for="settings-${key}">${title}</label><input id="settings-${key}" type="number" min="${min}" max="${max}" step="1" required data-media-preference="${key}" value="${p[key]}"></div>`).join('');
-    return '<div class="settings-card"><div class="settings-card-title">'+label('文件阅读与播放','File readers and players')+'</div>'+choices+numbers+'</div>';
+    return '<div class="settings-card"><div class="settings-card-title">'+t('settings.mediaTitle')+'</div>'+choices+numbers+'</div>';
   }
   function bind(){
     for(const button of document.querySelectorAll('[data-media-mode]'))RHFilesUI.listen(button,'click',()=>RHFilesAPI.invoke('media.preferences.set',{imageBrowseMode:button.dataset.mediaMode}),undefined,'desktop.media.mode.'+button.dataset.mediaMode);
