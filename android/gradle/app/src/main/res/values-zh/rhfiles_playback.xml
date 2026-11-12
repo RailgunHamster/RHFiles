@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="file_player_speed">倍速 %1$s×</string>
+    <string name="file_player_speed_title">播放速度</string>
+    <string name="file_player_fit">适应画面</string>
+    <string name="file_player_fill">填满画面</string>
+    <string name="file_player_fit_action">适应窗口，显示完整画面</string>
+    <string name="file_player_fill_action">填满窗口，可能裁切画面边缘</string>
+    <string name="file_player_landscape">横屏</string>
+    <string name="file_player_exit_landscape">自动旋转</string>
+    <string name="file_player_gestures">手势</string>
+    <string name="file_player_shortcuts_title">手势与快捷键</string>
+    <string name="file_player_shortcuts_body">轻点画面，显示或隐藏控件。\n\n左右滑动视频画面，切换上一部或下一部。拖动进度条，跳到当前视频的指定位置。\n\n双击画面左侧或右侧，后退或前进 10 秒。\n\n外接键盘\n空格 · 播放或暂停\nJ / L · 后退 / 前进 10 秒\nAlt + 左 / 右方向键 · 上一个 / 下一个文件</string>
+    <string name="file_player_jump_back">−10 秒</string>
+    <string name="file_player_jump_forward">+10 秒</string>
+</resources>

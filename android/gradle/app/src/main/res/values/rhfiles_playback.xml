@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="RHFilesPlayback" />
+    <style name="RHFilesPlayback.Transport">
+        <item name="android:layout_width">48dp</item>
+        <item name="android:layout_height">48dp</item>
+        <item name="android:background">@drawable/rhfiles_playback_button</item>
+        <item name="android:scaleType">center</item>
+        <item name="android:tint">#FFFFFFFF</item>
+    </style>
+    <style name="RHFilesPlayback.Jump" parent="RHFilesPlayback.Transport">
+        <item name="android:layout_width">52dp</item>
+        <item name="android:layout_height">52dp</item>
+        <item name="android:layout_marginHorizontal">3dp</item>
+        <item name="android:gravity">center</item>
+        <item name="android:paddingTop">3dp</item>
+        <item name="android:textColor">#FFFFFFFF</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:focusable">true</item>
+    </style>
+    <style name="RHFilesPlayback.Time">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:textColor">#FFE1DAEA</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:fontFeatureSettings">tnum</item>
+    </style>
+    <style name="RHFilesPlayback.Chip">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">48dp</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:layout_marginEnd">4dp</item>
+        <item name="android:background">@drawable/rhfiles_playback_chip</item>
+        <item name="android:backgroundTint">@null</item>
+        <item name="android:stateListAnimator">@null</item>
+        <item name="android:minWidth">0dp</item>
+        <item name="android:minHeight">0dp</item>
+        <item name="android:padding">2dp</item>
+        <item name="android:gravity">center</item>
+        <item name="android:textColor">#FFF6F1FF</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:letterSpacing">0</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:maxLines">2</item>
+        <item name="android:focusable">true</item>
+    </style>
+    <string name="file_player_speed">Speed %1$s×</string>
+    <string name="file_player_speed_title">Playback speed</string>
+    <string name="file_player_fit">Fit</string>
+    <string name="file_player_fill">Fill</string>
+    <string name="file_player_fit_action">Fit the full video in the window</string>
+    <string name="file_player_fill_action">Fill the window and crop the edges</string>
+    <string name="file_player_landscape">Landscape</string>
+    <string name="file_player_exit_landscape">Auto rotate</string>
+    <string name="file_player_gestures">Gestures</string>
+    <string name="file_player_shortcuts_title">Gestures and shortcuts</string>
+    <string name="file_player_shortcuts_body">Tap the video to show or hide the controls.\n\nSwipe left or right on the video to switch files. Drag the timeline to seek within the current file.\n\nDouble-tap the left or right side to go back or forward 10 seconds.\n\nKeyboard\nSpace · Play or pause\nJ / L · Back / forward 10 seconds\nAlt + Left / Right · Previous / next file</string>
+    <string name="file_player_jump_back">−10 s</string>
+    <string name="file_player_jump_forward">+10 s</string>
+</resources>

@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<merge xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:gravity="center"
+        android:layoutDirection="ltr">
+
+        <ImageButton android:id="@id/exo_prev"
+            style="@style/RHFilesPlayback.Transport" />
+
+        <TextView android:id="@id/exo_rew_with_amount"
+            style="@style/RHFilesPlayback.Jump"
+            android:background="@drawable/rhfiles_playback_rewind" />
+
+        <ImageButton android:id="@id/exo_play_pause"
+            style="@style/RHFilesPlayback.Transport"
+            android:layout_width="64dp"
+            android:layout_height="64dp"
+            android:layout_marginHorizontal="6dp"
+            android:background="@drawable/rhfiles_playback_primary" />
+
+        <TextView android:id="@id/exo_ffwd_with_amount"
+            style="@style/RHFilesPlayback.Jump"
+            android:background="@drawable/rhfiles_playback_forward" />
+
+        <ImageButton android:id="@id/exo_next"
+            style="@style/RHFilesPlayback.Transport" />
+    </LinearLayout>
+
+    <LinearLayout android:id="@+id/file_player_bottom"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:background="@drawable/rhfiles_playback_scrim"
+        android:orientation="vertical"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="12dp">
+
+        <androidx.media3.ui.DefaultTimeBar android:id="@id/exo_progress"
+            android:layout_width="match_parent"
+            android:layout_height="32dp"
+            app:bar_height="4dp"
+            app:touch_target_height="32dp"
+            app:played_color="#E5DFFF"
+            app:scrubber_color="#F6F1FF"
+            app:scrubber_enabled_size="12dp"
+            app:scrubber_dragged_size="16dp"
+            app:buffered_color="#8C859D"
+            app:unplayed_color="#4C465A" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layoutDirection="ltr"
+            android:paddingHorizontal="2dp">
+            <TextView android:id="@id/exo_position" style="@style/RHFilesPlayback.Time" />
+            <Space android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
+            <TextView android:id="@id/exo_duration" style="@style/RHFilesPlayback.Time" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:gravity="center_vertical">
+            <Button android:id="@+id/file_player_speed" style="@style/RHFilesPlayback.Chip" />
+            <Button android:id="@+id/file_player_fit" style="@style/RHFilesPlayback.Chip" />
+            <Button android:id="@+id/file_player_orientation" style="@style/RHFilesPlayback.Chip" />
+            <Button android:id="@+id/file_player_shortcuts" style="@style/RHFilesPlayback.Chip"
+                android:text="@string/file_player_gestures" />
+            <ImageButton android:id="@id/exo_subtitle"
+                style="@style/RHFilesPlayback.Transport"
+                android:visibility="gone" />
+            <ImageButton android:id="@id/exo_audio_track"
+                style="@style/RHFilesPlayback.Transport"
+                android:src="@drawable/exo_styled_controls_audiotrack"
+                android:contentDescription="@string/exo_track_selection_title_audio"
+                android:visibility="gone" />
+        </LinearLayout>
+    </LinearLayout>
+</merge>

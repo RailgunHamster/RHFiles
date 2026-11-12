@@ -15,6 +15,7 @@ import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.activity.addCallback
 import androidx.core.content.FileProvider
+import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -23,6 +24,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.media3.common.*
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.common.util.Util
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.PlayerMessage
@@ -69,6 +71,9 @@ class PlaybackActivity:AppCompatActivity() {
   }
   private lateinit var playerView:PlayerView
   private var mediaPageTouch:MediaPageTouch?=null
+  private var filePlaybackTouch:FilePlaybackTouch?=null
+  private lateinit var pageHint:TextView
+  private val clearPageHint=Runnable{pageHint.visibility=View.GONE}
   private val selectionMemory by lazy {ViewModelProvider(this,object:ViewModelProvider.Factory{
     @Suppress("UNCHECKED_CAST") override fun <T:ViewModel> create(modelClass:Class<T>):T {require(modelClass==PlaybackSelectionMemory::class.java);return PlaybackSelectionMemory() as T}
   })[PlaybackSelectionMemory::class.java]}
@@ -87,6 +92,7 @@ class PlaybackActivity:AppCompatActivity() {
   private var play=true
   private var landscape=false
   private var resize=AspectRatioFrameLayout.RESIZE_MODE_FIT
+  private var filePlaybackRate=1f
   private var rhWindow:RhVideoClient.Window?=null
   private var rhTicket:String?=null
   private var rhLocalGain=1f
@@ -133,18 +139,25 @@ class PlaybackActivity:AppCompatActivity() {
       path=queue[index].path;source=sources[index];title=queue[index].name
     }catch(e:Exception){Toast.makeText(this,e.message,Toast.LENGTH_LONG).show();finish();return}
     position=savedInstanceState?.getLong("position") ?: intent.getLongExtra("positionMs",0).coerceAtLeast(0);play=savedInstanceState?.getBoolean("play",true) ?: true
+    landscape=savedInstanceState?.getBoolean("landscape")?:false
+    resize=savedInstanceState?.getInt("resize",AspectRatioFrameLayout.RESIZE_MODE_FIT)?:AspectRatioFrameLayout.RESIZE_MODE_FIT
+    filePlaybackRate=savedInstanceState?.getFloat("filePlaybackRate",1f)?:1f
     rhLocalGain=savedInstanceState?.getFloat("rhLocalGain",1f)?:1f
     WindowCompat.setDecorFitsSystemWindows(window,false)
     WindowInsetsControllerCompat(window,window.decorView).apply{hide(WindowInsetsCompat.Type.systemBars());systemBarsBehavior=WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE}
     val root=FrameLayout(this).apply{setBackgroundColor(Color.BLACK)}
-    playerView=(if(rhWindow!=null)RhVideoPlayerView(this)else PlayerView(this)).apply {
+    playerView=(when {
+      rhWindow!=null->RhVideoPlayerView(this)
+      usesFileVideoControls()->layoutInflater.inflate(R.layout.rhfiles_playback_view,root,false) as PlayerView
+      else->PlayerView(this)
+    }).apply {
       if(this is RhVideoPlayerView){setAutoRotation(RhVideoClient.get(this@PlaybackActivity).rotationPreference(rhWindow!!.generation));onRotationRendererChanged={requestRhRotationRestart()};onPresentationFailure={message->showError(PlaybackException(message,null,PlaybackException.ERROR_CODE_VIDEO_FRAME_PROCESSING_FAILED))}}
       val parent=rhWindow?.options?.let{it.optString("origin") in listOf("frame","favorite")&&it.optInt("parentTotal")>0}==true
       setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING);setShowNextButton(queue.size>1||parent);setShowPreviousButton(queue.size>1||parent)
-      setShowSubtitleButton(true);setShowRewindButton(true);setShowFastForwardButton(true)
-      controllerShowTimeoutMs=3500;setKeepContentOnPlayerReset(true);resizeMode=resize
+      setShowSubtitleButton(!usesFileVideoControls());setShowRewindButton(true);setShowFastForwardButton(true)
+      controllerShowTimeoutMs=if(usesFileVideoControls())5000 else 3500;setKeepContentOnPlayerReset(true);resizeMode=resize
       controllerAutoShow=false
-      setFullscreenButtonClickListener {full->landscape=full;requestedOrientation=if(full)ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE else ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED}
+      setFullscreenButtonClickListener {full->setPlaybackOrientation(full)}
     }
     root.addView(playerView,FrameLayout.LayoutParams(-1,-1))
     header=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL;setPadding(dp(8),dp(18),dp(8),dp(10));background=GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,intArrayOf(0xBB000000.toInt(),0x00000000))}
@@ -161,6 +174,12 @@ class PlaybackActivity:AppCompatActivity() {
       rhEvents=RhVideoClient.get(this).listen{name,payload->if(payload.optLong("generation")==rhWindow?.generation)runOnUiThread{if(!isDestroyed&&!rhClosing){if(name=="rhvideo-rotation-preference")(playerView as? RhVideoPlayerView)?.setAutoRotation(payload.getBoolean("enabled"));paintRhActions();if(name=="rhvideo-media-action"&&!payload.isNull("error")&&payload.optString("operation")!=rhFavoriteNotice){rhFavoriteNotice=payload.optString("operation");Toast.makeText(this,payload.optString("error"),Toast.LENGTH_LONG).show()}}}}
     }
     header.addView(more,LinearLayout.LayoutParams(dp(48),dp(48)))
+    if(usesFileVideoControls()){
+      back.setBackgroundResource(R.drawable.rhfiles_playback_button)
+      more.setBackgroundResource(R.drawable.rhfiles_playback_button)
+      titleView.setPadding(dp(12),0,dp(12),0)
+      titleView.typeface=android.graphics.Typeface.create("sans-serif-medium",android.graphics.Typeface.NORMAL)
+    }
     root.addView(header,FrameLayout.LayoutParams(-1,-2,Gravity.TOP))
     if(rhWindow?.options?.let{it.optBoolean("reference")||it.optString("origin")=="favorite"}==true){
       rhProgress=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(12),dp(8),dp(12),dp(8));setBackgroundColor(0xDD15171D.toInt());visibility=View.GONE}
@@ -176,11 +195,12 @@ class PlaybackActivity:AppCompatActivity() {
     }
     failure=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER;setPadding(dp(24),dp(24),dp(24),dp(24));setBackgroundColor(0xEE111318.toInt());visibility=View.GONE}
     root.addView(failure,FrameLayout.LayoutParams(-1,-1));setContentView(root)
-    val pageHint=TextView(this).apply{textSize=16f;setTextColor(Color.WHITE);setPadding(dp(20),dp(12),dp(20),dp(12));visibility=View.GONE;background=GradientDrawable().apply{setColor(0xCC151820.toInt());cornerRadius=dp(12).toFloat()}}
+    pageHint=TextView(this).apply{textSize=16f;setTextColor(Color.WHITE);setPadding(dp(20),dp(12),dp(20),dp(12));visibility=View.GONE;background=GradientDrawable().apply{setColor(0xE6272333.toInt());cornerRadius=dp(22).toFloat()}}
     root.addView(pageHint,FrameLayout.LayoutParams(-2,-2,Gravity.CENTER))
+    val inputIdentity={player?.let{it to rhInputId}}
     mediaPageTouch=MediaPageTouch(
-      identity={player?.let{it to rhInputId}},
-      preview={direction->pageHint.visibility=if(direction==null)View.GONE else View.VISIBLE;pageHint.text=if(direction==1)"下一个 →"else"← 上一个"},
+      identity=inputIdentity,
+      preview={direction->rhUi.removeCallbacks(clearPageHint);pageHint.visibility=if(direction==null)View.GONE else View.VISIBLE;pageHint.text=if(direction==1)"下一个 →"else"← 上一个"},
       page={direction->
         val engine=player;val w=rhWindow
         if(engine!=null){
@@ -190,13 +210,85 @@ class PlaybackActivity:AppCompatActivity() {
           else Toast.makeText(this,if(direction>0)"已经是最后一个文件"else"已经是第一个文件",Toast.LENGTH_SHORT).show()
         }
       })
-    playerView.setOnTouchListener(mediaPageTouch)
-    playerView.setControllerVisibilityListener(PlayerView.ControllerVisibilityListener{visibility->header.visibility=if(failure.visibility==View.VISIBLE)View.VISIBLE else visibility;rhProgress?.visibility=visibility;rhUi.removeCallbacks(rhTick);if(visibility==View.VISIBLE)rhTick.run()})
+    if(usesFileVideoControls()){
+      installFileVideoControls(root)
+      filePlaybackTouch=FilePlaybackTouch(playerView,checkNotNull(mediaPageTouch),inputIdentity,::jumpFromSurface)
+    }
+    playerView.setOnTouchListener(filePlaybackTouch?:mediaPageTouch)
+    playerView.setControllerVisibilityListener(PlayerView.ControllerVisibilityListener{visibility->header.visibility=if(failure.visibility==View.VISIBLE)View.VISIBLE else visibility;rhProgress?.visibility=visibility;rhUi.removeCallbacks(rhTick);if(visibility==View.VISIBLE){paintFileVideoQueue();rhTick.run()}})
     playerView.hideController();header.visibility=View.GONE;paintRhActions()
     deleteJob?.let{job->deletingSelected?.let{selected->header.visibility=View.VISIBLE;titleView.text="正在删除…";rhUi.post{watchDelete(job,selected)}}}
   }
-  override fun onPause(){mediaPageTouch?.cancel();super.onPause()}
+  override fun onPause(){if(filePlaybackTouch!=null)filePlaybackTouch?.cancel()else mediaPageTouch?.cancel();super.onPause()}
   private fun dp(value:Int)=(value*resources.displayMetrics.density).toInt()
+  private fun usesFileVideoControls()=rhWindow==null&&intent.getStringExtra("kind")!="audio"
+  private fun installFileVideoControls(root:View){
+    val bottom=playerView.findViewById<View>(R.id.file_player_bottom)
+    ViewCompat.setOnApplyWindowInsetsListener(root){_,insets->
+      val cutout=insets.getInsets(WindowInsetsCompat.Type.displayCutout())
+      header.setPadding(dp(8)+cutout.left,dp(8)+cutout.top,dp(8)+cutout.right,dp(10))
+      bottom.setPadding(dp(16)+cutout.left,dp(8),dp(16)+cutout.right,dp(12)+cutout.bottom)
+      insets
+    }
+    playerView.findViewById<View>(R.id.file_player_speed).setOnClickListener{rhUiAction(JSONObject().put("command","speed.options"))}
+    playerView.findViewById<View>(R.id.file_player_fit).setOnClickListener{
+      rhUiAction(JSONObject().put("command",if(resize==AspectRatioFrameLayout.RESIZE_MODE_FIT)"fill"else"fit"))
+      playerView.showController()
+    }
+    playerView.findViewById<View>(R.id.file_player_orientation).setOnClickListener{
+      rhUiAction(JSONObject().put("command","fullscreen").put("enabled",!landscape))
+      playerView.showController()
+    }
+    playerView.findViewById<View>(R.id.file_player_shortcuts).setOnClickListener{rhUiAction(JSONObject().put("command","shortcuts"))}
+    val transport=listOf(androidx.media3.ui.R.id.exo_prev to "previous",androidx.media3.ui.R.id.exo_next to "next")
+    for((id,command) in transport)playerView.findViewById<View>(id).setOnClickListener{
+      rhUiAction(JSONObject().put("command",command))
+      playerView.showController()
+    }
+    paintFileVideoControls()
+  }
+  private fun rateLabel(rate:Float)=rate.toString().removeSuffix(".0")
+  private fun paintFileVideoControls(){
+    if(!usesFileVideoControls())return
+    playerView.findViewById<TextView>(R.id.file_player_speed).text=getString(R.string.file_player_speed,rateLabel(filePlaybackRate))
+    val fit=resize==AspectRatioFrameLayout.RESIZE_MODE_FIT
+    playerView.findViewById<TextView>(R.id.file_player_fit).apply{
+      setText(if(fit)R.string.file_player_fit else R.string.file_player_fill)
+      contentDescription=getString(if(fit)R.string.file_player_fill_action else R.string.file_player_fit_action)
+    }
+    playerView.findViewById<TextView>(R.id.file_player_orientation).setText(if(landscape)R.string.file_player_exit_landscape else R.string.file_player_landscape)
+  }
+  private fun paintFileVideoQueue(){
+    if(!usesFileVideoControls())return
+    val engine=player?:return
+    val available=listOf(androidx.media3.ui.R.id.exo_prev to engine.hasPreviousMediaItem(),androidx.media3.ui.R.id.exo_next to engine.hasNextMediaItem())
+    for((id,enabled) in available)playerView.findViewById<View>(id).apply{isEnabled=enabled;alpha=if(enabled)1f else .35f}
+  }
+  private fun setPlaybackOrientation(enabled:Boolean){
+    landscape=enabled
+    requestedOrientation=if(enabled)ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE else ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+    paintFileVideoControls()
+  }
+  private fun jumpFromSurface(direction:Int){
+    val command=if(direction<0)Player.COMMAND_SEEK_BACK else Player.COMMAND_SEEK_FORWARD
+    if(player?.isCommandAvailable(command)!=true)return
+    rhUiAction(JSONObject().put("command",if(direction<0)"rewind"else"forward").put("expectedInputId",rhInputId))
+    pageHint.setText(if(direction<0)R.string.file_player_jump_back else R.string.file_player_jump_forward)
+    pageHint.visibility=View.VISIBLE
+    rhUi.removeCallbacks(clearPageHint)
+    rhUi.postDelayed(clearPageHint,750)
+  }
+  private fun showSpeedOptions(){
+    val engine=player?:return
+    val input=rhInputId
+    val rates=listOf(.5f,.75f,1f,1.25f,1.5f,1.75f,2f)
+    androidx.appcompat.app.AlertDialog.Builder(this).setTitle(R.string.file_player_speed_title)
+      .setSingleChoiceItems(rates.map{rateLabel(it)+"×"}.toTypedArray(),rates.indexOf(engine.playbackParameters.speed)){dialog,selected->
+        rhUiAction(JSONObject().put("command","rate").put("value",rates[selected]).put("expectedInputId",input))
+        dialog.dismiss()
+        playerView.showController()
+      }.setNegativeButton(android.R.string.cancel,null).show()
+  }
   private fun isRhVideo()=::path.isInitialized&&path.startsWith("rhvideo://")
   private fun currentRhId():String {val w=rhWindow?:error("当前不是媒体库视频");return w.ids[(player?.currentMediaItemIndex?:w.index).coerceIn(0,w.ids.lastIndex)]}
   private fun paintRhActions(){val w=rhWindow?:return;val id=currentRhId();val client=RhVideoClient.get(this);val favorite=client.favoriteState("video",id,w.generation);rhFavorite?.apply{val busy=favorite.optBoolean("favoriteBusy");isEnabled=!busy;alpha=if(busy).4f else 1f;contentDescription=if(busy)"正在更新收藏"else if(favorite.optBoolean("favorite"))"取消收藏"else"收藏";setColorFilter(if(favorite.optBoolean("favorite"))0xFFFFCE61.toInt()else Color.WHITE)};val marked=client.previewMarked("video",id,w.generation);rhMark?.apply{contentDescription=if(marked)"取消暂存标记"else"标记待暂存";setColorFilter(if(marked)0xFFFF7979.toInt()else Color.WHITE)}}
@@ -234,7 +326,7 @@ class PlaybackActivity:AppCompatActivity() {
     else when(command){
       "rewind"->{if(rhWindow?.options?.optBoolean("reference")==true)automationControl(JSONObject().put("command","seek").put("value",(engine.currentPosition-10000).coerceAtLeast(0)))else engine.seekBack()}
       "forward"->{if(rhWindow?.options?.optBoolean("reference")==true)automationControl(JSONObject().put("command","seek").put("value",(engine.currentPosition+10000).coerceAtMost(engine.duration)))else engine.seekForward()}
-      "toggle"->if(engine.playWhenReady)engine.pause()else engine.play()
+      "toggle"->if(usesFileVideoControls())Util.handlePlayPauseButtonAction(engine)else if(engine.playWhenReady)engine.pause()else engine.play()
       "play"->engine.play();"pause"->engine.pause()
       "next"->{if(rhWindow?.options?.optString("origin") in listOf("frame","favorite"))return closeRhPlayback(1)else if(rhWindow?.options?.optBoolean("reference")==true)rhNavigate(1)else{check(engine.hasNextMediaItem()){"没有下一个文件"};val failed=engine.playbackState==Player.STATE_IDLE;engine.seekToNextMediaItem();if(failed){engine.prepare();engine.play()}}}
       "previous"->{if(rhWindow?.options?.optString("origin") in listOf("frame","favorite"))return closeRhPlayback(-1)else if(rhWindow?.options?.optBoolean("reference")==true)rhNavigate(-1)else{check(engine.hasPreviousMediaItem()){"没有上一个文件"};val failed=engine.playbackState==Player.STATE_IDLE;engine.seekToPreviousMediaItem();if(failed){engine.prepare();engine.play()}}}
@@ -249,9 +341,11 @@ class PlaybackActivity:AppCompatActivity() {
       "rotate"->{val value=args.getInt("value");require(value in listOf(0,90,180,270));(playerView as? RhVideoPlayerView)?.setManualRotation(value)?:run{playerView.videoSurfaceView?.rotation=value.toFloat()}}
       "autoRotate"->{val w=rhWindow?:error("当前不是媒体库视频");val view=playerView as? RhVideoPlayerView?:error("原生旋转尚未就绪");val enabled=if(args.has("enabled")){require(args.get("enabled") is Boolean);args.getBoolean("enabled")}else !view.autoRotate;val selected=RhVideoClient.get(this).rotationPreference(w.generation,enabled);view.setAutoRotation(selected)}
       "repeat"->{if(rhWindow!=null)rhSetOptions(JSONObject().put("loop",args.getBoolean("enabled")))else engine.repeatMode=if(args.getBoolean("enabled"))Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF}
-      "fit"->{resize=AspectRatioFrameLayout.RESIZE_MODE_FIT;playerView.resizeMode=resize}
-      "fill"->{resize=AspectRatioFrameLayout.RESIZE_MODE_ZOOM;playerView.resizeMode=resize}
+      "fit","fill"->{resize=if(command=="fit")AspectRatioFrameLayout.RESIZE_MODE_FIT else AspectRatioFrameLayout.RESIZE_MODE_ZOOM;playerView.resizeMode=resize;paintFileVideoControls()}
       "controls.show"->playerView.showController();"controls.hide"->playerView.hideController()
+      "speed.options"->showSpeedOptions()
+      "shortcuts"->{require(usesFileVideoControls());androidx.appcompat.app.AlertDialog.Builder(this).setTitle(R.string.file_player_shortcuts_title)
+        .setMessage(R.string.file_player_shortcuts_body).setPositiveButton(android.R.string.ok,null).show()}
       "favorite.error"->showRhFavoriteError()
       "options"->{
         playerView.showController()
@@ -261,7 +355,7 @@ class PlaybackActivity:AppCompatActivity() {
         moreButton.doOnLayout{if(!rhClosing&&!isFinishing&&player===engine&&rhInputId==input)it.performClick()}
       }
       "external"->{require(source.scheme !in listOf("remote","rhvideo")){"受保护的远程媒体不能转交外部应用"};external()}
-      "fullscreen"->{landscape=args.getBoolean("enabled");requestedOrientation=if(landscape)ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE else ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED}
+      "fullscreen"->setPlaybackOrientation(args.getBoolean("enabled"))
       else->error("未知播放器操作")
     };return automationState()
   }
@@ -269,6 +363,20 @@ class PlaybackActivity:AppCompatActivity() {
   // System edge Back and hardware Back must both return to the file list.
   override fun dispatchKeyEvent(event:KeyEvent):Boolean {
     if(event.keyCode==KeyEvent.KEYCODE_BACK){if(event.action==KeyEvent.ACTION_UP && !event.isCanceled)onBackPressedDispatcher.onBackPressed();return true}
+    if(usesFileVideoControls()&&player!=null){
+      val command=when {
+        event.hasNoModifiers()&&event.keyCode==KeyEvent.KEYCODE_SPACE->"toggle"
+        event.hasNoModifiers()&&event.keyCode==KeyEvent.KEYCODE_J->"rewind"
+        event.hasNoModifiers()&&event.keyCode==KeyEvent.KEYCODE_L->"forward"
+        event.hasModifiers(KeyEvent.META_ALT_ON)&&event.keyCode==KeyEvent.KEYCODE_DPAD_LEFT->"previous"
+        event.hasModifiers(KeyEvent.META_ALT_ON)&&event.keyCode==KeyEvent.KEYCODE_DPAD_RIGHT->"next"
+        else->null
+      }
+      if(command!=null){
+        if(event.action==KeyEvent.ACTION_UP&&!event.isCanceled)rhUiAction(JSONObject().put("command",command))
+        return true
+      }
+    }
     return super.dispatchKeyEvent(event)
   }
   override fun onStart(){super.onStart();if(::source.isInitialized&&deleteJob==null)try{rhWindow?.let{RhVideoClient.get(this).checkPlayback(rhTicket!!,it.lease)};startPlayer()}catch(e:Exception){Toast.makeText(this,e.message,Toast.LENGTH_LONG).show();finish()}}
@@ -327,11 +435,19 @@ class PlaybackActivity:AppCompatActivity() {
         }
       }
       override fun onRenderedFirstFrame(){rhRendered=true;if(BuildConfig.DEBUG)android.util.Log.d("RHFilesPlayback","First video frame rendered")}
+      override fun onPlaybackParametersChanged(parameters:PlaybackParameters){if(usesFileVideoControls()){filePlaybackRate=parameters.speed;paintFileVideoControls()}}
+      override fun onTracksChanged(tracks:Tracks){if(usesFileVideoControls()){
+        playerView.setShowSubtitleButton(tracks.isTypeSupported(C.TRACK_TYPE_TEXT))
+        val audioCount=tracks.groups.filter{it.type==C.TRACK_TYPE_AUDIO}.sumOf{group->(0 until group.length).count{group.isTrackSupported(it)}}
+        playerView.findViewById<View>(androidx.media3.ui.R.id.exo_audio_track).visibility=if(audioCount>1)View.VISIBLE else View.GONE
+      }}
+      override fun onEvents(player:Player,events:Player.Events){if(events.containsAny(Player.EVENT_AVAILABLE_COMMANDS_CHANGED,Player.EVENT_TIMELINE_CHANGED,Player.EVENT_MEDIA_ITEM_TRANSITION))paintFileVideoQueue()}
       override fun onPlaybackStateChanged(state:Int){if(BuildConfig.DEBUG)android.util.Log.d("RHFilesPlayback","Playback state=$state");if(state==Player.STATE_ENDED&&rhWindow!=null){if(rhWindow!!.options.optBoolean("loop")){engine.seekTo(engine.currentMediaItemIndex,rhWindow!!.starts[engine.currentMediaItemIndex]);engine.play()}else if(rhWindow!!.options.optBoolean("closeAtEnd"))rhUiAction(JSONObject().put("command","close"))}}
       override fun onIsPlayingChanged(isPlaying:Boolean){if(isPlaying)window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)}
       override fun onPlayerError(error:PlaybackException){if(BuildConfig.DEBUG)android.util.Log.d("RHFilesPlayback",error.errorCodeName);showError(error);val w=rhWindow;if(w?.options?.optBoolean("reference")==true){Toast.makeText(this@PlaybackActivity,"视频加载失败：${queue[index].name}（${error.errorCodeName}）",Toast.LENGTH_LONG).show();val input=rhInputId;rhUi.post{if(player===engine&&rhInputId==input&&!isFinishing){if(w.offset+index+1<w.total)rebuildRhWindow(w.offset+index+1)else rhUiAction(JSONObject().put("command","close"))}}}}
     })
     rhWindow?.options?.let{engine.setPlaybackSpeed(it.optDouble("rate",1.0).toFloat());engine.repeatMode=if(it.optBoolean("loop"))Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF}
+    if(usesFileVideoControls())engine.setPlaybackSpeed(filePlaybackRate)
     restoredRate?.let{engine.setPlaybackSpeed(it)};restoredRepeat?.let{engine.repeatMode=it}
     engine.setMediaItems(sources.mapIndexed{i,uri->rhItem(i,uri)},index,position);engine.prepare();engine.playWhenReady=play;armRhEnd();playerView.hideController()
   }
@@ -432,7 +548,7 @@ class PlaybackActivity:AppCompatActivity() {
     menu.setOnMenuItemClickListener{item->when(item.itemId){
       0->rhUiAction(JSONObject().put("command","fit"))
       1->rhUiAction(JSONObject().put("command","fill"))
-      2->{val rates=arrayOf("0.5×","1×","1.25×","1.5×","2×");androidx.appcompat.app.AlertDialog.Builder(this).setTitle("播放速度").setItems(rates){_,index->rhUiAction(JSONObject().put("command","rate").put("value",floatArrayOf(.5f,1f,1.25f,1.5f,2f)[index]))}.show()}
+      2->showSpeedOptions()
       3->{rhUiAction(JSONObject().put("command","repeat").put("enabled",player?.repeatMode!=Player.REPEAT_MODE_ONE));Toast.makeText(this,if(player?.repeatMode==Player.REPEAT_MODE_ONE)"已开启循环" else "已关闭循环",Toast.LENGTH_SHORT).show()}
       4->external()
       5->rhUiAction(JSONObject().put("command","playlist.options").put("options",JSONObject().put("fullLength",rhWindow?.options?.optBoolean("fullLength",true)!=true)))
@@ -490,7 +606,7 @@ class PlaybackActivity:AppCompatActivity() {
       }
       if(lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED))startPlayer()
   }
-  override fun onSaveInstanceState(outState:Bundle){if(!isRhVideo()){outState.putString("filePath",path);outState.putString("fileQueue",PlaybackQueue.json(queue));outState.putString("deleteJob",deleteJob);outState.putString("deletingSelected",deletingSelected)};player?.let(selectionMemory::remember);outState.putFloat("rhLocalGain",player?.let{RhVideoVolume.local(it)}?:rhLocalGain);outState.putInt("index",player?.currentMediaItemIndex?:index);outState.putInt("rhGlobalIndex",(rhWindow?.offset?:0)+(player?.currentMediaItemIndex?:index));outState.putLong("position",player?.currentPosition ?: position);outState.putBoolean("play",player?.playWhenReady ?: play);super.onSaveInstanceState(outState)}
+  override fun onSaveInstanceState(outState:Bundle){if(!isRhVideo()){outState.putString("filePath",path);outState.putString("fileQueue",PlaybackQueue.json(queue));outState.putString("deleteJob",deleteJob);outState.putString("deletingSelected",deletingSelected)};player?.let(selectionMemory::remember);outState.putFloat("rhLocalGain",player?.let{RhVideoVolume.local(it)}?:rhLocalGain);outState.putInt("index",player?.currentMediaItemIndex?:index);outState.putInt("rhGlobalIndex",(rhWindow?.offset?:0)+(player?.currentMediaItemIndex?:index));outState.putLong("position",player?.currentPosition ?: position);outState.putBoolean("play",player?.playWhenReady ?: play);outState.putBoolean("landscape",landscape);outState.putInt("resize",resize);outState.putFloat("filePlaybackRate",filePlaybackRate);super.onSaveInstanceState(outState)}
   override fun onStop(){rhUi.removeCallbacks(rhTick);rhEndMessage?.cancel();rhEndMessage=null;rememberRhPlaylist();player?.let{selectionMemory.remember(it);index=it.currentMediaItemIndex;position=it.currentPosition;rhTicket?.let{ticket->RhVideoClient.get(this).rememberPlayback(ticket,(rhWindow?.offset?:0)+index,position,it.duration)};play=it.playWhenReady;rhLocalGain=RhVideoVolume.local(it);RhVideoVolume.untrack(it);playerView.player=null;(playerView as? RhVideoPlayerView)?.unbindRotationEngine(it);it.release()};player=null;window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);super.onStop()}
   override fun onDestroy(){deleteDialog?.dismiss();deleteDialog=null;deleteIo.shutdown();rhUi.removeCallbacksAndMessages(null);rhFavoriteErrorDialog?.dismiss();rhFavoriteErrorDialog=null;rhEvents?.close();rhEvents=null;if(active.get()===this)active.clear();super.onDestroy()}
 }

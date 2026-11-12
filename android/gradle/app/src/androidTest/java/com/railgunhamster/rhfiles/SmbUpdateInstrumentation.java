@@ -78,7 +78,7 @@ public class SmbUpdateInstrumentation extends Instrumentation {
         android.view.accessibility.AccessibilityNodeInfo root=getUiAutomation().getRootInActiveWindow();if(root==null)return;
         try{for(android.view.accessibility.AccessibilityNodeInfo node:root.findAccessibilityNodeInfosByText("Got it"))try{String owner=String.valueOf(node.getPackageName());if((owner.equals("android")||owner.equals("com.android.systemui"))&&String.valueOf(node.getText()).equals("Got it"))node.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK);}finally{node.recycle();}}finally{root.recycle();}
     }
-    private void playbackProbe(String path,String second) throws Exception {
+    private void playbackProbe(String path,String second,boolean checkShortcuts) throws Exception {
         ActivityMonitor monitor=addMonitor("com.railgunhamster.rhfiles.PlaybackActivity",null,false);
         Activity playerActivity=null;
         try {
@@ -94,6 +94,7 @@ public class SmbUpdateInstrumentation extends Instrumentation {
             boolean[] enabled={false};String[] detail={""};runOnMainSync(()->{View progress=screen.findViewById(progressId),next=screen.findViewById(nextId);detail[0]="focus="+screen.hasWindowFocus()+", progress="+(progress==null?"missing":progress.isShown())+", next="+(next==null?"missing":next.isShown()+"/enabled="+next.isEnabled());enabled[0]=progress!=null&&progress.isShown()&&next!=null&&next.isShown()&&next.isEnabled();if(enabled[0]){progress.requestFocus();progress.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_DPAD_RIGHT));progress.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_UP,KeyEvent.KEYCODE_DPAD_RIGHT));}});
             if(!enabled[0]){android.graphics.Bitmap shot=getUiAutomation().takeScreenshot();if(shot!=null)try(java.io.FileOutputStream out=new java.io.FileOutputStream("/storage/emulated/0/Download/RHFiles-QA-player-controls.png")){shot.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out);}finally{shot.recycle();}}
             require(enabled[0],"Tap did not reveal seek/next controls: "+detail[0]);
+            if(checkShortcuts)checkPlayerShortcuts(screen);
             android.graphics.Rect bar=new android.graphics.Rect();runOnMainSync(()->screen.findViewById(progressId).getGlobalVisibleRect(bar));require(bar.width()>100,"Time bar is not available for touch seeking");
             long scrub=android.os.SystemClock.uptimeMillis();float sy=bar.exactCenterY(),sx=bar.left+bar.width()*.2f,ex=bar.left+bar.width()*.65f;
             injectContacts(scrub,MotionEvent.ACTION_DOWN,new int[]{0},new float[][]{{sx,sy}});for(int i=1;i<=6;i++){injectContacts(scrub,MotionEvent.ACTION_MOVE,new int[]{0},new float[][]{{sx+(ex-sx)*i/6,sy}});Thread.sleep(25);}injectContacts(scrub,MotionEvent.ACTION_UP,new int[]{0},new float[][]{{ex,sy}});Thread.sleep(450);
@@ -107,8 +108,8 @@ public class SmbUpdateInstrumentation extends Instrumentation {
             // The initial-hidden assertion above must precede all gestures.
             for(int attempt=0;attempt<2;attempt++){
                 runOnMainSync(()->hidden[0]=!screen.findViewById(progressId).isShown());if(hidden[0])break;
-                long touch=android.os.SystemClock.uptimeMillis();float tx=dimensions[0]*.8f,ty=dimensions[1]*.25f;
-                injectContacts(touch,MotionEvent.ACTION_DOWN,new int[]{0},new float[][]{{tx,ty}});Thread.sleep(80);injectContacts(touch,MotionEvent.ACTION_UP,new int[]{0},new float[][]{{tx,ty}});Thread.sleep(250);
+                tapPlayer(dimensions[0]*.8f,dimensions[1]*.25f);
+                Thread.sleep(android.view.ViewConfiguration.getDoubleTapTimeout()+100);
             }
             runOnMainSync(()->hidden[0]=!screen.findViewById(progressId).isShown());require(hidden[0],"Cannot hide controls before testing the video surface");
             videoDrag(screen,48,0);awaitVideoTitle(screen,"QA video 1");
@@ -119,6 +120,92 @@ public class SmbUpdateInstrumentation extends Instrumentation {
             videoDrag(screen,48,0);require(String.valueOf(screen.getTitle()).equals("QA video 1"),"Previous at the first item wrapped the playlist");
             videoDrag(screen,0,90);require(String.valueOf(screen.getTitle()).equals("QA video 1"),"Vertical drag changed videos");
         }finally{removeMonitor(monitor);if(playerActivity!=null){final Activity closing=playerActivity;runOnMainSync(closing::finish);waitForIdleSync();}}
+    }
+    private void tapPlayer(float x,float y) throws Exception {
+        long down=android.os.SystemClock.uptimeMillis();
+        injectContacts(down,MotionEvent.ACTION_DOWN,new int[]{0},new float[][]{{x,y}});
+        Thread.sleep(45);
+        injectContacts(down,MotionEvent.ACTION_UP,new int[]{0},new float[][]{{x,y}});
+    }
+    private void tapPlayerView(Activity screen,int id) throws Exception {
+        android.graphics.Rect target=new android.graphics.Rect();
+        runOnMainSync(()->{View view=screen.findViewById(id);if(view!=null&&view.isShown())view.getGlobalVisibleRect(target);});
+        require(!target.isEmpty(),"Player shortcut is not visible: "+id);
+        tapPlayer(target.exactCenterX(),target.exactCenterY());
+    }
+    private void checkPlayerShortcuts(Activity screen) throws Exception {
+        androidx.media3.ui.PlayerView[] video=new androidx.media3.ui.PlayerView[1];
+        runOnMainSync(()->{
+            View view=screen.findViewById(R.id.file_player_speed);
+            while(view!=null&&!(view instanceof androidx.media3.ui.PlayerView))view=view.getParent() instanceof View?(View)view.getParent():null;
+            video[0]=(androidx.media3.ui.PlayerView)view;
+        });
+        require(video[0]!=null,"The visible speed shortcut must belong to the video controls");
+        androidx.media3.common.Player[] engine=new androidx.media3.common.Player[1];
+        runOnMainSync(()->{engine[0]=video[0].getPlayer();engine[0].pause();engine[0].seekTo(3000);});
+        capture("file-video-portrait");
+        tapPlayerView(screen,R.id.file_player_shortcuts);
+        clickPlayerOption(screen.getString(android.R.string.ok));
+        runOnMainSync(video[0]::showController);
+        tapPlayerView(screen,R.id.file_player_speed);
+        clickPlayerOption("1.5×");
+        runOnMainSync(()->org.junit.Assert.assertEquals("Speed shortcut did not change the decoder rate",1.5f,engine[0].getPlaybackParameters().speed,.001f));
+        tapPlayerView(screen,R.id.file_player_fit);
+        runOnMainSync(()->org.junit.Assert.assertEquals("Fill shortcut did not resize the video",androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM,video[0].getResizeMode()));
+        tapPlayerView(screen,R.id.file_player_fit);
+        runOnMainSync(()->org.junit.Assert.assertEquals("Fit shortcut did not restore the full frame",androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT,video[0].getResizeMode()));
+        tapPlayerView(screen,R.id.file_player_orientation);
+        awaitPlayerOrientation(screen,android.content.res.Configuration.ORIENTATION_LANDSCAPE);
+        capture("file-video-landscape");
+        tapPlayerView(screen,R.id.file_player_orientation);
+        awaitPlayerOrientation(screen,android.content.res.Configuration.ORIENTATION_PORTRAIT);
+        float[] point=new float[4];
+        runOnMainSync(()->{
+            org.junit.Assert.assertEquals("Changing orientation lost the selected speed",1.5f,engine[0].getPlaybackParameters().speed,.001f);
+            int[] location=new int[2];video[0].getLocationOnScreen(location);
+            point[0]=location[0]+video[0].getWidth()*.8f;
+            point[1]=location[0]+video[0].getWidth()*.2f;
+            point[2]=location[1]+video[0].getHeight()*.3f;
+            video[0].hideController();
+        });
+        tapPlayer(point[0],point[2]);Thread.sleep(75);tapPlayer(point[0],point[2]);
+        awaitPlayerPosition(engine[0],13000);
+        runOnMainSync(()->org.junit.Assert.assertFalse("Double-tap should seek without toggling controls",video[0].isControllerFullyVisible()));
+        Thread.sleep(400);
+        tapPlayer(point[1],point[2]);Thread.sleep(75);tapPlayer(point[1],point[2]);
+        awaitPlayerPosition(engine[0],3000);
+        sendKeyDownUpSync(KeyEvent.KEYCODE_L);awaitPlayerPosition(engine[0],13000);
+        sendKeyDownUpSync(KeyEvent.KEYCODE_J);awaitPlayerPosition(engine[0],3000);
+        sendKeyDownUpSync(KeyEvent.KEYCODE_SPACE);
+        runOnMainSync(()->org.junit.Assert.assertTrue("Space did not resume playback",engine[0].getPlayWhenReady()));
+        runOnMainSync(video[0]::showController);
+    }
+    private void clickPlayerOption(String label) throws Exception {
+        long deadline=System.currentTimeMillis()+5000;
+        while(System.currentTimeMillis()<deadline){
+            android.view.accessibility.AccessibilityNodeInfo root=getUiAutomation().getRootInActiveWindow();
+            if(root!=null)try{
+                for(android.view.accessibility.AccessibilityNodeInfo option:root.findAccessibilityNodeInfosByText(label)){
+                    if(label.equals(String.valueOf(option.getText()))){
+                        android.graphics.Rect bounds=new android.graphics.Rect();option.getBoundsInScreen(bounds);
+                        if(!bounds.isEmpty()){tapPlayer(bounds.exactCenterX(),bounds.exactCenterY());return;}
+                    }
+                }
+            }finally{root.recycle();}
+            Thread.sleep(100);
+        }
+        throw new AssertionError("Player dialog option not found: "+label);
+    }
+    private void awaitPlayerOrientation(Activity screen,int expected) throws Exception {
+        long deadline=System.currentTimeMillis()+5000;
+        while(screen.getResources().getConfiguration().orientation!=expected&&System.currentTimeMillis()<deadline)Thread.sleep(100);
+        require(screen.getResources().getConfiguration().orientation==expected,"Player did not rotate: "+expected);
+        waitForIdleSync();
+    }
+    private void awaitPlayerPosition(androidx.media3.common.Player engine,long expected) throws Exception {
+        long deadline=System.currentTimeMillis()+5000;long[] position=new long[1];
+        do{runOnMainSync(()->position[0]=engine.getCurrentPosition());if(Math.abs(position[0]-expected)<400)return;Thread.sleep(75);}while(System.currentTimeMillis()<deadline);
+        throw new AssertionError("Expected player position "+expected+" ms, got "+position[0]+" ms");
     }
     private void awaitVideoTitle(Activity screen,String title) throws Exception {
         long end=System.currentTimeMillis()+15000;while(!String.valueOf(screen.getTitle()).equals(title)&&System.currentTimeMillis()<end)Thread.sleep(100);
@@ -132,8 +219,8 @@ public class SmbUpdateInstrumentation extends Instrumentation {
         Thread.sleep(150);injectContacts(down,MotionEvent.ACTION_UP,new int[]{0},new float[][]{{x+dx*density,y+dy*density}});Thread.sleep(350);
     }
     private void videoGesturesProbe(Bundle result) throws Exception {
-        playbackProbe("/storage/emulated/0/Download/RHFiles-Gesture-QA-1.mp4","/storage/emulated/0/Download/RHFiles-Gesture-QA-2.mp4");
-        result.putString("pass","true");result.putString("checks","real decoded video frames, horizontal next/previous, boundary and vertical guard, tap controls, timeline seek and Next button");finish(Activity.RESULT_OK,result);
+        playbackProbe("/storage/emulated/0/Download/RHFiles-Gesture-QA-1.mp4","/storage/emulated/0/Download/RHFiles-Gesture-QA-2.mp4",true);
+        result.putString("pass","true");result.putString("checks","real decoded frames, touch timeline, previous/next, double-tap seek, visible shortcuts, speed, fit/fill, rotation and Space");finish(Activity.RESULT_OK,result);
     }
     private void mediaProbe(Bundle result) throws Exception {
         eval("void(async()=>{try{const id=await api.native('connection.save',{type:'smb',name:'QA media',host:'127.0.0.1',port:1445,share:'QA',username:'qa',password:'qa-pass'});window.__mediaId=id;const root='remote://'+id+'/';const start=Date.now();for(let i=0;i<4;i++)await api.native('list',{path:root+'子目录'});const ms=Date.now()-start;if(ms>8000)throw Error('Repeated SMB listing stalled: '+ms);"+
@@ -143,8 +230,8 @@ public class SmbUpdateInstrumentation extends Instrumentation {
         long end=System.currentTimeMillis()+45000;JSONObject marker=new JSONObject();
         while(System.currentTimeMillis()<end){marker=json("window.__mediaQa||{}");require(!marker.has("error"),marker.toString());if(marker.optBoolean("pass"))break;Thread.sleep(150);}require(marker.optBoolean("pass"),"Native media setup timed out");
         try {
-            playbackProbe("/storage/emulated/0/Download/RHFiles-Media-QA-1.mp4","/storage/emulated/0/Download/RHFiles-Media-QA-2.mp4");
-            String id=new JSONTokener(eval("window.__mediaId")).nextValue().toString();playbackProbe("remote://"+id+"/movie.mp4","remote://"+id+"/movie2.mp4");
+            playbackProbe("/storage/emulated/0/Download/RHFiles-Media-QA-1.mp4","/storage/emulated/0/Download/RHFiles-Media-QA-2.mp4",false);
+            String id=new JSONTokener(eval("window.__mediaId")).nextValue().toString();playbackProbe("remote://"+id+"/movie.mp4","remote://"+id+"/movie2.mp4",false);
             result.putString("pass","true");result.putString("repeatedBrowseMs",String.valueOf(marker.getLong("ms")));result.putString("checks","minified APK: real SMB image decoding, reused folder sessions, network storage roots, distinct package icons; local and SMB decoded video frames, initially hidden controls, tap, seek and next queue item");finish(Activity.RESULT_OK,result);
         }finally{eval("void api.native('connection.delete',{id:window.__mediaId})");}
     }
