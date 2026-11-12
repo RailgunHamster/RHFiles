@@ -135,6 +135,19 @@ public class SmbUpdateInstrumentation extends Instrumentation {
         Thread.sleep(45);
         injectContacts(down,MotionEvent.ACTION_UP,new int[]{0},new float[][]{{x,y}});
     }
+    private void doubleTapPlayer(View surface,float fraction){
+        // Deliver a timed sequence through the actual view, independently of
+        // how long the emulator's system input dispatcher takes between calls.
+        runOnMainSync(()->{
+            long first=android.os.SystemClock.uptimeMillis()-180;
+            for(long down:new long[]{first,first+110})for(int action:new int[]{MotionEvent.ACTION_DOWN,MotionEvent.ACTION_UP}){
+                long eventTime=action==MotionEvent.ACTION_DOWN?down:down+35;
+                MotionEvent event=MotionEvent.obtain(down,eventTime,action,surface.getWidth()*fraction,surface.getHeight()*.3f,0);
+                event.setSource(InputDevice.SOURCE_TOUCHSCREEN);
+                try{surface.dispatchTouchEvent(event);}finally{event.recycle();}
+            }
+        });
+    }
     private void tapPlayerView(Activity screen,int id) throws Exception {
         android.graphics.Rect target=playerViewBounds(screen,id);
         require(!target.isEmpty(),"Player shortcut is not visible: "+id);
@@ -178,20 +191,17 @@ public class SmbUpdateInstrumentation extends Instrumentation {
         capture("file-video-landscape");
         tapPlayerView(screen,R.id.file_player_orientation);
         awaitPlayerOrientation(screen,android.content.res.Configuration.ORIENTATION_PORTRAIT);
-        float[] point=new float[4];
         runOnMainSync(()->{
             org.junit.Assert.assertEquals("Changing orientation lost the selected speed",1.5f,engine[0].getPlaybackParameters().speed,.001f);
-            int[] location=new int[2];video[0].getLocationOnScreen(location);
-            point[0]=location[0]+video[0].getWidth()*.8f;
-            point[1]=location[0]+video[0].getWidth()*.2f;
-            point[2]=location[1]+video[0].getHeight()*.3f;
             video[0].hideController();
         });
-        tapPlayer(point[0],point[2]);Thread.sleep(75);tapPlayer(point[0],point[2]);
+        awaitPlayerPosition(engine[0],3000);
+        doubleTapPlayer(video[0],.8f);
         awaitPlayerPosition(engine[0],13000);
-        runOnMainSync(()->org.junit.Assert.assertFalse("Double-tap should seek without toggling controls",video[0].isControllerFullyVisible()));
+        runOnMainSync(()->org.junit.Assert.assertFalse("Double-tap should seek without toggling controls",
+            screen.findViewById(androidx.media3.ui.R.id.exo_progress).isShown()));
         Thread.sleep(400);
-        tapPlayer(point[1],point[2]);Thread.sleep(75);tapPlayer(point[1],point[2]);
+        doubleTapPlayer(video[0],.2f);
         awaitPlayerPosition(engine[0],3000);
         sendKeyDownUpSync(KeyEvent.KEYCODE_L);awaitPlayerPosition(engine[0],13000);
         sendKeyDownUpSync(KeyEvent.KEYCODE_J);awaitPlayerPosition(engine[0],3000);
