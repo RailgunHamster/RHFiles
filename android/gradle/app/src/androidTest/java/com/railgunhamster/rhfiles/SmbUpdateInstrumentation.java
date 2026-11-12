@@ -142,10 +142,11 @@ public class SmbUpdateInstrumentation extends Instrumentation {
         });
         require(video[0]!=null,"The visible speed shortcut must belong to the video controls");
         androidx.media3.common.Player[] engine=new androidx.media3.common.Player[1];
-        runOnMainSync(()->{engine[0]=video[0].getPlayer();engine[0].pause();engine[0].seekTo(3000);});
+        runOnMainSync(()->{video[0].setControllerShowTimeoutMs(0);engine[0]=video[0].getPlayer();engine[0].pause();engine[0].seekTo(3000);});
         capture("file-video-portrait");
+        dismissSystemFullscreenEducation();
         tapPlayerView(screen,R.id.file_player_shortcuts);
-        clickPlayerOption(screen.getString(android.R.string.ok));
+        clickPlayerOption(screen.getString(android.R.string.ok),"OK");
         runOnMainSync(video[0]::showController);
         tapPlayerView(screen,R.id.file_player_speed);
         clickPlayerOption("1.5×");
@@ -178,14 +179,14 @@ public class SmbUpdateInstrumentation extends Instrumentation {
         sendKeyDownUpSync(KeyEvent.KEYCODE_J);awaitPlayerPosition(engine[0],3000);
         sendKeyDownUpSync(KeyEvent.KEYCODE_SPACE);
         runOnMainSync(()->org.junit.Assert.assertTrue("Space did not resume playback",engine[0].getPlayWhenReady()));
-        runOnMainSync(video[0]::showController);
+        runOnMainSync(()->{video[0].setControllerShowTimeoutMs(5000);video[0].showController();});
     }
-    private void clickPlayerOption(String label) throws Exception {
-        long deadline=System.currentTimeMillis()+5000;
+    private void clickPlayerOption(String... labels) throws Exception {
+        long deadline=System.currentTimeMillis()+10000;
         while(System.currentTimeMillis()<deadline){
             android.view.accessibility.AccessibilityNodeInfo root=getUiAutomation().getRootInActiveWindow();
             if(root!=null)try{
-                for(android.view.accessibility.AccessibilityNodeInfo option:root.findAccessibilityNodeInfosByText(label)){
+                for(String label:labels)for(android.view.accessibility.AccessibilityNodeInfo option:root.findAccessibilityNodeInfosByText(label)){
                     if(label.equals(String.valueOf(option.getText()))){
                         android.graphics.Rect bounds=new android.graphics.Rect();option.getBoundsInScreen(bounds);
                         if(!bounds.isEmpty()){tapPlayer(bounds.exactCenterX(),bounds.exactCenterY());return;}
@@ -194,7 +195,8 @@ public class SmbUpdateInstrumentation extends Instrumentation {
             }finally{root.recycle();}
             Thread.sleep(100);
         }
-        throw new AssertionError("Player dialog option not found: "+label);
+        capture("file-video-dialog-failure");
+        throw new AssertionError("Player dialog option not found: "+java.util.Arrays.toString(labels));
     }
     private void awaitPlayerOrientation(Activity screen,int expected) throws Exception {
         long deadline=System.currentTimeMillis()+5000;

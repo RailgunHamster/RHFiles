@@ -215,7 +215,7 @@ class PlaybackActivity:AppCompatActivity() {
       filePlaybackTouch=FilePlaybackTouch(playerView,checkNotNull(mediaPageTouch),inputIdentity,::jumpFromSurface)
     }
     playerView.setOnTouchListener(filePlaybackTouch?:mediaPageTouch)
-    playerView.setControllerVisibilityListener(PlayerView.ControllerVisibilityListener{visibility->header.visibility=if(failure.visibility==View.VISIBLE)View.VISIBLE else visibility;rhProgress?.visibility=visibility;rhUi.removeCallbacks(rhTick);if(visibility==View.VISIBLE){paintFileVideoQueue();rhTick.run()}})
+    playerView.setControllerVisibilityListener(PlayerView.ControllerVisibilityListener{visibility->header.visibility=if(failure.visibility==View.VISIBLE)View.VISIBLE else visibility;rhProgress?.visibility=visibility;rhUi.removeCallbacks(rhTick);if(visibility==View.VISIBLE)rhTick.run()})
     playerView.hideController();header.visibility=View.GONE;paintRhActions()
     deleteJob?.let{job->deletingSelected?.let{selected->header.visibility=View.VISIBLE;titleView.text="正在删除…";rhUi.post{watchDelete(job,selected)}}}
   }
@@ -240,11 +240,6 @@ class PlaybackActivity:AppCompatActivity() {
       playerView.showController()
     }
     playerView.findViewById<View>(R.id.file_player_shortcuts).setOnClickListener{rhUiAction(JSONObject().put("command","shortcuts"))}
-    val transport=listOf(androidx.media3.ui.R.id.exo_prev to "previous",androidx.media3.ui.R.id.exo_next to "next")
-    for((id,command) in transport)playerView.findViewById<View>(id).setOnClickListener{
-      rhUiAction(JSONObject().put("command",command))
-      playerView.showController()
-    }
     paintFileVideoControls()
   }
   private fun rateLabel(rate:Float)=rate.toString().removeSuffix(".0")
@@ -257,12 +252,6 @@ class PlaybackActivity:AppCompatActivity() {
       contentDescription=getString(if(fit)R.string.file_player_fill_action else R.string.file_player_fit_action)
     }
     playerView.findViewById<TextView>(R.id.file_player_orientation).setText(if(landscape)R.string.file_player_exit_landscape else R.string.file_player_landscape)
-  }
-  private fun paintFileVideoQueue(){
-    if(!usesFileVideoControls())return
-    val engine=player?:return
-    val available=listOf(androidx.media3.ui.R.id.exo_prev to engine.hasPreviousMediaItem(),androidx.media3.ui.R.id.exo_next to engine.hasNextMediaItem())
-    for((id,enabled) in available)playerView.findViewById<View>(id).apply{isEnabled=enabled;alpha=if(enabled)1f else .35f}
   }
   private fun setPlaybackOrientation(enabled:Boolean){
     landscape=enabled
@@ -415,6 +404,19 @@ class PlaybackActivity:AppCompatActivity() {
       override fun seekTo(mediaItemIndex:Int,positionMs:Long){if(mediaItemIndex==engine.currentMediaItemIndex)seekTo(positionMs)else rebuildRhWindow(rhWindow!!.offset+mediaItemIndex,positionMs,engine.playWhenReady)}
       override fun isCommandAvailable(command:Int)=getAvailableCommands().contains(command)
       override fun getAvailableCommands():Player.Commands{val commands=super.getAvailableCommands().buildUpon();if(rhWindow?.options?.let{it.optBoolean("reference")||it.optString("origin") in listOf("frame","favorite")}==true)commands.addAll(Player.COMMAND_SEEK_TO_NEXT,Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,Player.COMMAND_SEEK_TO_PREVIOUS,Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM);return commands.build()}
+    }else if(usesFileVideoControls())object:ForwardingPlayer(engine){
+      // Media3's generic Previous restarts the current video after a few seconds.
+      // File navigation uses adjacent queue items at any playback position.
+      override fun seekToPrevious(){rhUiAction(JSONObject().put("command","previous"))}
+      override fun seekToNext(){rhUiAction(JSONObject().put("command","next"))}
+      override fun isCommandAvailable(command:Int)=when(command){
+        Player.COMMAND_SEEK_TO_PREVIOUS->engine.hasPreviousMediaItem()
+        Player.COMMAND_SEEK_TO_NEXT->engine.hasNextMediaItem()
+        else->super.isCommandAvailable(command)
+      }
+      override fun getAvailableCommands():Player.Commands=super.getAvailableCommands().buildUpon()
+        .removeIf(Player.COMMAND_SEEK_TO_PREVIOUS,!engine.hasPreviousMediaItem())
+        .removeIf(Player.COMMAND_SEEK_TO_NEXT,!engine.hasNextMediaItem()).build()
     }else engine
     if(path.startsWith("rhvideo://"))RhVideoVolume.track(engine,rhLocalGain)
     engine.setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(),true)
@@ -441,7 +443,6 @@ class PlaybackActivity:AppCompatActivity() {
         val audioCount=tracks.groups.filter{it.type==C.TRACK_TYPE_AUDIO}.sumOf{group->(0 until group.length).count{group.isTrackSupported(it)}}
         playerView.findViewById<View>(androidx.media3.ui.R.id.exo_audio_track).visibility=if(audioCount>1)View.VISIBLE else View.GONE
       }}
-      override fun onEvents(player:Player,events:Player.Events){if(events.containsAny(Player.EVENT_AVAILABLE_COMMANDS_CHANGED,Player.EVENT_TIMELINE_CHANGED,Player.EVENT_MEDIA_ITEM_TRANSITION))paintFileVideoQueue()}
       override fun onPlaybackStateChanged(state:Int){if(BuildConfig.DEBUG)android.util.Log.d("RHFilesPlayback","Playback state=$state");if(state==Player.STATE_ENDED&&rhWindow!=null){if(rhWindow!!.options.optBoolean("loop")){engine.seekTo(engine.currentMediaItemIndex,rhWindow!!.starts[engine.currentMediaItemIndex]);engine.play()}else if(rhWindow!!.options.optBoolean("closeAtEnd"))rhUiAction(JSONObject().put("command","close"))}}
       override fun onIsPlayingChanged(isPlaying:Boolean){if(isPlaying)window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)}
       override fun onPlayerError(error:PlaybackException){if(BuildConfig.DEBUG)android.util.Log.d("RHFilesPlayback",error.errorCodeName);showError(error);val w=rhWindow;if(w?.options?.optBoolean("reference")==true){Toast.makeText(this@PlaybackActivity,"视频加载失败：${queue[index].name}（${error.errorCodeName}）",Toast.LENGTH_LONG).show();val input=rhInputId;rhUi.post{if(player===engine&&rhInputId==input&&!isFinishing){if(w.offset+index+1<w.total)rebuildRhWindow(w.offset+index+1)else rhUiAction(JSONObject().put("command","close"))}}}}

@@ -69,10 +69,10 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
             android:gravity="center_vertical">
-            <Button android:id="@+id/file_player_speed" style="@style/RHFilesPlayback.Chip" />
-            <Button android:id="@+id/file_player_fit" style="@style/RHFilesPlayback.Chip" />
-            <Button android:id="@+id/file_player_orientation" style="@style/RHFilesPlayback.Chip" />
-            <Button android:id="@+id/file_player_shortcuts" style="@style/RHFilesPlayback.Chip"
+            <android.widget.Button android:id="@+id/file_player_speed" style="@style/RHFilesPlayback.Chip" />
+            <android.widget.Button android:id="@+id/file_player_fit" style="@style/RHFilesPlayback.Chip" />
+            <android.widget.Button android:id="@+id/file_player_orientation" style="@style/RHFilesPlayback.Chip" />
+            <android.widget.Button android:id="@+id/file_player_shortcuts" style="@style/RHFilesPlayback.Chip"
                 android:text="@string/file_player_gestures" />
             <ImageButton android:id="@id/exo_subtitle"
                 style="@style/RHFilesPlayback.Transport"

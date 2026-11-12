@@ -4,4 +4,6 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     app:animation_enabled="false"
+    app:play_icon="@drawable/rhfiles_playback_play"
+    app:pause_icon="@drawable/rhfiles_playback_pause"
     app:controller_layout_id="@layout/rhfiles_playback_controls" />
