@@ -82,8 +82,16 @@ public class SmbUpdateInstrumentation extends Instrumentation {
         ActivityMonitor monitor=addMonitor("com.railgunhamster.rhfiles.PlaybackActivity",null,false);
         Activity playerActivity=null;
         try {
-            eval("void api.native('media.play',{path:"+JSONObject.quote(path)+",name:'QA video 1',kind:'video',queue:[{path:"+JSONObject.quote(path)+",name:'QA video 1'},{path:"+JSONObject.quote(second)+",name:'QA video 2'}]}).catch(e=>window.__mediaError=String(e))");
-            playerActivity=waitForMonitorWithTimeout(monitor,30000);require(playerActivity!=null,"Native player failed to open: "+eval("window.__mediaError"));
+            if(checkShortcuts){
+                JSONArray queue=new JSONArray().put(new JSONObject().put("path",path).put("name","QA video 1"))
+                    .put(new JSONObject().put("path",second).put("name","QA video 2"));
+                getTargetContext().startActivity(new Intent(getTargetContext(),PlaybackActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    .putExtra("path",path).putExtra("name","QA video 1").putExtra("kind","video").putExtra("queue",queue.toString()));
+            }else{
+                eval("void api.native('media.play',{path:"+JSONObject.quote(path)+",name:'QA video 1',kind:'video',queue:[{path:"+JSONObject.quote(path)+",name:'QA video 1'},{path:"+JSONObject.quote(second)+",name:'QA video 2'}]}).catch(e=>window.__mediaError=String(e))");
+            }
+            playerActivity=waitForMonitorWithTimeout(monitor,30000);
+            if(playerActivity==null)throw new AssertionError("Native player failed to open"+(checkShortcuts?"":": "+eval("window.__mediaError")));
             final Activity screen=playerActivity;long until=System.currentTimeMillis()+30000;while(System.currentTimeMillis()<until){dismissSystemFullscreenEducation();if(hasVideoFrame())break;Thread.sleep(250);}
             require(hasVideoFrame(),"No decoded video frame (error page is not playback)");
             int progressId=getTargetContext().getResources().getIdentifier("exo_progress","id",getTargetContext().getPackageName()),nextId=getTargetContext().getResources().getIdentifier("exo_next","id",getTargetContext().getPackageName());
@@ -707,6 +715,7 @@ public class SmbUpdateInstrumentation extends Instrumentation {
         Bundle result=new Bundle();
         try {
             require(android.os.Build.FINGERPRINT.contains("generic") || android.os.Build.MODEL.contains("sdk"),"Emulator required");
+            if(arguments.getString("mode","").equals("media-gestures")){videoGesturesProbe(result);return;}
             if(arguments.getString("mode","").equals("update-handoff"))getTargetContext().getSharedPreferences("updates-v1",0).edit().putBoolean("autoCheck",false).commit();
             Intent intent=getTargetContext().getPackageManager().getLaunchIntentForPackage(getTargetContext().getPackageName());
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK);activity=startActivitySync(intent);
@@ -726,7 +735,6 @@ public class SmbUpdateInstrumentation extends Instrumentation {
             if(arguments.getString("mode","").equals("network-profile")){networkProfileProbe(result);return;}
             if(arguments.getString("mode","").equals("network-smb")){networkSmbProbe(result);return;}
             if(arguments.getString("mode","").equals("media")){mediaProbe(result);return;}
-            if(arguments.getString("mode","").equals("media-gestures")){videoGesturesProbe(result);return;}
             if(arguments.getString("mode","").equals("file-gestures")){fileGesturesProbe(result);return;}
             if(arguments.getString("mode","").equals("gallery")){galleryProbe(result);return;}
             if(arguments.getString("mode","").equals("wallpaper")){wallpaperProbe(result);return;}
