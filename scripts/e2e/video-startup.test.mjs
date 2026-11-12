@@ -102,7 +102,9 @@ test('Windows playback reports startup stages and reuses the player for a differ
         assert.ok(Number.isInteger(result.stages?.videoOutputSetupMs), 'a new VLC video output records module initialization');
       }
       if (!cold) {
-        assert.ok(result.pluginWarmup.filesRead > 0 && Number.isInteger(result.pluginWarmup.elapsedMs));
+        const warmup = result.pluginWarmup;
+        assert.ok(warmup, 'Prewarm requires the bundled VLC runtime next to RHFiles.exe');
+        assert.ok(warmup.filesRead > 0 && Number.isInteger(warmup.elapsedMs), 'Bundled VLC plugin prewarm completed');
       }
       for (const key of ['firstReadMs', 'bufferingMs', 'decoderInitMs', 'decodeMs', 'decodedAtMs', 'outputMs']) {
         assert.ok(Number.isInteger(result.stages?.[key]), `${key} is measured for ${transport}: ${JSON.stringify(result.stages)}`);

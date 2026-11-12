@@ -79,10 +79,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          choco upgrade vlc --version=3.0.23 --allow-downgrade --yes --no-progress --limit-output
-          if ($LASTEXITCODE -notin 0,3010) { throw "VLC test dependency installation failed: $LASTEXITCODE" }
-          $vlc = Get-Item -LiteralPath "$env:ProgramFiles/VideoLAN/VLC/libvlc.dll"
-          if ($vlc.VersionInfo.FileVersion -notlike '3.0.23*') { throw 'Unexpected native test engine version' }
+          $libVlc = & ./scripts/prepare-libvlc.ps1
+          . ./scripts/libvlc-bundle.ps1
+          $bundle = Assert-RHFilesLibVlcWorkspacePath (Join-Path $PWD 'target/debug/vlc') $PWD
+          if (!(Test-Path -LiteralPath $bundle)) {
+            Copy-Item -LiteralPath $libVlc.Directory -Destination $bundle -Recurse
+          }
+          Assert-RHFilesLibVlcBundle $bundle
+          "RHFILES_EXPECT_ENGINE_VERSION=$($libVlc.Version)" >> $env:GITHUB_ENV
+          "RHFILES_EXPECT_BUNDLED_VLC=$($libVlc.Version)" >> $env:GITHUB_ENV
           ./scripts/prepare-ffmpeg.ps1
           "FFMPEG=$pwd/src-tauri/thirdparty/ffmpeg.exe" >> $env:GITHUB_ENV
       - name: Prepare disposable loopback protocol fixtures
@@ -101,7 +106,6 @@ jobs:
           # exercises the ordinary native-hardware-auto output path.
           RHFILES_VLC_COMPATIBILITY: '1'
           RHFILES_EXPECT_RENDERER: 'gdi-compatibility'
-          RHFILES_EXPECT_ENGINE_VERSION: '3.0.23'
         run: npm run test:e2e
       - name: Markdown PDF built-in and external converter workflows
         run: npm run test:pdf
