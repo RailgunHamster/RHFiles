@@ -99,11 +99,11 @@ public class SmbUpdateInstrumentation extends Instrumentation {
             int[] dimensions=new int[2];runOnMainSync(()->{dimensions[0]=screen.getWindow().getDecorView().getWidth();dimensions[1]=screen.getWindow().getDecorView().getHeight();});
             long now=android.os.SystemClock.uptimeMillis();MotionEvent down=MotionEvent.obtain(now,now,MotionEvent.ACTION_DOWN,dimensions[0]/2f,dimensions[1]/2f,0),up=MotionEvent.obtain(now,now+60,MotionEvent.ACTION_UP,dimensions[0]/2f,dimensions[1]/2f,0);down.setSource(InputDevice.SOURCE_TOUCHSCREEN);up.setSource(InputDevice.SOURCE_TOUCHSCREEN);
             try{getUiAutomation().injectInputEvent(down,true);Thread.sleep(60);getUiAutomation().injectInputEvent(up,true);}finally{down.recycle();up.recycle();}Thread.sleep(700);
-            boolean[] enabled={false};String[] detail={""};runOnMainSync(()->{View progress=screen.findViewById(progressId),next=screen.findViewById(nextId);detail[0]="focus="+screen.hasWindowFocus()+", progress="+(progress==null?"missing":progress.isShown())+", next="+(next==null?"missing":next.isShown()+"/enabled="+next.isEnabled());enabled[0]=progress!=null&&progress.isShown()&&next!=null&&next.isShown()&&next.isEnabled();if(enabled[0]){progress.requestFocus();progress.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_DPAD_RIGHT));progress.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_UP,KeyEvent.KEYCODE_DPAD_RIGHT));}});
+            boolean[] enabled={false};String[] detail={""};runOnMainSync(()->{View progress=screen.findViewById(progressId),next=screen.findViewById(nextId);detail[0]="focus="+screen.hasWindowFocus()+", progress="+(progress==null?"missing":progress.isShown())+", next="+(next==null?"missing":next.isShown()+"/enabled="+next.isEnabled());enabled[0]=progress!=null&&progress.isShown()&&next!=null&&next.isShown()&&next.isEnabled();if(enabled[0]&&!checkShortcuts){progress.requestFocus();progress.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_DPAD_RIGHT));progress.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_UP,KeyEvent.KEYCODE_DPAD_RIGHT));}});
             if(!enabled[0]){android.graphics.Bitmap shot=getUiAutomation().takeScreenshot();if(shot!=null)try(java.io.FileOutputStream out=new java.io.FileOutputStream("/storage/emulated/0/Download/RHFiles-QA-player-controls.png")){shot.compress(android.graphics.Bitmap.CompressFormat.PNG,100,out);}finally{shot.recycle();}}
             require(enabled[0],"Tap did not reveal seek/next controls: "+detail[0]);
             if(checkShortcuts)checkPlayerShortcuts(screen);
-            android.graphics.Rect bar=new android.graphics.Rect();runOnMainSync(()->screen.findViewById(progressId).getGlobalVisibleRect(bar));require(bar.width()>100,"Time bar is not available for touch seeking");
+            android.graphics.Rect bar=playerViewBounds(screen,progressId);require(bar.width()>100,"Time bar is not available for touch seeking");
             long scrub=android.os.SystemClock.uptimeMillis();float sy=bar.exactCenterY(),sx=bar.left+bar.width()*.2f,ex=bar.left+bar.width()*.65f;
             injectContacts(scrub,MotionEvent.ACTION_DOWN,new int[]{0},new float[][]{{sx,sy}});for(int i=1;i<=6;i++){injectContacts(scrub,MotionEvent.ACTION_MOVE,new int[]{0},new float[][]{{sx+(ex-sx)*i/6,sy}});Thread.sleep(25);}injectContacts(scrub,MotionEvent.ACTION_UP,new int[]{0},new float[][]{{ex,sy}});Thread.sleep(450);
             require(String.valueOf(screen.getTitle()).equals("QA video 1"),"Dragging the time bar switched videos instead of seeking");
@@ -136,10 +136,20 @@ public class SmbUpdateInstrumentation extends Instrumentation {
         injectContacts(down,MotionEvent.ACTION_UP,new int[]{0},new float[][]{{x,y}});
     }
     private void tapPlayerView(Activity screen,int id) throws Exception {
-        android.graphics.Rect target=new android.graphics.Rect();
-        runOnMainSync(()->{View view=screen.findViewById(id);if(view!=null&&view.isShown())view.getGlobalVisibleRect(target);});
+        android.graphics.Rect target=playerViewBounds(screen,id);
         require(!target.isEmpty(),"Player shortcut is not visible: "+id);
         tapPlayer(target.exactCenterX(),target.exactCenterY());
+    }
+    private android.graphics.Rect playerViewBounds(Activity screen,int id){
+        android.graphics.Rect bounds=new android.graphics.Rect();
+        runOnMainSync(()->{
+            View view=screen.findViewById(id);
+            if(view!=null&&view.isShown()){
+                int[] point=new int[2];view.getLocationOnScreen(point);
+                bounds.set(point[0],point[1],point[0]+view.getWidth(),point[1]+view.getHeight());
+            }
+        });
+        return bounds;
     }
     private void checkPlayerShortcuts(Activity screen) throws Exception {
         androidx.media3.ui.PlayerView[] video=new androidx.media3.ui.PlayerView[1];
