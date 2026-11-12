@@ -49,9 +49,21 @@ test('ordinary video playback stays in the library with real pixels, scoped cont
   }
   receipt.beforeFullscreen=await capture('library-before-fullscreen',receipt.initial.inputId);
   assert.equal(await page.evaluate('__TAURI__.window.getCurrentWindow().isFullscreen()'),false);await api('inlinePlayer.fullscreen');assert.equal(await page.evaluate('__TAURI__.window.getCurrentWindow().isFullscreen()'),true);
-  receipt.fullscreenGeometry=await page.evaluate('(()=>{const r=document.getElementById("rhvideo-player-dialog").getBoundingClientRect(),s=document.querySelector(".rhvideo-native-stage").getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,viewportWidth:innerWidth,viewportHeight:innerHeight,stageWidth:s.width,stageHeight:s.height,dpr:devicePixelRatio};})()');
-  assert(Math.abs(receipt.fullscreenGeometry.width-receipt.fullscreenGeometry.viewportWidth)<=1,'Fullscreen must fill the actual viewport width, not only change the OS window flag');assert(Math.abs(receipt.fullscreenGeometry.height-receipt.fullscreenGeometry.viewportHeight)<=1,'Fullscreen must fill the actual viewport height');assert(Math.abs(receipt.fullscreenGeometry.x)<=1&&Math.abs(receipt.fullscreenGeometry.y)<=1,'No normal-dialog margin remains in fullscreen');
-  const fullState=await api('player.state');assert(Math.abs(fullState.viewportWidth-Math.round(receipt.fullscreenGeometry.stageWidth*receipt.fullscreenGeometry.dpr))<=1,'Native canvas matches the actual fullscreen stage width');assert(Math.abs(fullState.viewportHeight-Math.round(receipt.fullscreenGeometry.stageHeight*receipt.fullscreenGeometry.dpr))<=1,'Native canvas matches the actual fullscreen stage height');
+  // The OS flag can change before WebView2 resizes and the host's
+  // ResizeObserver forwards the final stage bounds to the native canvas.
+  const fullState=await until(async()=>{
+   const geometry=await page.evaluate('(()=>{const r=document.getElementById("rhvideo-player-dialog").getBoundingClientRect(),s=document.querySelector(".rhvideo-native-stage").getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,viewportWidth:innerWidth,viewportHeight:innerHeight,stageWidth:s.width,stageHeight:s.height,dpr:devicePixelRatio};})()');
+   receipt.fullscreenGeometry=geometry;
+   assert(Math.abs(geometry.width-geometry.viewportWidth)<=1,'Fullscreen must fill the actual viewport width');
+   assert(Math.abs(geometry.height-geometry.viewportHeight)<=1,'Fullscreen must fill the actual viewport height');
+   assert(Math.abs(geometry.x)<=1&&Math.abs(geometry.y)<=1,'No normal-dialog margin remains in fullscreen');
+   const state=await api('player.state');
+   receipt.fullscreenNativeViewport={width:state.viewportWidth,height:state.viewportHeight};
+   assert.equal(state.inputId,receipt.initial.inputId);
+   assert(Math.abs(state.viewportWidth-Math.round(geometry.stageWidth*geometry.dpr))<=1,'Native canvas matches the actual fullscreen stage width');
+   assert(Math.abs(state.viewportHeight-Math.round(geometry.stageHeight*geometry.dpr))<=1,'Native canvas matches the actual fullscreen stage height');
+   return state;
+  },'WebView2 layout and native canvas agree in fullscreen',5000);
   // The native resize and GDI presentation commit asynchronously. Functional
   // acceptance waits for the actual resized source pixels, not merely the
   // logical viewport reply; this is not a first-frame performance measurement.
