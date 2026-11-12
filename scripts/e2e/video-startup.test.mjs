@@ -106,9 +106,14 @@ test('Windows playback reports startup stages and reuses the player for a differ
         assert.ok(warmup, 'Prewarm requires the bundled VLC runtime next to RHFiles.exe');
         assert.ok(warmup.filesRead > 0 && Number.isInteger(warmup.elapsedMs), 'Bundled VLC plugin prewarm completed');
       }
-      for (const key of ['firstReadMs', 'bufferingMs', 'decoderInitMs', 'decodeMs', 'decodedAtMs', 'outputMs']) {
+      for (const key of ['firstReadMs', 'decoderInitMs', 'decodeMs', 'decodedAtMs', 'outputMs']) {
         assert.ok(Number.isInteger(result.stages?.[key]), `${key} is measured for ${transport}: ${JSON.stringify(result.stages)}`);
       }
+      // VLC can complete buffering on the first clock sample, without a
+      // progress event to mark the start of the measured interval.
+      const {bufferingMs} = result.stages;
+      assert.ok(bufferingMs === null || (Number.isInteger(bufferingMs) && bufferingMs >= 0),
+        `Buffering reports an elapsed time or null for ${transport}: ${JSON.stringify(result.stages)}`);
       for (const key of ['layoutQueueMs', 'layoutMs', 'revealMs']) assert.ok(Number.isInteger(result[key]), `${key} is measured`);
       assert.ok(['initialCanvas', 'native', 'viewport'].includes(result.revealOrigin), 'first reveal records who displayed the surface');
       if (result.revealOrigin === 'initialCanvas') assert.equal(result.layoutQueueMs, 0, 'the already visible canvas does not wait for a reveal task');
