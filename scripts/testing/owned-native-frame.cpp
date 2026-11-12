@@ -3,6 +3,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <string_view>
 #include <tlhelp32.h>
 #include <algorithm>
 #include <cstdint>
@@ -66,13 +67,15 @@ static BYTE presentation_alpha(HWND window){
   require(GetLayeredWindowAttributes(window,&color,&alpha,&flags)&&(flags&LWA_ALPHA),"Cannot observe owned presentation alpha");
   return alpha;
 }
-struct OwnedWindows {DWORD pid;HWND main{},library{};bool ambiguous=false;};
+struct OwnedWindows {DWORD pid;HWND main{},library{},file_viewer{};bool ambiguous=false;};
 static BOOL CALLBACK owned_window(HWND window,LPARAM data){
   auto& state=*reinterpret_cast<OwnedWindows*>(data);DWORD process=0;GetWindowThreadProcessId(window,&process);
   if(process!=state.pid||!IsWindowVisible(window))return TRUE;
   wchar_t caption[2048]{};GetWindowTextW(window,caption,2048);
   if(std::wcscmp(caption,L"RHFiles")==0){state.ambiguous|=state.main!=nullptr;state.main=window;}
   if(std::wcscmp(caption,L"RHFiles \u00b7 RHVideo")==0){state.ambiguous|=state.library!=nullptr;state.library=window;}
+  // PDF, save and video windows also use the same suffix. Match the QA image exactly.
+  if(std::wcscmp(caption,L"rhfiles-qa-viewer-focus.png \u00b7 RHFiles")==0){state.ambiguous|=state.file_viewer!=nullptr;state.file_viewer=window;}
   return TRUE;
 }
 static void owned_main(HWND window,DWORD pid){
@@ -120,7 +123,8 @@ static void window_command(int argc,wchar_t** argv,DWORD pid,uint64_t process_cr
     const bool destroyed=!IsWindow(target);const auto end=unix_millis();
     std::printf("{\"protocol\":1,\"scope\":\"owned-sibling-windows\",\"pid\":%lu,\"target\":\"single-player\",\"transport\":\"win32-wm-close\",\"submitted\":true,\"observedAtMs\":%llu,\"destroyed\":%s,\"checkedAtMs\":%llu}\n",static_cast<unsigned long>(pid),static_cast<unsigned long long>(at),destroyed?"true":"false",static_cast<unsigned long long>(end));return;
   }
-  require(((command==L"windows"||command==L"library-ping"||command==L"activate-main"||command==L"main-front"||command==L"input-ready")&&argc==4)||((command==L"library-key"||command==L"main-client-size")&&argc==6)||(command==L"main-pointer"&&argc==7),"Unsupported owned window command");
+  const bool viewer_escape=command==L"file-viewer-escape";
+  require(((command==L"windows"||command==L"library-ping"||command==L"activate-main"||command==L"main-front"||command==L"input-ready"||viewer_escape)&&argc==4)||((command==L"library-key"||command==L"main-client-size")&&argc==6)||(command==L"main-pointer"&&argc==7),"Unsupported owned window command");
   WORD key=0;bool scan_mode=false;
   if(command==L"library-key"){
     const std::wstring name(argv[4]),encoding(argv[5]);
@@ -193,7 +197,7 @@ static void window_command(int argc,wchar_t** argv,DWORD pid,uint64_t process_cr
   }
   if(command==L"windows"){
     std::printf("{\"protocol\":1,\"scope\":\"owned-sibling-windows\",\"pid\":%lu,\"windows\":[",static_cast<unsigned long>(pid));
-    bool first=true;for(const auto& row:std::vector<std::pair<const char*,HWND>>{{"main",owned.main},{"window-rhvideo",owned.library}}){if(!row.second)continue;const auto info=thread_info(row.second);const bool focus=input_focus(row.second,info);std::printf("%s{\"label\":\"%s\",\"foreground\":%s,\"active\":%s,\"inputFocus\":%s,\"focusKind\":\"%s\",\"focusEnabled\":%s,\"focusVisible\":%s}",first?"":",",row.first,GetForegroundWindow()==row.second?"true":"false",info.hwndActive==row.second?"true":"false",focus?"true":"false",focus_kind(row.second,info),focus&&IsWindowEnabled(info.hwndFocus)?"true":"false",focus&&IsWindowVisible(info.hwndFocus)?"true":"false");first=false;}
+    bool first=true;for(const auto& row:std::vector<std::pair<const char*,HWND>>{{"main",owned.main},{"window-rhvideo",owned.library},{"window-file-viewer",owned.file_viewer}}){if(!row.second)continue;const auto info=thread_info(row.second);const bool focus=input_focus(row.second,info);std::printf("%s{\"label\":\"%s\",\"foreground\":%s,\"active\":%s,\"inputFocus\":%s,\"focusKind\":\"%s\",\"focusEnabled\":%s,\"focusVisible\":%s}",first?"":",",row.first,GetForegroundWindow()==row.second?"true":"false",info.hwndActive==row.second?"true":"false",focus?"true":"false",focus_kind(row.second,info),focus&&IsWindowEnabled(info.hwndFocus)?"true":"false",focus&&IsWindowVisible(info.hwndFocus)?"true":"false");first=false;}
     std::puts("]}");return;
   }
   if(command==L"activate-main"){
@@ -202,17 +206,20 @@ static void window_command(int argc,wchar_t** argv,DWORD pid,uint64_t process_cr
     require(SetForegroundWindow(owned.main),"Cannot activate owned main window");
     std::printf("{\"protocol\":1,\"scope\":\"owned-sibling-windows\",\"pid\":%lu,\"focused\":\"main\"}\n",static_cast<unsigned long>(pid));return;
   }
-  require(owned.library,"Owned library is not open");
-  const auto info=thread_info(owned.library);
+  const HWND target=viewer_escape?owned.file_viewer:owned.library;
+  require(target,viewer_escape?"Owned file viewer is not open":"Owned library is not open");
+  const auto info=thread_info(target);
   // No activation or AttachThreadInput: keys go only to an ALREADY focused
-  // sibling library, never whichever application happens to be foreground.
-  require(GetForegroundWindow()==owned.library&&input_focus(owned.library,info),"Library does not own real input focus");
+  // sibling window, never whichever application happens to be foreground.
+  require(GetForegroundWindow()==target&&input_focus(target,info),viewer_escape?"File viewer does not own real input focus":"Library does not own real input focus");
   for(const int modifier:{VK_CONTROL,VK_SHIFT,VK_MENU,VK_LWIN,VK_RWIN})require(GetAsyncKeyState(modifier)>=0,"A modifier key is held; no key submitted");
-  WORD scan=0;DWORD flags=KEYEVENTF_EXTENDEDKEY;
+  if(viewer_escape)key=VK_ESCAPE;
+  WORD scan=0;DWORD flags=viewer_escape?0:KEYEVENTF_EXTENDEDKEY;
   if(scan_mode){scan=WORD(MapVirtualKeyW(key,MAPVK_VK_TO_VSC_EX)&0xff);require(scan!=0,"No navigation scan code");flags|=KEYEVENTF_SCANCODE;}
   INPUT events[2]{};for(auto& event:events){event.type=INPUT_KEYBOARD;event.ki.wVk=scan_mode?0:key;event.ki.wScan=scan;event.ki.dwFlags=flags;}events[1].ki.dwFlags|=KEYEVENTF_KEYUP;
+  require(GetForegroundWindow()==target,"Owned window lost foreground; no key submitted");
   const UINT sent=SendInput(2,events,sizeof(INPUT));if(sent==1)SendInput(1,events+1,sizeof(INPUT));require(sent==2,"Windows did not accept both events; not repeated");
-  std::printf("{\"protocol\":1,\"scope\":\"owned-sibling-windows\",\"pid\":%lu,\"sent\":2,\"key\":\"%s\",\"transport\":\"windows-send-input\",\"encoding\":\"%s\"}\n",static_cast<unsigned long>(pid),key==VK_HOME?"Home":"End",scan_mode?"scan-code":"virtual-key");
+  std::printf("{\"protocol\":1,\"scope\":\"owned-sibling-windows\",\"pid\":%lu,\"sent\":2,\"key\":\"%s\",\"transport\":\"windows-send-input\",\"encoding\":\"%s\"}\n",static_cast<unsigned long>(pid),viewer_escape?"Escape":key==VK_HOME?"Home":"End",scan_mode?"scan-code":"virtual-key");
 }
 struct Canvas {
   HWND window{};HDC source{},target{};HBITMAP bitmap{};HGDIOBJ old{};
@@ -226,7 +233,8 @@ int wmain(int argc,wchar_t** argv){
     const std::wstring digits(argv[1]);require(!digits.empty()&&digits.size()<=10&&std::all_of(digits.begin(),digits.end(),[](wchar_t c){return c>=L'0'&&c<=L'9';}),"Invalid owned PID");
     const auto value=std::stoull(digits);require(value>0&&value<=MAXDWORD,"Invalid owned PID");const DWORD pid=DWORD(value);
     const auto process_created=verify_process(pid,argv[2]);
-    if(std::wstring(argv[3])==L"windows"||std::wstring(argv[3])==L"library-ping"||std::wstring(argv[3])==L"activate-main"||std::wstring(argv[3])==L"main-front"||std::wstring(argv[3])==L"input-ready"||std::wstring(argv[3])==L"library-key"||std::wstring(argv[3])==L"player-close"||std::wstring(argv[3])==L"main-client-size"||std::wstring(argv[3])==L"main-pointer"){window_command(argc,argv,pid,process_created);return 0;}
+    const std::wstring_view command(argv[3]);
+    if(command==L"windows"||command==L"library-ping"||command==L"activate-main"||command==L"main-front"||command==L"input-ready"||command==L"library-key"||command==L"player-close"||command==L"main-client-size"||command==L"main-pointer"||command==L"file-viewer-escape"){window_command(argc,argv,pid,process_created);return 0;}
     require(argc==5||(argc==6&&(std::wstring(argv[5])==L"library-presentation"||std::wstring(argv[5])==L"library-player"||std::wstring(argv[5])==L"main-client")),"Use PID, exact executable, owned basename, renderer and a fixed canvas scope");
     const bool presentation=argc==6&&std::wstring(argv[5])==L"library-presentation",library_player=argc==6&&std::wstring(argv[5])==L"library-player",main_client=argc==6&&std::wstring(argv[5])==L"main-client";
     output=argv[3];const std::wstring prefix=L"rhvideo-native-",suffix=L".bmp";

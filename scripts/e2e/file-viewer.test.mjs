@@ -71,7 +71,16 @@ test('filesystem media viewer: real images, continuous input, native video, inde
     await page.evaluate("(()=>{const n=document.getElementById('volume');n.value='25';n.dispatchEvent(new Event('input',{bubbles:true}));})()");await until(async()=>(await decoder()).volume===25,'slider changes actual decoder before mouseup');
     await page.send('Input.dispatchMouseEvent',{type:'mouseWheel',x:500,y:300,deltaX:0,deltaY:-100});await until(async()=>(await decoder()).volume===30,'wheel changes actual decoder volume');
     await main('media.preferences.set',{videoSeekSeconds:7});await page.evaluate("document.getElementById('viewport').focus()");await key('ArrowRight','ArrowRight',39);await until(async()=>Math.abs((await decoder()).positionMs-27000)<1800,'configured arrow forward seek',30000);await key('ArrowLeft','ArrowLeft',37);await until(async()=>Math.abs((await decoder()).positionMs-20000)<1800,'configured arrow backward seek',30000);assert.equal((await call('media.viewer.state')).index,state.index,'seeking does not change files');
-    await page.evaluate("document.getElementById('volume').focus()");await key('f','KeyF',70);await until(async()=>(await call('media.viewer.window.state')).fullscreen,'native F fullscreen');assert(await page.evaluate("(()=>{const r=document.getElementById('viewport').getBoundingClientRect();return r.x===0&&r.y===0&&r.width===innerWidth&&r.height===innerHeight})()"));await until(async()=>(await call('media.viewer.state')).controlsVisible===false,'fullscreen controls auto-hide',6000);await key('Escape','Escape',27);await until(async()=>!(await call('media.viewer.window.state')).fullscreen,'Escape exits native fullscreen');
+    await page.evaluate("document.getElementById('volume').focus()");
+    await key('f','KeyF',70);
+    await until(async()=>(await call('media.viewer.window.state')).fullscreen,'native F fullscreen');
+    assert(await page.evaluate("(()=>{const r=document.getElementById('viewport').getBoundingClientRect();return r.x===0&&r.y===0&&r.width===innerWidth&&r.height===innerHeight})()"));
+    // The controls are intentionally held open while the cursor is over the toolbar.
+    const videoCenter=await page.evaluate('({x:Math.floor(innerWidth/2),y:Math.floor(innerHeight/2)})');
+    await page.send('Input.dispatchMouseEvent',{type:'mouseMoved',...videoCenter});
+    await until(async()=>(await call('media.viewer.state')).controlsVisible===false,'fullscreen controls auto-hide',6000);
+    await key('Escape','Escape',27);
+    await until(async()=>!(await call('media.viewer.window.state')).fullscreen,'Escape exits native fullscreen');
 
     await call('media.viewer.video.control',{command:'pause'});await until(async()=>(await call('media.viewer.state')).video?.state===4,'native pause');await call('media.viewer.video.control',{command:'seek',value:20000});await until(async()=>Math.abs((await call('media.viewer.state')).video.positionMs-20000)<1800,'native paused seek',30000);await call('media.viewer.video.control',{command:'volume',value:0});await call('media.viewer.video.control',{command:'rate',value:1.5});await call('media.viewer.video.control',{command:'resume'});await until(async()=>(await call('media.viewer.state')).video?.positionMs>21000,'native resume');
     await call('media.viewer.fullscreen');assert.equal(await page.evaluate('window.__TAURI__.window.getCurrentWindow().isFullscreen()'),true);await call('media.viewer.fullscreen');

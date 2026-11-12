@@ -116,7 +116,17 @@ async fn dispatch(app:AppHandle,action:String,args:Value,cancel:tauri::State<'_,
                 let entry=&state.entries[index];
                 file_player::start(app.clone(),entry.path.clone(),entry.name.clone(),attempt,prepared);
             }
-            window.set_title(&format!("{} · RHFiles",state.entries[state.index].name)).map_err(|e|e.to_string())?;window.emit("file-viewer-changed",json!({"generation":generation})).map_err(|e|e.to_string())?;window.show().map_err(|e|e.to_string())?;window.set_focus().map_err(|e|e.to_string())?;Ok(json!(state))
+            window.set_title(&format!("{} · RHFiles",state.entries[state.index].name)).map_err(|e|e.to_string())?;
+            window.emit("file-viewer-changed",json!({"generation":generation})).map_err(|e|e.to_string())?;
+            window.show().map_err(|e|e.to_string())?;
+            window.set_focus().map_err(|e|e.to_string())?;
+            #[cfg(windows)]
+            {
+                // The visible window and its WebView2 controller have separate keyboard focus.
+                let webview: &tauri::Webview = window.as_ref();
+                let _ = webview.set_focus();
+            }
+            Ok(json!(state))
         }
         "state"=>Ok(SESSION.lock().map_err(|_|"查看器状态不可用")?.as_ref().map(|s|json!(s)).unwrap_or(json!({"opened":false}))),
         "window.state"=>{current(&args)?;let w=app.get_webview_window(LABEL).ok_or("查看器已关闭")?;Ok(json!({"maximized":w.is_maximized().map_err(|e|e.to_string())?,"fullscreen":w.is_fullscreen().map_err(|e|e.to_string())?}))}
