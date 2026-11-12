@@ -28,8 +28,14 @@ test('negative focus testing can only activate the main window of an already-for
 
 test('release business tests use guarded external ownership, not a removed production key endpoint',()=>{
   const tool=fs.readFileSync(new URL('../testing/owned-native-frame.cpp',import.meta.url),'utf8');
-  for(const guard of ['parent_of(id)==parent','created(target.value)>=created(owner.value)','_wcsicmp(actual.c_str(),requested.c_str())==0','GetForegroundWindow()==owned.library&&input_focus(owned.library,info)','GetAsyncKeyState(modifier)>=0'])assert(tool.includes(guard));
-  assert(tool.indexOf('GetForegroundWindow()==owned.library')<tool.indexOf('const UINT sent=SendInput'));
+  for(const guard of ['parent_of(id)==parent','created(target.value)>=created(owner.value)','_wcsicmp(actual.c_str(),requested.c_str())==0'])assert(tool.includes(guard),guard);
+  const keyPath=tool.slice(tool.indexOf('const HWND target=viewer_escape?owned.file_viewer:owned.library;'));
+  const submit=keyPath.indexOf('const UINT sent=SendInput');
+  assert(submit>0,'Keyboard target must be restricted to an owned viewer before submitting input');
+  for(const guard of ['GetForegroundWindow()==target&&input_focus(target,info)','GetAsyncKeyState(modifier)>=0','require(GetForegroundWindow()==target,']){
+    const index=keyPath.indexOf(guard);
+    assert(index>=0&&index<submit,guard);
+  }
   assert.match(tool,/name==L"Home"\|\|name==L"End"/);assert.match(tool,/if\(sent==1\)SendInput\(1,events\+1/);
   const business=fs.readFileSync(new URL('../e2e/rhvideo-slideshow.test.mjs',import.meta.url),'utf8');assert.doesNotMatch(business,/diagnostics\.libraryKey|diagnostics\.windows|diagnostics\.activateMain/);
   assert.match(business,/Only Home\\\/End/);assert.match(business,/keyboard\.main\.keys\.length,0/);assert.match(business,/both native navigation key down\/up pairs/);
