@@ -67,7 +67,8 @@ static BYTE presentation_alpha(HWND window){
   require(GetLayeredWindowAttributes(window,&color,&alpha,&flags)&&(flags&LWA_ALPHA),"Cannot observe owned presentation alpha");
   return alpha;
 }
-struct OwnedWindows {DWORD pid;HWND main{},library{},file_viewer{};bool ambiguous=false;};
+constexpr wchar_t viewer_qa_title[]=L"rhfiles-qa-viewer-focus.png \u00b7 RHFiles";
+struct OwnedWindows {DWORD pid;HWND main{},library{},file_viewer{};bool ambiguous=false,observe_viewer_startup=false;};
 static BOOL CALLBACK owned_window(HWND window,LPARAM data){
   auto& state=*reinterpret_cast<OwnedWindows*>(data);DWORD process=0;GetWindowThreadProcessId(window,&process);
   if(process!=state.pid||!IsWindowVisible(window))return TRUE;
@@ -75,7 +76,9 @@ static BOOL CALLBACK owned_window(HWND window,LPARAM data){
   if(std::wcscmp(caption,L"RHFiles")==0){state.ambiguous|=state.main!=nullptr;state.main=window;}
   if(std::wcscmp(caption,L"RHFiles \u00b7 RHVideo")==0){state.ambiguous|=state.library!=nullptr;state.library=window;}
   // PDF, save and video windows also use the same suffix. Match the QA image exactly.
-  if(std::wcscmp(caption,L"rhfiles-qa-viewer-focus.png \u00b7 RHFiles")==0){state.ambiguous|=state.file_viewer!=nullptr;state.file_viewer=window;}
+  const bool viewer_startup=state.observe_viewer_startup&&
+    (std::wcscmp(caption,L"RHFiles \u00b7 Media viewer")==0||std::wcscmp(caption,L"RHFiles \u00b7 \u5a92\u4f53\u67e5\u770b\u5668")==0);
+  if(viewer_startup||std::wcscmp(caption,viewer_qa_title)==0){state.ambiguous|=state.file_viewer!=nullptr;state.file_viewer=window;}
   return TRUE;
 }
 static void owned_main(HWND window,DWORD pid){
@@ -103,6 +106,24 @@ static int dimension(const wchar_t* raw,int minimum,int maximum){
 }
 static void window_command(int argc,wchar_t** argv,DWORD pid,uint64_t process_created){
   const std::wstring command(argv[3]);
+  if(command==L"file-viewer-first-show"){
+    require(argc==4,"First viewer show accepts no arguments");
+    const auto started=GetTickCount64();
+    do{
+      OwnedWindows found{pid};
+      found.observe_viewer_startup=true;
+      require(EnumWindows(owned_window,reinterpret_cast<LPARAM>(&found))&&!found.ambiguous,"Cannot observe the owned viewer startup");
+      if(found.file_viewer){
+        wchar_t caption[2048]{};
+        GetWindowTextW(found.file_viewer,caption,2048);
+        std::printf("{\"protocol\":1,\"scope\":\"owned-sibling-windows\",\"pid\":%lu,\"maximized\":%s,\"fileTitle\":%s,\"observedAtMs\":%llu}\n",
+          static_cast<unsigned long>(pid),IsZoomed(found.file_viewer)?"true":"false",std::wcscmp(caption,viewer_qa_title)==0?"true":"false",static_cast<unsigned long long>(unix_millis()));
+        return;
+      }
+      Sleep(1);
+    }while(GetTickCount64()-started<3800);
+    require(false,"The owned viewer never became visible");
+  }
   if(command==L"player-close"){
     require(argc==4,"Player close accepts no path, key, handle or window selector");
     const auto started=GetTickCount64();HWND target{};
@@ -234,7 +255,7 @@ int wmain(int argc,wchar_t** argv){
     const auto value=std::stoull(digits);require(value>0&&value<=MAXDWORD,"Invalid owned PID");const DWORD pid=DWORD(value);
     const auto process_created=verify_process(pid,argv[2]);
     const std::wstring_view command(argv[3]);
-    if(command==L"windows"||command==L"library-ping"||command==L"activate-main"||command==L"main-front"||command==L"input-ready"||command==L"library-key"||command==L"player-close"||command==L"main-client-size"||command==L"main-pointer"||command==L"file-viewer-escape"){window_command(argc,argv,pid,process_created);return 0;}
+    if(command==L"windows"||command==L"library-ping"||command==L"activate-main"||command==L"main-front"||command==L"input-ready"||command==L"library-key"||command==L"player-close"||command==L"main-client-size"||command==L"main-pointer"||command==L"file-viewer-escape"||command==L"file-viewer-first-show"){window_command(argc,argv,pid,process_created);return 0;}
     require(argc==5||(argc==6&&(std::wstring(argv[5])==L"library-presentation"||std::wstring(argv[5])==L"library-player"||std::wstring(argv[5])==L"main-client")),"Use PID, exact executable, owned basename, renderer and a fixed canvas scope");
     const bool presentation=argc==6&&std::wstring(argv[5])==L"library-presentation",library_player=argc==6&&std::wstring(argv[5])==L"library-player",main_client=argc==6&&std::wstring(argv[5])==L"main-client";
     output=argv[3];const std::wstring prefix=L"rhvideo-native-",suffix=L".bmp";

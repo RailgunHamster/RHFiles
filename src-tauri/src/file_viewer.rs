@@ -32,6 +32,21 @@ fn validate_entry(entry:&Entry)->Result<(),String>{
 fn current(args:&Value)->Result<Session,String>{let state=SESSION.lock().map_err(|_|"查看器状态不可用")?;let s=state.as_ref().ok_or("查看器已关闭")?;if args["generation"].as_u64()!=Some(s.generation)||args.get("selection").is_some_and(|v|v.as_u64()!=Some(s.selection)){return Err("查看内容已改变，旧操作未执行".into())}Ok(s.clone())}
 pub(crate) fn is_current(generation:u64,selection:u64)->bool{SESSION.lock().ok().is_some_and(|s|s.as_ref().is_some_and(|s|s.generation==generation&&s.selection==selection))}
 fn stop_video(){#[cfg(windows)]crate::rhvideo_player::file_player::stop();}
+
+#[cfg(windows)]
+async fn show_image_maximized(window: &tauri::WebviewWindow) -> Result<(), String> {
+    use windows::Win32::{Foundation::HWND, UI::WindowsAndMessaging::{ShowWindow, SW_SHOWMAXIMIZED}};
+    let hwnd = window.hwnd().map_err(|e| e.to_string())?.0 as isize;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    window.run_on_main_thread(move || {
+        // Make the first native show and maximize one operation, before Tao
+        // synchronizes its own visibility state through WebviewWindow::show.
+        unsafe { let _ = ShowWindow(HWND(hwnd as _), SW_SHOWMAXIMIZED); }
+        let _ = tx.send(());
+    }).map_err(|e| e.to_string())?;
+    rx.await.map_err(|_| "无法显示图片查看器".to_owned())
+}
+
 async fn save_image(app:AppHandle,args:Value,cancel:tauri::State<'_,CancelFlag>)->Result<Value,String>{
     let state=current(&args)?;if state.kind!="image"{return Err("当前不是图片".into())}
     let index=args.get("index").map(|v|v.as_u64().filter(|n|(*n as usize)<state.entries.len()).map(|n|n as usize).ok_or("图片索引无效")).transpose()?.unwrap_or(state.index);
@@ -84,6 +99,8 @@ async fn dispatch(app:AppHandle,action:String,args:Value,cancel:tauri::State<'_,
             *SESSION.lock().map_err(|_|"查看器状态不可用")?=Some(state.clone());
             if media_kind!="video"{stop_video();}
             let existing=app.get_webview_window(LABEL);
+            let initial_page = (cfg!(windows) && existing.is_none() && media_kind == "image")
+                .then(|| std::sync::Arc::new(tokio::sync::Notify::new()));
             #[cfg(windows)]
             let attempt=(media_kind=="video").then(||file_player::Attempt::new(generation,state.selection,&state.entries[index].path,started));
             #[cfg(windows)]
@@ -103,7 +120,7 @@ async fn dispatch(app:AppHandle,action:String,args:Value,cancel:tauri::State<'_,
                 }};
                 #[cfg(not(windows))]
                 let initialize=|_:&tauri::WebviewWindow|{};
-                let window=crate::rhvideo::client_window_configured(app.clone(),LABEL,"file-viewer.html",title,(1120.,780.),(500.,360.),true,initialize).await?;
+                let window=crate::rhvideo::client_window_configured(app.clone(),LABEL,"file-viewer.html",title,(1120.,780.),(500.,360.),true,initial_page.clone(),initialize).await?;
                 window.on_window_event(move|event|if matches!(event,WindowEvent::Destroyed)&&WINDOW.compare_exchange(epoch,epoch+1,Ordering::SeqCst,Ordering::SeqCst).is_ok(){if let Ok(mut s)=SESSION.lock(){*s=None;}stop_video();});window
             };
             #[cfg(windows)]
@@ -118,6 +135,12 @@ async fn dispatch(app:AppHandle,action:String,args:Value,cancel:tauri::State<'_,
             }
             window.set_title(&format!("{} · RHFiles",state.entries[state.index].name)).map_err(|e|e.to_string())?;
             window.emit("file-viewer-changed",json!({"generation":generation})).map_err(|e|e.to_string())?;
+            #[cfg(windows)]
+            if let Some(initial_page) = initial_page {
+                // A failed or slow page load must not leave an invisible viewer.
+                let _ = tokio::time::timeout(std::time::Duration::from_millis(750), initial_page.notified()).await;
+                show_image_maximized(&window).await?;
+            }
             window.show().map_err(|e|e.to_string())?;
             window.set_focus().map_err(|e|e.to_string())?;
             #[cfg(windows)]

@@ -206,6 +206,7 @@ export async function launchApp({emulateFocus=false,desktopId='e2e-isolated',pro
         if(process.env.RHFILES_NATIVE_PLAYER_QA!=='1')throw Error('Owned viewer keyboard input requires the explicit QA opt-in');
         return ownedWindow().fileViewerEscape(...args);
       },
+      fileViewerFirstShow:(...args)=>ownedWindow().fileViewerFirstShow(...args),
     };
     const readStartupCanvas=scope=>{if(closing||process.env.RHFILES_NATIVE_PLAYER_QA!=='1')return Promise.reject(Error('Owned startup canvas requires the explicit QA opt-in and a live fixture'));if(scope==='main')return(mainCanvasReader??=ownedCanvasReader({...observerOptions(),scope})).read();if(scope==='library-player')return(libraryCanvasReader??=ownedCanvasReader({...observerOptions(),scope})).read();return(singleCanvasReader??=ownedCanvasReader({...observerOptions(),scope})).read();};
     return {pid:child.pid,directory,artifactDir,profile,profileRoot,port,close,closed,evaluate,send,events,outputEvents,screenshot,hover,click,drag,readNativeFrame,readFileVideoFrame,readExpandedGridFrame,readPresentationFrame,readMainFrame:()=>readStartupCanvas('main'),readSingleInputFrame:()=>readStartupCanvas('single-input-player'),readLibraryPlayerFrame:()=>readStartupCanvas('library-player'),nativeWindows,diagnostic:nativeChannel?nativeChannel.request:null};

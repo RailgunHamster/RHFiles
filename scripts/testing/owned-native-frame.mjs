@@ -63,6 +63,12 @@ export function ownedWindowDriver({workspace,tool,pid,executable,directory,execu
       const reply=await request(['file-viewer-escape']);
       if(reply.sent!==2||reply.key!=='Escape'||reply.encoding!=='virtual-key'||reply.transport!=='windows-send-input')throw Error('Invalid owned Escape acknowledgement');
     },
+    async fileViewerFirstShow(...args){
+      if(args.length)throw Error('First viewer show accepts no arguments');
+      const {maximized,fileTitle,observedAtMs}=await request(['file-viewer-first-show']);
+      if(typeof maximized!=='boolean'||typeof fileTitle!=='boolean'||!Number.isSafeInteger(observedAtMs)||observedAtMs<=0)throw Error('Invalid first viewer show observation');
+      return {maximized,fileTitle,observedAtMs};
+    },
     async activateMain(){return request(['activate-main']);},
     async inputReady(...args){if(args.length)throw Error('Owned input check accepts no arguments');const reply=await request(['input-ready']);if(typeof reply.available!=='boolean'||reply.reason!==(reply.available?'input-desktop-ready':'input-desktop-locked-or-unavailable'))throw Error('Invalid input desktop acknowledgement');return {available:reply.available,reason:reply.reason};},
     async exposeMain(...args){if(args.length)throw Error('Owned main exposure accepts no arguments');const reply=await request(['main-front']);if(reply.target!=='main-client'||reply.transport!=='win32-z-order'||reply.raised!==true)throw Error('Invalid owned main exposure acknowledgement');return reply;},

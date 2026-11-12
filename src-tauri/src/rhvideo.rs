@@ -1321,7 +1321,7 @@ pub(crate) async fn client_window(
     size: (f64, f64),
     minimum: (f64, f64),
 ) -> Result<tauri::WebviewWindow, String> {
-    client_window_configured(app,label,url,title,size,minimum,false,|_|{}).await
+    client_window_configured(app,label,url,title,size,minimum,false,None,|_|{}).await
 }
 
 pub(crate) async fn client_window_configured(
@@ -1332,6 +1332,7 @@ pub(crate) async fn client_window_configured(
     size: (f64, f64),
     minimum: (f64, f64),
     maximized: bool,
+    initial_page: Option<std::sync::Arc<tokio::sync::Notify>>,
     initialize: impl FnOnce(&tauri::WebviewWindow) + Send + 'static,
 ) -> Result<tauri::WebviewWindow, String> {
     #[cfg(windows)]
@@ -1342,19 +1343,34 @@ pub(crate) async fn client_window_configured(
         let main = app.get_webview_window("main").ok_or("主窗口不可用")?;
         let (tx, rx) = tokio::sync::oneshot::channel();
         main.with_webview(move |platform| {
-            let result = crate::window::with_browser_args(
+            let builder = crate::window::with_browser_args(
                 tauri::WebviewWindowBuilder::new(&app, label, tauri::WebviewUrl::App(url.into()))
                     .title(title)
                     .inner_size(size.0, size.1)
                     .min_inner_size(minimum.0, minimum.1)
-                    .maximized(maximized)
+                    .maximized(maximized && initial_page.is_none())
                     // Wry 0.55 can fail the entire WebView2 creation when
                     // MoveFocus returns E_INVALIDARG. The file viewer calls
                     // show and set_focus once the window has been built.
                     .focused(label != crate::file_viewer::LABEL)
                     .with_environment(platform.environment()),
-            )
-            .build()
+            );
+            let builder = if let Some(initial_page) = initial_page {
+                // On Windows the initial maximize operation itself can show the window.
+                // Keep both operations deferred until the image viewer page has loaded.
+                builder.visible(false)
+                    .background_color(tauri::webview::Color(15, 18, 24, 255))
+                    .on_page_load(move |_, page| {
+                        if page.event() == tauri::webview::PageLoadEvent::Finished
+                            && page.url().path() == "/file-viewer.html"
+                        {
+                            initial_page.notify_one();
+                        }
+                    })
+            } else {
+                builder
+            };
+            let result = builder.build()
             .inspect(initialize)
             .inspect(crate::rhvideo_player::install_library_host_lifetime)
             .inspect(crate::rhvideo_player::install_window_trace)
@@ -1372,6 +1388,7 @@ pub(crate) async fn client_window_configured(
     }
     #[cfg(not(windows))]
     {
+        debug_assert!(initial_page.is_none());
         crate::window::with_browser_args(
             tauri::WebviewWindowBuilder::new(&app, label, tauri::WebviewUrl::App(url.into()))
                 .title(title)

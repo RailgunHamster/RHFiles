@@ -2,10 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import {launchApp,until} from '../testing/app-session.mjs';
+import {launchApp,sleep,until} from '../testing/app-session.mjs';
 import {cdpSession} from '../rhfiles-api.mjs';
 
-test('Windows Esc closes a newly opened image viewer without a mouse click',{
+test('The image viewer first appears maximized and Esc closes it without a mouse click',{
   timeout:60000,
   skip:process.env.RHFILES_NATIVE_PLAYER_QA!=='1'&&'Requires the owned native keyboard adapter',
 },async t=>{
@@ -25,10 +25,18 @@ test('Windows Esc closes a newly opened image viewer without a mouse click',{
     await app.evaluate(`(async()=>{
       await RHFilesAPI.invoke('navigation.open',{path:${JSON.stringify(app.directory)}});
       await RHFilesAPI.invoke('media.preferences.set',{imageOpenWith:'rhfiles'});
-      await openFileHandler(${JSON.stringify(image)});
     })()`);
+    const [firstShow]=await Promise.all([
+      app.nativeWindows.fileViewerFirstShow(),
+      sleep(300).then(()=>app.evaluate(`openFileHandler(${JSON.stringify(image)})`)),
+    ]);
+    const {observedAtMs,...appearance}=firstShow;
+    assert.deepEqual(appearance,{maximized:true,fileTitle:true},'The first visible native window is already the maximized image viewer');
     page=await cdpSession(await until(viewerTarget,'image viewer WebView'),15000);
     await until(()=>page.evaluate('!!document.querySelector(".image-page img")?.naturalWidth'),'image rendered');
+    const pageReadyAtMs=await page.evaluate("Math.floor(performance.timeOrigin+performance.getEntriesByType('navigation')[0].domContentLoadedEventEnd)");
+    assert.ok(observedAtMs>=pageReadyAtMs,'The viewer page is initialized before the first visible native window');
+    t.diagnostic(JSON.stringify({firstShow,pageReadyAtMs}));
 
     let windows;
     await until(async()=>{
