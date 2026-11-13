@@ -63,6 +63,38 @@ test('Video replay remains controllable and only the configured default survives
     volume.dispatchEvent(new Event('input',{bubbles:true}));
   })()`);
   await waitState(s=>s.video?.volume===37,'decoder receives slider input before release');
+  const slider=await page.evaluate(`(()=>{
+    const r=document.getElementById('seek').getBoundingClientRect();
+    return {x:r.left,y:r.top+r.height/2,width:r.width};
+  })()`);
+  const pointer=async(type,ratio)=>page.send('Input.dispatchMouseEvent',{
+    type,x:slider.x+slider.width*ratio,y:slider.y,button:'left',
+    buttons:type==='mouseReleased'?0:1,clickCount:1,
+  });
+  await invoke('video.control',{command:'seek',value:2600});
+  await waitState(s=>s.video?.state===3&&s.video.decoderPositionMs>=2500,'playing fixture is past the scrub target');
+  await pointer('mousePressed',.24);
+  try{
+    await waitState(s=>s.video?.state===3&&
+      Math.abs(s.video.decoderPositionMs-s.video.durationMs*.24)<400,
+    'playing VLC jumps backward before releasing the progress bar');
+  }finally{
+    await pointer('mouseReleased',.24);
+  }
+  await invoke('video.control',{command:'pause'});
+  const paused=await waitState(s=>s.video?.state===4,'video is paused before scrubbing');
+  const pausedAt=(ratio,previous,label)=>waitState(s=>s.video?.state===4&&
+    !s.video.restoringPausedFrame&&s.video.renderedFrames>previous.video.renderedFrames&&
+    Math.abs(s.video.decoderPositionMs-s.video.durationMs*ratio)<400,label);
+  await pointer('mousePressed',.68);
+  try{
+    const first=await pausedAt(.68,paused,'VLC displays a new paused frame with the button held');
+    await pointer('mouseMoved',.28);
+    await pausedAt(.28,first,'VLC displays the earlier frame after dragging back before release');
+  }finally{
+    await pointer('mouseReleased',.28);
+  }
+  await invoke('video.control',{command:'resume'});
   const ended=()=>waitState(s=>s.video?.state===6,'libVLC reaches the end of the clip');
   current=await ended();
   await page.evaluate("document.getElementById('volume').focus()");

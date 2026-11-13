@@ -1,7 +1,7 @@
 /* Bounded filesystem image canvas and native libVLC controls. */
 (()=>{'use strict';
   const $=id=>document.getElementById(id),api=window.RHFilesAPI,core=window.__TAURI__.core,native=(action,args={})=>core.invoke('file_viewer_request',{action,args}),windowApi=window.__TAURI__.window.getCurrentWindow();
-  let state=null,position=0,zoom=1,angle=0,x=0,y=0,epoch=0,loading=false,pointer=null,video=null,poll=null,seekDragging=false,rendered=false,imageSeeking=false,selectionTask=null;
+  let state=null,position=0,zoom=1,angle=0,x=0,y=0,epoch=0,loading=false,pointer=null,video=null,poll=null,rendered=false,imageSeeking=false,selectionTask=null;
   const pages=new Map(),sources=new Map();let strip=null,stripFrames=new Map(),auto=null,autoSpeed=60,closing=false;
   let mousePoint=null,contextImage=null,saveTask=null;
   let focused=null,focusEpoch=0,focusPointer=null;
@@ -14,6 +14,8 @@
   async function focusEnter(at){at=imageIndex(at);if(selectionTask||loading)throw Error(text('请等待图片切换完成','Wait for image navigation'));auto?.pause();hideImageMenu();pointer=null;const token=++focusEpoch;focused={index:at,zoom:1,angle,x:0,y:0,loading:true,error:''};$('image-focus-title').textContent=state.entries[at].name;$('image-focus-image').alt=state.entries[at].name;$('image-focus').hidden=false;document.body.classList.add('image-focused');const image=$('image-focus-image');image.onload=image.onerror=null;image.removeAttribute('src');image.onload=()=>{if(token===focusEpoch&&focused){focused.loading=false;paintFocus();}};image.onerror=()=>{if(token===focusEpoch&&focused){focused.loading=false;focused.error=text('图片无法解码，可使用系统应用打开','Cannot decode this image. Try the system app.');paintFocus();}};paintFocus();header();$('image-focus-stage').focus({preventScroll:true});try{const url=await source(state.entries[at]);if(token===focusEpoch&&focused)image.src=url;}catch(e){if(token===focusEpoch&&focused){focused.loading=false;focused.error=String(e.message||e);paintFocus();}}return focusState();}
   let volumeJob=null,volumeDragging=false,fullscreen=false,controlsVisible=true,chromeTimer=null,wheelDelta=0,chromeHover=false,controlRevision=0;
   let diagnosticsOpen=false,videoPolling=null,pendingToggle=false;
+  let seekDrag=null,seekJob=null;
+  const seekIntervalMs=100;
   let rateSteps=Promise.resolve();
   const rateSelect=$('rate'),ratePresets=Array.from(rateSelect.options,option=>Number(option.value));
   const customRate=document.createElement('option');customRate.hidden=true;rateSelect.append(customRate);
@@ -35,6 +37,56 @@
     return rateSteps;
   }
   function seekSeconds(){try{const value=JSON.parse(localStorage.getItem('rhfiles-settings')||'{}').videoSeekSeconds;return Number.isInteger(value)&&value>=1&&value<=600?value:5;}catch{return 5;}}
+  const canSeek=()=>video?.opened&&video.durationMs>0&&![5,6,7].includes(video.state);
+  const isSeekingByPointer=()=>seekDrag?.epoch===epoch;
+  const sliderSeekTarget=()=>Math.round($('seek').valueAsNumber*video.durationMs/1000);
+  function paintSeek(){
+    const slider=$('seek'),duration=video?.durationMs||0;
+    slider.disabled=!canSeek();
+    const target=seekJob?.target??video?.pendingSeekMs??video?.restoreTargetMs??video?.positionMs??0;
+    if(!isSeekingByPointer())slider.value=duration>0?Math.round(target/duration*1000):0;
+    $('position').textContent=clock(isSeekingByPointer()&&duration>0?sliderSeekTarget():target);
+    $('duration').textContent=clock(duration);
+  }
+  function clearSliderSeek(){
+    clearTimeout(seekJob?.timer);
+    seekJob=null;
+  }
+  function dispatchSliderSeek(job){
+    if(!job||job!==seekJob||job.epoch!==epoch||job.input!==video?.inputId||loading||closing||job.busy||job.timer!==null)return;
+    if(!job.pending||!canSeek()){clearSliderSeek();return;}
+    // Let VLC present the previous paused frame before replacing its target.
+    // The next player state poll picks up the latest position held here.
+    if(video.restoringPausedFrame)return;
+    job.busy=true;
+    job.pending=false;
+    job.timer=setTimeout(()=>{
+      job.timer=null;
+      dispatchSliderSeek(job);
+    },seekIntervalMs);
+    void videoControl('seek',job.target,job).catch(e=>{
+      if(job===seekJob&&job.epoch===epoch)error(e);
+    }).finally(()=>{
+      job.busy=false;
+      if(job!==seekJob||job.epoch!==epoch)return;
+      dispatchSliderSeek(job);
+      wakeVideo();
+    });
+  }
+  function seekFromSlider(){
+    if(!canSeek()||loading||closing||(seekDrag&&!isSeekingByPointer()))return;
+    const target=sliderSeekTarget();
+    if(!seekJob||seekJob.epoch!==epoch||seekJob.input!==video.inputId){
+      clearSliderSeek();
+      seekJob={epoch,input:video.inputId,target,pending:true,busy:false,timer:null};
+    }else{
+      seekJob.target=target;
+      seekJob.pending=true;
+    }
+    paintSeek();
+    showControls();
+    dispatchSliderSeek(seekJob);
+  }
   function paintVolume(){const value=volumeJob?.value??video?.volume??state?.videoVolume??100;if(!volumeDragging)$('volume').value=String(value);$('video-volume-value').textContent=Math.round(value)+'%';}
   const playbackReady=()=>video?.opened===true&&[3,4,5,6].includes(video.state);
   function paintPlaybackToggle(){
@@ -46,7 +98,7 @@
   }
   function fullVideo(){return fullscreen&&state?.kind==='video';}
   function paintChrome(){document.body.classList.toggle('video-fullscreen',fullVideo());document.body.classList.toggle('video-controls-visible',controlsVisible);}
-  function showControls(){clearTimeout(chromeTimer);if(!fullVideo())return;const changed=!controlsVisible;controlsVisible=true;paintChrome();if(changed)void bounds().catch(error);if(diagnosticsOpen)return;chromeTimer=setTimeout(()=>{if(!rendered||volumeDragging||seekDragging||chromeHover){showControls();return;}controlsVisible=false;paintChrome();void bounds().catch(error);},2200);}
+  function showControls(){clearTimeout(chromeTimer);if(!fullVideo())return;const changed=!controlsVisible;controlsVisible=true;paintChrome();if(changed)void bounds().catch(error);if(diagnosticsOpen)return;chromeTimer=setTimeout(()=>{if(!rendered||volumeDragging||isSeekingByPointer()||chromeHover){showControls();return;}controlsVisible=false;paintChrome();void bounds().catch(error);},2200);}
   async function setFullscreen(value){await windowApi.setFullscreen(value);fullscreen=value;controlsVisible=true;paintChrome();if(fullVideo())showControls();await bounds();return {fullscreen};}
   async function toggleFullscreen(){return setFullscreen(!await windowApi.isFullscreen());}
   async function setVolume(value){
@@ -168,7 +220,7 @@
     $('track').style.transform=continuous?'':`translateX(${-(position-center)*$('viewport').clientWidth}px)`;transform();
     boundary.update(continuous?[...stripFrames.values()]:wanted.map(at=>({slot:at,index:strip.item(at),left:(at-position)*$('viewport').clientWidth})),{width:$('viewport').clientWidth,count:state.entries.length,zoom,...(continuous?{cycle:Math.floor(Math.round(position)/state.entries.length)}:{})});
   }
-  function clear(){focusLeave();hideImageMenu();boundary.clear();auto?.pause();auto=null;++epoch;clearTimeout(poll);clearTimeout(chromeTimer);volumeJob=null;volumeDragging=false;pendingToggle=false;wheelDelta=0;chromeHover=false;document.body.classList.remove('video-fullscreen');video=null;rendered=false;pointer=null;imageSeeking=false;zoom=1;angle=x=y=0;for(const p of pages.values())p.querySelector('img').removeAttribute('src');pages.clear();sources.clear();$('track').replaceChildren();$('track').style.transform='';$('message').textContent='';$('video-startup-status').textContent='';}
+  function clear(){focusLeave();hideImageMenu();boundary.clear();auto?.pause();auto=null;++epoch;clearTimeout(poll);clearTimeout(chromeTimer);clearSliderSeek();volumeJob=null;volumeDragging=false;pendingToggle=false;wheelDelta=0;chromeHover=false;document.body.classList.remove('video-fullscreen');video=null;rendered=false;pointer=null;imageSeeking=false;zoom=1;angle=x=y=0;for(const p of pages.values())p.querySelector('img').removeAttribute('src');pages.clear();sources.clear();$('track').replaceChildren();$('track').style.transform='';$('message').textContent='';$('video-startup-status').textContent='';}
   async function select(at){
     if(!state)return;if(closing)throw Error(text('查看器正在关闭','The viewer is closing'));const generation=state.generation;
     if(selectionTask){await selectionTask.catch(()=>{});if(generation!==state.generation)throw Error(text('查看内容已改变','The viewed content changed'));return select(at);}
@@ -179,11 +231,12 @@
     try{await task;if(wrapped&&generation===state.generation&&state.index===at)boundary.notify(wrapped);return snapshot();}finally{if(selectionTask===task){selectionTask=null;loading=false;}}
   }
   async function seekImage(at){if(state?.kind!=='image'||!Number.isInteger(at)||at<0||at>=state.entries.length)throw Error(text('图片位置无效','Invalid image index'));auto?.pause();imageSeeking=false;pointer=null;return select(at);}
-  async function videoControl(command,value){
+  async function videoControl(command,value,sliderJob){
     if(command==='volume')return setVolume(value);
     const toggle=command==='toggle';
     if(toggle&&(!playbackReady()||loading||pendingToggle||closing))return video;
     if(!video?.opened)throw Error(text('播放器尚未就绪','Player is not ready'));
+    if(command==='seek'&&!sliderJob)clearSliderSeek();
     const token=epoch;
     if(toggle){pendingToggle=true;paintPlaybackToggle();}
     ++controlRevision;
@@ -285,12 +338,11 @@
       const revision=controlRevision,result=await native('video.state',scope());
       if(token!==epoch||revision!==controlRevision)return;
       const changedInput=video?.inputId!==result.inputId;
-      video=result;paintVolume();paintPlaybackToggle();paintRate();
+      if(changedInput)clearSliderSeek();
+      video=result;paintVolume();paintPlaybackToggle();paintRate();paintSeek();
+      dispatchSliderSeek(seekJob);
       let failure;
       if(result.opened){
-        $('position').textContent=clock(result.positionMs);
-        $('duration').textContent=clock(result.durationMs);
-        if(!seekDragging)$('seek').value=result.durationMs>0?Math.round(result.positionMs/result.durationMs*1000):0;
         failure=result.presentationError||result.seekError||(result.state===7?text('播放失败，可使用系统应用打开','Playback failed. Try the system app.'):null);
         if(result.renderedFrames>0&&!rendered){
           const alreadyVisible=result.startup?.phase==='ready';
@@ -309,7 +361,7 @@
     }catch(e){if(token===epoch&&!pendingToggle)error(e);}
     finally{
       if(videoPolling===job)videoPolling=null;
-      if(token===epoch){if(job.again)wakeVideo();else poll=setTimeout(wakeVideo,400);}
+      if(token===epoch){if(job.again)wakeVideo();else poll=setTimeout(wakeVideo,video?.restoringPausedFrame?80:400);}
     }
   }
   async function activate(result) {
@@ -327,7 +379,7 @@
       auto=RHFilesImageStrip.autoScroll({speed:autoSpeed,move:delta=>{if(document.hidden||state.mode!=='continuous')return false;position=strip.move(position,delta);images();return state.entries.length>1;},changed:paintAuto});
       paintAuto(auto.state());images();return;
     }
-    paintVolume();paintPlaybackToggle();paintRate();paintVideoStartup();
+    paintVolume();paintPlaybackToggle();paintRate();paintSeek();paintVideoStartup();
     const token=epoch;
     controlsVisible=true;
     wakeVideo();
@@ -385,7 +437,12 @@
   listen('image-seek','pointerdown',()=>{imageSeeking=true;auto?.pause();});listen('image-seek','input',()=>{imageSeeking=true;auto?.pause();imageProgress(Number($('image-seek').value));});listen('image-seek','change',()=>{const at=Number($('image-seek').value);imageSeeking=false;void seekImage(at).catch(error);});listen('image-seek','pointercancel',()=>{imageSeeking=false;imageProgress();});
   listen(window,'storage',event=>{if(event.key==='rhfiles-lang')applyLanguage(event.newValue||state?.language);});
   listen(document,'visibilitychange',()=>{if(document.hidden)auto?.pause();});
-  listen('seek','pointerdown',()=>seekDragging=true);listen('seek','pointercancel',()=>seekDragging=false);listen('seek','change',()=>{seekDragging=false;void videoControl('seek',Math.round(Number($('seek').value)/1000*(video?.durationMs||0))).catch(error);});
+  listen('seek','pointerdown',event=>{
+    if(event.button===0&&event.isPrimary)seekDrag={id:event.pointerId,epoch};
+  });
+  for(const event of ['pointerup','pointercancel'])listen(document,event,e=>{if(seekDrag?.id===e.pointerId)seekDrag=null;});
+  listen(window,'blur',()=>{seekDrag=null;});
+  listen('seek','input',seekFromSlider);
   listen('viewport','pointerdown',event=>{if(state?.kind!=='image'||event.button!==0)return;auto?.pause();pointer={id:event.pointerId,x:event.clientX,y:event.clientY,position,panX:x,panY:y};try{$('viewport').setPointerCapture(event.pointerId);}catch{}});
   listen('viewport','pointermove',event=>{if(!pointer||event.pointerId!==pointer.id)return;const dx=event.clientX-pointer.x,dy=event.clientY-pointer.y;if(zoom>1){x=pointer.panX+dx;y=pointer.panY+dy;transform();return;}if(Math.abs(dx)<Math.abs(dy))return;position=state.entries.length<2?0:state.mode==='continuous'?strip.move(pointer.position,-dx):pointer.position-dx/Math.max(1,$('viewport').clientWidth);images();});
   listen('viewport','pointerup',event=>{if(!pointer||event.pointerId!==pointer.id)return;const start=pointer;pointer=null;if(zoom>1)return;if(state.mode==='paged'){const dx=event.clientX-start.x,dy=event.clientY-start.y;position=start.position;if(Math.abs(dx)>=Math.min(60,$('viewport').clientWidth*.12)&&Math.abs(dx)>Math.abs(dy)*1.25)void select(Math.round(position)+(dx<0?1:-1)).catch(error);else images();}});
