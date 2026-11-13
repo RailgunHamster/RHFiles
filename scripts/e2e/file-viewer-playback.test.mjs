@@ -33,12 +33,12 @@ test('Video replay remains controllable and only the configured default survives
     page=await cdpSession(target,15000);
     return playing(file);
   }
-  const space=async(repeat=false)=>{
-    const key={key:' ',code:'Space',windowsVirtualKeyCode:32};
+  const pressKey=async(key,repeat=false)=>{
     await page.send('Input.dispatchKeyEvent',{...key,type:'keyDown'});
     if(repeat)await page.send('Input.dispatchKeyEvent',{...key,type:'keyDown',autoRepeat:true});
     await page.send('Input.dispatchKeyEvent',{...key,type:'keyUp'});
   };
+  const space=repeat=>pressKey({key:' ',code:'Space',windowsVirtualKeyCode:32},repeat);
   assert.equal((await main('media.preferences.get')).videoDefaultVolume,100);
   await app.evaluate(`(()=>{
     openSettings();
@@ -52,6 +52,11 @@ test('Video replay remains controllable and only the configured default survives
   await app.evaluate('closeSettings()');
   let current=await open(files[0]);
   assert.equal(current.video.volume,42);
+  await pressKey({key:'+',code:'Equal',windowsVirtualKeyCode:187,modifiers:8},true);
+  await waitState(s=>s.video?.decoderRate===1.25,'main keyboard + changes the VLC speed once');
+  assert.equal(await page.evaluate("document.getElementById('rate').value"),'1.25');
+  await pressKey({key:'-',code:'NumpadSubtract',windowsVirtualKeyCode:109,isKeypad:true});
+  await waitState(s=>s.video?.decoderRate===1,'keypad - restores normal VLC speed');
   await page.evaluate(`(()=>{
     const volume=document.getElementById('volume');
     volume.value='37';

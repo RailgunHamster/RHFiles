@@ -14,6 +14,26 @@
   async function focusEnter(at){at=imageIndex(at);if(selectionTask||loading)throw Error(text('请等待图片切换完成','Wait for image navigation'));auto?.pause();hideImageMenu();pointer=null;const token=++focusEpoch;focused={index:at,zoom:1,angle,x:0,y:0,loading:true,error:''};$('image-focus-title').textContent=state.entries[at].name;$('image-focus-image').alt=state.entries[at].name;$('image-focus').hidden=false;document.body.classList.add('image-focused');const image=$('image-focus-image');image.onload=image.onerror=null;image.removeAttribute('src');image.onload=()=>{if(token===focusEpoch&&focused){focused.loading=false;paintFocus();}};image.onerror=()=>{if(token===focusEpoch&&focused){focused.loading=false;focused.error=text('图片无法解码，可使用系统应用打开','Cannot decode this image. Try the system app.');paintFocus();}};paintFocus();header();$('image-focus-stage').focus({preventScroll:true});try{const url=await source(state.entries[at]);if(token===focusEpoch&&focused)image.src=url;}catch(e){if(token===focusEpoch&&focused){focused.loading=false;focused.error=String(e.message||e);paintFocus();}}return focusState();}
   let volumeJob=null,volumeDragging=false,fullscreen=false,controlsVisible=true,chromeTimer=null,wheelDelta=0,chromeHover=false,controlRevision=0;
   let diagnosticsOpen=false,videoPolling=null,pendingToggle=false;
+  let rateSteps=Promise.resolve();
+  const rateSelect=$('rate'),ratePresets=Array.from(rateSelect.options,option=>Number(option.value));
+  const customRate=document.createElement('option');customRate.hidden=true;rateSelect.append(customRate);
+  function paintRate(){
+    const rate=Number((video?.rate??1).toFixed(2));
+    customRate.value=ratePresets.includes(rate)?'':String(rate);
+    customRate.textContent=`${rate}×`;
+    rateSelect.value=String(rate);
+  }
+  function stepRate(direction){
+    if(!playbackReady()||loading||closing)return;
+    const token=epoch,input=video.inputId;
+    rateSteps=rateSteps.catch(()=>{}).then(()=>{
+      if(token!==epoch||video?.inputId!==input||loading||closing)return;
+      const current=Number(video.rate.toFixed(2));
+      const next=direction>0?ratePresets.find(rate=>rate>current):ratePresets.findLast(rate=>rate<current);
+      if(next!==undefined)return api.invoke('media.viewer.video.control',{command:'rate',value:next});
+    });
+    return rateSteps;
+  }
   function seekSeconds(){try{const value=JSON.parse(localStorage.getItem('rhfiles-settings')||'{}').videoSeekSeconds;return Number.isInteger(value)&&value>=1&&value<=600?value:5;}catch{return 5;}}
   function paintVolume(){const value=volumeJob?.value??video?.volume??state?.videoVolume??100;if(!volumeDragging)$('volume').value=String(value);$('video-volume-value').textContent=Math.round(value)+'%';}
   const playbackReady=()=>video?.opened===true&&[3,4,5,6].includes(video.state);
@@ -50,6 +70,8 @@
     zh=/^zh/i.test(language||navigator.language||'en');document.documentElement.lang=zh?'zh-CN':'en';
     const labels={close:['关闭','Close'],fullscreen:['全屏','Fullscreen'],previous:['上一张','Previous'],next:['下一张','Next'],mode:['图片浏览模式','Image browsing mode'],system:['系统应用','System app'],fit:['适应窗口','Fit window'],'zoom-in':['放大','Zoom in'],'zoom-out':['缩小','Zoom out'],rotate:['旋转','Rotate'],'auto-speed':['自动滚动速度','Automatic scroll speed'],seek:['播放进度','Playback position'],volume:['音量','Volume'],rate:['播放速度','Playback speed'],'image-seek':['图片浏览进度：拖动快速跳转','Image progress: drag to jump']};
     for(const [id,pair]of Object.entries(labels)){const element=$(id);element.title=text(...pair);element.setAttribute('aria-label',text(...pair));}
+    rateSelect.title=text('播放速度（+ 加快，- 减慢）','Playback speed (+ faster, - slower)');
+    rateSelect.setAttribute('aria-keyshortcuts','+ -');
     $('mode-paged').textContent=text('逐张翻页','Paged');$('mode-continuous').textContent=text('连续滚动','Continuous');$('system').textContent=text('系统应用','System app');$('fit').textContent=text('适应窗口','Fit window');
     $('image-focus-back').textContent=text('返回浏览 · Esc','Back · Esc');$('image-focus-fit').textContent=text('适应窗口','Fit window');$('image-focus-in').setAttribute('aria-label',text('放大','Zoom in'));$('image-focus-out').setAttribute('aria-label',text('缩小','Zoom out'));
     const menuItems={'image-save-as':['另存为…','Save as…','M12 3v12m-5-5 5 5 5-5M4 15v5h16v-5'],'image-copy-path':['复制文件路径','Copy file path','M9 9h11v12H9zM5 16H3V3h11v3'],'image-system-open':['使用系统应用打开','Open in system app','M14 3h7v7m0-7L10 14M9 3H3v18h18v-6']};
@@ -170,7 +192,7 @@
       if(token===epoch){
         ++controlRevision;
         if(result.replay)await activate(result.replay);
-        else {video=result;paintPlaybackToggle();}
+        else {video=result;paintPlaybackToggle();paintRate();}
       }
       return result;
     }finally{
@@ -263,7 +285,7 @@
       const revision=controlRevision,result=await native('video.state',scope());
       if(token!==epoch||revision!==controlRevision)return;
       const changedInput=video?.inputId!==result.inputId;
-      video=result;paintVolume();paintPlaybackToggle();
+      video=result;paintVolume();paintPlaybackToggle();paintRate();
       let failure;
       if(result.opened){
         $('position').textContent=clock(result.positionMs);
@@ -305,7 +327,7 @@
       auto=RHFilesImageStrip.autoScroll({speed:autoSpeed,move:delta=>{if(document.hidden||state.mode!=='continuous')return false;position=strip.move(position,delta);images();return state.entries.length>1;},changed:paintAuto});
       paintAuto(auto.state());images();return;
     }
-    paintVolume();paintPlaybackToggle();paintVideoStartup();
+    paintVolume();paintPlaybackToggle();paintRate();paintVideoStartup();
     const token=epoch;
     controlsVisible=true;
     wakeVideo();
@@ -387,6 +409,11 @@
     if(!editing&&event.key==='Escape'&&fullscreen){event.preventDefault();void api.invoke('media.viewer.fullscreen.set',{fullscreen:false}).catch(error);return;}
     if(state?.kind==='video')showControls();
     if(!editing&&state?.kind==='video'&&event.key===' '){event.preventDefault();if(!event.repeat)void api.invoke('media.viewer.video.control',{command:'toggle'}).catch(error);return;}
+    if((!editing||event.target===rateSelect)&&state?.kind==='video'&&['+','=','-'].includes(event.key)){
+      event.preventDefault();
+      if(!event.repeat)void stepRate(event.key==='-'?-1:1)?.catch(error);
+      return;
+    }
     if(editing||event.target.tagName==='INPUT')return;
     if(event.key===' '){if(state?.kind==='image'&&state.mode==='continuous'){event.preventDefault();if(!event.repeat)void api.invoke('media.viewer.auto.toggle').catch(error);}return;}
     if(state?.kind==='image'&&['Home','End'].includes(event.key)){event.preventDefault();void seekImage(event.key==='Home'?0:state.entries.length-1).catch(error);return;}
