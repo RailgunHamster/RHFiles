@@ -160,4 +160,26 @@ test('physical multi-selection and shortcuts use the complete active-pane select
     assert.deepEqual((await app.evaluate('window.__copiedPaths')).sort(),before);
     await app.evaluate('call=window.__originalCall;resetTypeSearch();true');
   });
+  await t.test('typing selects the exact folder and Alt brackets follow match priority',async()=>{
+    const directory=path.join(app.directory,'typed-search');fs.mkdirSync(directory);
+    for(const name of ['A','Archive'])fs.mkdirSync(path.join(directory,name));
+    for(const name of ['A.txt','Data.txt'])fs.writeFileSync(path.join(directory,name),'test');
+    await app.evaluate(`navigateTo(${JSON.stringify(directory)})`);
+    await app.evaluate(`(()=>{
+      const pane=getTab();sortStateEntries(pane,'name',false);pane.sortF='name';pane.sortAsc=false;
+      renderFiles(pane,'file-list','status-count','status-selection');resetTypeSearch();return true;
+    })()`);
+    const listed=()=>app.evaluate('getTab().entries.map(entry=>entry.name)');
+    const before=await listed();
+    assert.notEqual(before[0],'A','The exact folder must not start at the top of the fixture listing');
+    await app.click('#file-list [data-index="0"]');
+    const expectSelection=async name=>{
+      await until(async()=>(await selection(false))[0]===path.join(directory,name),`selected ${name}`);
+    };
+    await press('a','KeyA',65);await expectSelection('A');
+    await press(']','BracketRight',221,1);await expectSelection('A.txt');
+    await press('[','BracketLeft',219,1);await expectSelection('A');
+    await press('r','KeyR',82);await expectSelection('Archive');
+    assert.deepEqual(await listed(),before);
+  });
 });

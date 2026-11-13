@@ -78,7 +78,7 @@ function searchFixture() {
     clearTypeSearchHighlights:()=>{},showTypeSearchHud:(...args)=>hud.push(args),renderFiles:(_,id)=>renders.push(id),
     scrollToVisible:()=>{},updatePreviewForSelection:()=>{},scheduleTypeSearchReset:()=>{},
   });
-  load(ctx,'keyboard.js',['normalizeTypeSearchText','typeSearchMatches','typeSearchNameMatchRange','runTypeSearchSelection','cycleTypeSearchSelection']);
+  load(ctx,'keyboard.js',['TYPE_SEARCH_SEPARATORS','foldTypeSearchText','normalizeTypeSearchText','typeSearchMatchRank','typeSearchNameMatchRange','runTypeSearchSelection','cycleTypeSearchSelection']);
   return {ctx,left,right,hud,renders};
 }
 test('typed substring matching cycles forward/backward and wraps in the active pane',async()=>{
@@ -87,6 +87,25 @@ test('typed substring matching cycles forward/backward and wraps in the active p
   await h.ctx.cycleTypeSearchSelection(1);assert.equal(h.left.lastIdx,0);
   await h.ctx.cycleTypeSearchSelection(-1);assert.equal(h.left.lastIdx,2);
   assert.deepEqual(plain(h.ctx.G._typeSearch.matches),[0,2]);assert.equal(h.right.sel.size,0);
+});
+test('typed search selects an exact name before file stems, prefixes, substrings and Pinyin',async()=>{
+  const h=searchFixture();
+  h.left.entries=[
+    {...row('阿'),_pinyinAliases:['a']},row('Data'),row('Archive'),
+    {...row('A.folder'),is_dir:true},row('a.zip'),row('A.txt'),row('A-'),
+    {...row('A'),is_dir:true},row('A-backup'),
+  ];
+  h.left.entries.forEach(entry=>{entry._pinyinAliases??=[];});
+  const listed=h.left.entries.map(entry=>entry.name);
+  await h.ctx.runTypeSearchSelection('Ａ',0,false);
+  assert.deepEqual(plain(h.ctx.G._typeSearch.matches),[7,4,5,2,3,6,8,1,0]);
+  assert.equal(h.left.lastIdx,7);
+  await h.ctx.cycleTypeSearchSelection(1);assert.equal(h.left.lastIdx,4);
+  await h.ctx.cycleTypeSearchSelection(-1);assert.equal(h.left.lastIdx,7);
+  await h.ctx.cycleTypeSearchSelection(-1);assert.equal(h.left.lastIdx,0);
+  await h.ctx.runTypeSearchSelection('Ar',0,false);assert.equal(h.left.lastIdx,2);
+  await h.ctx.runTypeSearchSelection('a.txt',0,false);assert.equal(h.left.lastIdx,5);
+  assert.deepEqual(h.left.entries.map(entry=>entry.name),listed);
 });
 for(const query of ['cq','chongqing','ongq','重庆','ＣＱ']) test(`Chinese/full Pinyin/initial/middle/fullwidth query ${query} selects in right pane`,async()=>{
   const h=searchFixture();h.ctx.G.lastActivePane='right';await h.ctx.runTypeSearchSelection(query,0,true);

@@ -136,12 +136,14 @@ const ACTION_HANDLERS = {
 };
 
 const _pinyinAliasLoads = new WeakMap();
+const TYPE_SEARCH_SEPARATORS = /[\s._\-()[\]{}【】（）]+/g;
+
+function foldTypeSearchText(value) {
+  return String(value || '').normalize('NFKC').toLocaleLowerCase();
+}
 
 function normalizeTypeSearchText(value) {
-  return String(value || '')
-    .normalize('NFKC')
-    .toLocaleLowerCase()
-    .replace(/[\s._\-()[\]{}【】（）]+/g, '');
+  return foldTypeSearchText(value).replace(TYPE_SEARCH_SEPARATORS, '');
 }
 
 async function ensurePinyinAliases(entries) {
@@ -163,9 +165,17 @@ async function ensurePinyinAliases(entries) {
   await pending;
 }
 
-function typeSearchMatches(entry, normalizedQuery) {
-  if (normalizeTypeSearchText(entry.name).includes(normalizedQuery)) return true;
-  return (entry._pinyinAliases || []).some(alias => normalizeTypeSearchText(alias).includes(normalizedQuery));
+function typeSearchMatchRank(entry, literalQuery, normalizedQuery) {
+  // Keep punctuation significant for exact names and stems. For example, A
+  // should outrank A- even though both normalize to the same search text.
+  const name = foldTypeSearchText(entry.name);
+  if (name === literalQuery) return 0;
+  const dot = name.lastIndexOf('.');
+  if (!entry.is_dir && dot > 0 && dot < name.length - 1 && name.slice(0, dot) === literalQuery) return 1;
+  const matchOffset = name.replace(TYPE_SEARCH_SEPARATORS, '').indexOf(normalizedQuery);
+  if (matchOffset >= 0) return matchOffset === 0 ? 2 : 3;
+  if ((entry._pinyinAliases || []).some(alias => normalizeTypeSearchText(alias).includes(normalizedQuery))) return 4;
+  return -1;
 }
 
 function typeSearchNameMatchRange(value, normalizedQuery) {
@@ -293,7 +303,8 @@ async function runTypeSearchSelection(query, cycleDelta, isRight) {
   isRight = !!isRight;
   const pane = isRight ? G.rp : getTab();
   const entries = pane.entries || [];
-  const normalizedQuery = normalizeTypeSearchText(query);
+  const literalQuery = foldTypeSearchText(query);
+  const normalizedQuery = literalQuery.replace(TYPE_SEARCH_SEPARATORS, '');
   if (!entries.length || !normalizedQuery) {
     clearTypeSearchHighlights(isRight);
     return;
@@ -315,10 +326,12 @@ async function runTypeSearchSelection(query, cycleDelta, isRight) {
     if (!stillCurrent()) return;
   }
 
-  const matches = [];
+  const ranked = [[], [], [], [], []];
   entries.forEach((entry, index) => {
-    if (typeSearchMatches(entry, normalizedQuery)) matches.push(index);
+    const rank = typeSearchMatchRank(entry, literalQuery, normalizedQuery);
+    if (rank >= 0) ranked[rank].push(index);
   });
+  const matches = ranked.flat();
   if (!stillCurrent()) return;
 
   let matchPos = 0;

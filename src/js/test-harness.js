@@ -3775,7 +3775,7 @@
         const queryChip = document.querySelector('.type-search-hud .type-search-query');
         assertEqual(queryChip?.textContent, 'report', "The typed query is not prominent in the HUD");
         assert(parseFloat(getComputedStyle(queryChip).fontSize) >= 14, "The typed query remains too visually subtle");
-        assert(typeSearchMatches({_pinyinAliases:['zhongguoren'], name:'\u4e2d\u56fd\u4eba'}, 'guo'), "Pinyin aliases do not support middle matching");
+        assertEqual(typeSearchMatchRank({_pinyinAliases:['zhongguoren'], name:'\u4e2d\u56fd\u4eba'}, 'guo', 'guo'), 4, "Pinyin aliases do not support middle matching");
       } finally {
         resetTypeSearch();
         tab.entries = savedEntries;
@@ -3791,7 +3791,7 @@
       assert(aliases[0].includes('zhongguorentxt'), "Full Pinyin alias missing");
       assert(aliases[0].includes('zgrtxt'), "Pinyin initials alias missing");
       assert(aliases[1].includes('chongqing'), "Heteronym Pinyin alias missing");
-      assert(typeSearchMatches({ name: '重庆', _pinyinAliases: aliases[1] }, 'cq'), "Pinyin initials do not match type search");
+      assertEqual(typeSearchMatchRank({ name: '重庆', _pinyinAliases: aliases[1] }, 'cq', 'cq'), 4, "Pinyin initials do not match type search");
     });
 
     await test("[archive] Named-folder extraction path is explicit", async () => {
