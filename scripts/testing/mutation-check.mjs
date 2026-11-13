@@ -11,7 +11,8 @@ const cases=[
   ['keep-both collision avoidance','conflict.js','while (used.has(fileNameKey(candidate)))','while (false && used.has(fileNameKey(candidate)))'],
   ['pinned tab reorder boundary','tabs.js','if ((tabs[fromIndex].pinned === true) !== (tabs[targetIndex].pinned === true)) return false;',''],
   ['stale listing response','tabs.js','if (token !== tab._refreshToken || tab.path !== requestedPath) return;','if (false) return;'],
-  ['typed substring search','keyboard.js','normalizeTypeSearchText(entry.name).includes(normalizedQuery)','normalizeTypeSearchText(entry.name).startsWith(normalizedQuery)'],
+  ['typed substring search','keyboard.js','if (matchOffset >= 0) return matchOffset === 0 ? 2 : 3;','if (matchOffset === 0) return 2;'],
+  ['typed exact name priority','keyboard.js','if (name === literalQuery) return 0;','if (name === literalQuery) return 2;'],
   ['undo serialization','undoredo.js','if (historyBusy || !undoStack.length) return;','if (!undoStack.length) return;'],
   ['overwrite must not enter undo history','ops.js','if (!overwrites) trackCopy(src, targetPath);','trackCopy(src, targetPath);'],
 ];
