@@ -4,15 +4,21 @@ test('phone file-server UI and scripts share enumerable schema-checked actions',
  let lookup;const handlers=new Map(),calls=[],registry={register:(id,fn,meta)=>handlers.set(id,{fn,...meta}),provideState(){},provideRunLookup:fn=>{lookup=fn;}};
  const context=vm.createContext({RHFilesAutomationCore:{ActionError:Error},window:{RHFilesAPI:registry},api:{native(){},automationAvailable:()=>false,serverStatus:()=>({running:false})},deviceGroupView:{register(){}},workbench:{id:'first'},fmt:{sortChoices:[]}});
  vm.runInContext(read('android/web/js/automation-android.js')+';globalThis.installPhone=androidAutomation.install',context);
- context.installPhone({state:{},ready:()=>true,startServer:p=>calls.push(['start',p]),stopServer:()=>calls.push(['stop']),chooseServerRoots:()=>calls.push(['roots'])});
+ context.installPhone({state:{},ready:()=>true,startServer:p=>calls.push(['start',p]),stopServer:()=>calls.push(['stop']),chooseServerRoots:p=>calls.push(['roots',p]),serverRoots:()=>[],saveServerShare:p=>calls.push(['save',p]),removeServerShare:path=>calls.push(['remove',path])});
  assert.equal(typeof lookup,'function');
- for(const id of ['state','start','stop','roots'])assert(handlers.has('fileServer.'+id));
- const start=handlers.get('fileServer.start');assert.equal(start.params.additionalProperties,false);assert.equal(start.params.properties.roots.maxItems,8);start.fn({roots:[{name:'Phone',path:'/storage/emulated/0/Download'}]});handlers.get('fileServer.stop').fn();handlers.get('fileServer.roots').fn();assert.deepEqual(calls.map(v=>v[0]),['start','stop','roots']);
+ for(const id of ['state','start','stop','roots','shares','share.save','share.remove'])assert(handlers.has('fileServer.'+id));
+ const start=handlers.get('fileServer.start');assert.equal(start.params.additionalProperties,false);assert.equal(start.params.properties.roots.maxItems,8);
+ const share={name:'Phone',path:'/storage/emulated/0/Download'};
+ start.fn({roots:[share]});handlers.get('fileServer.stop').fn();handlers.get('fileServer.roots').fn({path:share.path});
+ assert.deepEqual(handlers.get('fileServer.shares').fn(),[]);
+ handlers.get('fileServer.share.save').fn(share);handlers.get('fileServer.share.remove').fn({path:share.path});
+ assert.deepEqual(calls,[['start',{roots:[share]}],['stop'],['roots',{path:share.path}],['save',share],['remove',share.path]]);
  const ui=read('android/web/js/app.js');assert.match(ui,/on\('btn-server-toggle',\(\)=>RHFilesAPI\.invoke\(state\.server\?\.running\?'fileServer\.stop':'fileServer\.start'\)/);assert.match(ui,/仅向设备组成员开放以下目录/);
 });
 test('retired independent password server is not callable from the shipped Android IPC handler',()=>{
  const rust=read('android/src-tauri/src/lib.rs'),handler=rust.slice(rust.indexOf('.invoke_handler('));assert.doesNotMatch(handler,/server::(?:get_reverse_server_status|start_reverse_server|stop_reverse_server)/);
  assert.match(read('android/manifest/AndroidManifest.xml'),/DeviceFileService[^>]*exported="false"[^>]*foregroundServiceType="connectedDevice"/);
+ assert.match(read('android/manifest/AndroidManifest.xml'),/DeviceFileService[^>]*stopWithTask="true"/);
  const bridge=read('android/gradle/app/src/main/java/com/railgunhamster/rhfiles/GroupServiceAuthority.kt');assert.match(bridge,/@Keep/);assert.match(bridge,/DeviceGroups\.serverOperation/);
  const native=read('android/gradle/app/src/main/java/com/railgunhamster/rhfiles/DeviceFileServer.kt');assert.match(native,/START_NOT_STICKY/);assert.match(native,/storage\.local/);assert.doesNotMatch(native,/PARTIAL_WAKE_LOCK/);
 });

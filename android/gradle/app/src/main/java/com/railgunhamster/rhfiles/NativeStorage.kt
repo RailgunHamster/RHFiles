@@ -2,8 +2,10 @@ package com.railgunhamster.rhfiles
 
 import android.content.Context
 import android.net.Uri
+import android.os.Build
 import android.os.Environment
 import android.os.StatFs
+import android.os.storage.StorageManager
 import android.provider.DocumentsContract as Docs
 import android.provider.OpenableColumns
 import android.webkit.MimeTypeMap
@@ -122,15 +124,25 @@ class NativeStorage(val context: Context,private val remoteProvider:()->RemoteSt
     require(f.parentFile != null && f != Environment.getExternalStorageDirectory().canonicalFile && f.toPath().nameCount > 2) { "不能删除存储根目录" }
     require(f.delete()) { "无法删除：${f.name}（文件夹必须为空）" }
   }
+  fun localVolumes(): List<File> {
+    val paths=mutableListOf(Environment.getExternalStorageDirectory())
+    context.getExternalFilesDirs(null).filterNotNull().forEach { paths.add(File(it.path.substringBefore("/Android/"))) }
+    if(Build.VERSION.SDK_INT>=30){
+      context.getSystemService(StorageManager::class.java)?.storageVolumes?.forEach { volume ->
+        if(volume.state in listOf(Environment.MEDIA_MOUNTED,Environment.MEDIA_MOUNTED_READ_ONLY))volume.directory?.let(paths::add)
+      }
+    }
+    return paths.distinctBy { it.path }
+  }
+
   fun roots(): JSONArray {
-    val array = JSONArray(); val seen = hashSetOf<String>()
-    val paths = mutableListOf(Environment.getExternalStorageDirectory())
-    context.getExternalFilesDirs(null).filterNotNull().forEach { f -> paths.add(File(f.path.substringBefore("/Android/"))) }
-    paths.forEach { f -> if (seen.add(f.path)) {
+    val array = JSONArray()
+    val paths = localVolumes()
+    paths.forEach { f ->
       val e = JSONObject().put("path", f.path).put("label",if (paths.first() == f) "内部存储" else "外部存储").put("removable",paths.first()!=f)
       try { val stat = StatFs(f.path); e.put("totalBytes",stat.totalBytes).put("freeBytes",stat.availableBytes) } catch (_: Exception) {}
       array.put(e)
-    } }
+    }
     context.contentResolver.persistedUriPermissions.filter { it.isReadPermission && Docs.isTreeUri(it.uri) }.forEach { grant ->
       try {
         val path = document(grant.uri.toString()).toString(); val e = stat(path)

@@ -6,6 +6,9 @@ import android.os.*;
 import android.view.*;
 import android.webkit.WebView;
 import org.json.*;
+import java.net.InetSocketAddress;
+import java.net.Socket;
+import java.io.IOException;
 import java.util.concurrent.*;
 
 /** Own-emulator bootstrap only. The host calls shipped, enumerable APIs over
@@ -29,7 +32,20 @@ public class PhoneServerInstrumentation extends Instrumentation {
     Bundle ready=new Bundle();ready.putString("ready","true");sendStatus(1,ready);
     until=System.currentTimeMillis()+600000;
     while(!"true".equals(eval("window.__phoneQaDone===true"))){if(System.currentTimeMillis()>until)throw new Exception("Host acceptance did not finish");Thread.sleep(500);}
-    eval("void api.native('fileServer.stop');void api.native('automation.enable',{enabled:false});");
+    String closePort=eval("window.__phoneQaClosePort || 0");
+    int port=Integer.parseInt(closePort);
+    if(port>0){
+      if(!listening(port))throw new Exception("Expected the phone port to be listening before task removal");
+      eval("void api.native('automation.enable',{enabled:false});");
+      runOnMainSync(activity::finishAndRemoveTask);
+      until=System.currentTimeMillis()+8000;
+      while(listening(port)){if(System.currentTimeMillis()>until)throw new Exception("File service remained active after task removal");Thread.sleep(100);}
+      result.putString("taskStopped","true");
+    }else eval("void api.native('fileServer.stop');void api.native('automation.enable',{enabled:false});");
     result.putString("pass","true");finish(Activity.RESULT_OK,result);
   }catch(Exception e){result.putString("failure",e.toString());finish(Activity.RESULT_CANCELED,result);}}
+  private boolean listening(int port){
+    try(Socket socket=new Socket()){socket.connect(new InetSocketAddress("127.0.0.1",port),500);return true;}
+    catch(IOException closed){return false;}
+  }
 }

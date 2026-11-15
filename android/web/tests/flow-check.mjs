@@ -90,8 +90,16 @@ function fixture({denied=false,partial=false,nativeV2=false,nativeV3=false,nativ
       default:throw 'Unstubbed command '+cmd;
     }
   }};
-  const fileServer=command=>{if(command==='fileServer.start')m.server=true;if(command==='fileServer.stop')m.server=false;return {running:!!m.server,shares:[{name:'Phone',path:root}],endpoints:m.server?['https://192.0.2.1:39128']:[]};};
-  if(!nativeV2&&!nativeV3)window.RHFilesNative={postMessage(message){const r=JSON.parse(message);Promise.resolve().then(()=>r.command.startsWith('fileServer.')?r.command==='fileServer.requested'?false:fileServer(r.command):r.command==='capabilities'?{version:1}:r.command==='permission'?!m.denied&&!m.partial:r.command==='theme'?true:Promise.reject(Error('Unstubbed native command '+r.command))).then(result=>this.onmessage({data:JSON.stringify({id:r.id,result})}),error=>this.onmessage({data:JSON.stringify({id:r.id,error:error.message})}));}};
+  const fileServer=(command,args)=>{
+    if(command==='fileServer.validateShare'){
+      if(!m.fs[args.path]||!args.path.startsWith('/storage/'))throw Error('共享目录无法读取');
+      return {name:args.name,path:args.path};
+    }
+    if(command==='fileServer.start'){m.server=true;m.activeShares=structuredClone(args.roots);}
+    if(command==='fileServer.stop'){m.server=false;m.activeShares=[];}
+    return {running:!!m.server,shares:m.activeShares||[],endpoints:m.server?['https://192.0.2.1:39128']:[]};
+  };
+  if(!nativeV2&&!nativeV3)window.RHFilesNative={postMessage(message){const r=JSON.parse(message);Promise.resolve().then(()=>r.command.startsWith('fileServer.')?r.command==='fileServer.requested'?false:fileServer(r.command,r.args):r.command==='capabilities'?{version:1}:r.command==='permission'?!m.denied&&!m.partial:r.command==='theme'?true:Promise.reject(Error('Unstubbed native command '+r.command))).then(result=>this.onmessage({data:JSON.stringify({id:r.id,result})}),error=>this.onmessage({data:JSON.stringify({id:r.id,error:error.message})}));}};
   if(nativeV2 || nativeV3){
     m.nativeCalls=[];m.jobs=[];m.connections=[];m.text='hello 中文\r\n';m.revision='revision-1';m.shares=[];
     m.updates={state:'idle',message:'',bytes:0,currentCode:1003,release:null,config:{source:'cnb',cnb:'https://cnb.cool/railgunhamster/RHFiles',github:'https://github.com/RailgunHamster/RHFiles',autoCheck:false,proxyEnabled:false,proxy:''}};m.updateRequests=0;
@@ -99,7 +107,7 @@ function fixture({denied=false,partial=false,nativeV2=false,nativeV3=false,nativ
     window.RHFilesNative={postMessage(message){const r=JSON.parse(message);m.nativeCalls.push(r);Promise.resolve().then(async()=>{
       const a=r.args;
       switch(r.command){
-        case 'fileServer.state':case 'fileServer.start':case 'fileServer.stop':return fileServer(r.command);
+        case 'fileServer.state':case 'fileServer.start':case 'fileServer.stop':case 'fileServer.validateShare':return fileServer(r.command,a);
         case 'fileServer.requested':return false;
         case 'capabilities':return {version:nativeV3?3:2,nativeBack:nativeV3,appUpdates:nativeUpdates,nativePlayback,restoreNavigation,nearby};case 'theme':return true;case 'permission':return !m.denied;
         case 'media.play':return true;
@@ -254,9 +262,22 @@ try{
   check((await p.locator('#project-license-text').innerText()).includes('Version 2.0, January 2004'),'The full standard Apache-2.0 license is readable offline');
   await p.locator('[data-settings-panel="about"] details').filter({has:p.locator('#btn-refresh-logs')}).locator('summary').click();await p.click('#btn-refresh-logs');await p.waitForFunction(()=>document.getElementById('log-view').textContent.includes('fixture ready'));check(true,'Diagnostics work inside the About settings category');
   await p.click('[data-settings-section="display"]');await p.click('#btn-theme');await p.waitForFunction(()=>document.documentElement.dataset.theme==='dark');check(true,'Theme can change');
-  await home(p);await capture(p,'plus-dark');await tile(p,'server').click();await p.click('#btn-server-toggle');await choose(p,'取消');check(await p.evaluate(()=>!window.__model.server),'LAN server requires confirmation');
+  await home(p);await capture(p,'plus-dark');await tile(p,'server').click();
+  await p.locator('#server-shares').getByText('尚未添加共享目录。').waitFor();
+  check(await p.locator('#btn-server-toggle').isDisabled(),'No implicit whole-phone share on first launch');
+  await p.click('#btn-server-roots');await choose(p,'浏览文件夹');
+  await choose(p,'内部存储');await choose(p,'Download');await choose(p,'使用此文件夹');await choose(p,'保存');
+  await p.locator('#server-shares strong').getByText('Download').waitFor();
+  await p.click('#btn-server-roots');await choose(p,'浏览文件夹');
+  await choose(p,'内部存储');await choose(p,'Music');await choose(p,'使用此文件夹');await choose(p,'保存');
+  await p.locator('#server-shares strong').getByText('Music').waitFor();
+  check(await p.locator('.server-share-row').count()===2,'Folder picker saves multiple named shares');
+  await p.click('#btn-server-toggle');await choose(p,'取消');check(await p.evaluate(()=>!window.__model.server),'LAN server requires confirmation');
   await p.click('#btn-server-toggle');await choose(p,'启动');await p.waitForFunction(()=>document.getElementById('server-status').textContent.includes('192.0.2.1'));check(true,'Server address visible');
-  await p.click('#btn-server-toggle');check(await p.evaluate(()=>!window.__model.server),'Server can stop');
+  await p.getByRole('button',{name:'移除共享目录 Music'}).click();
+  await p.locator('#server-status').getByText('下方保存的目录会在下次启动时应用。',{exact:false}).waitFor();
+  check(await p.evaluate(()=>window.__model.activeShares.length===2),'Active sharing is unchanged until the next start');
+  await p.click('#btn-server-toggle');await p.waitForFunction(()=>!window.__model.server);check(true,'Server can stop');
   await home(p);await tile(p,'usage').click();await p.click('#btn-scan');await p.waitForFunction(()=>document.getElementById('scan-result').textContent.includes('1.0 KB'));check(true,'Dedicated storage analysis works');
   check(errors.length===0,'No uncaught errors: '+errors.join(';'));await context.close();
   {

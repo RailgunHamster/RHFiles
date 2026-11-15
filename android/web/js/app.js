@@ -584,6 +584,7 @@
       action(entry.isDir ? '打开文件夹' : '打开 / 预览', 'open', () => activate(entry)),
       ...(!entry.isDir&&entry.kind==='document'&&!androidTextPreview.supports(entry.name)?[action('以文本预览','document',()=>androidTextPreview.open(entry))]:[]),
       ...(entry.isDir?[action('分析空间','chart',()=>go({screen:'tool',tool:'usage',path:entry.path}))]:[]),
+      ...(entry.isDir&&canShareFolder(entry.path)?[action('添加为共享目录','server',()=>chooseServerRoots({path:entry.path}))]:[]),
       action(state.selected.has(entry.path)?'取消选择':'选择','check',()=>toggleSelection(entry.path)),
       ...(!entry.isDir && api.nativeAvailable() ? [action('打开方式', 'open', () => api.systemOpen(entry.path)), action('分享', 'share', () => api.shareFile(entry.path))] : []),
       action('复制', 'copy', () => setClipboard('copy',[entry.path])),
@@ -826,6 +827,8 @@
   }
   function moreMenu() {
     const options = [action('扫码','scan',()=>api.native('qr.scan')),action('设置','settings',()=>go({screen:'tool',tool:'settings'}))];
+    const sharePath=currentDirectory();
+    if(canShareFolder(sharePath))options.unshift(action('共享当前文件夹','server',()=>chooseServerRoots({path:sharePath})));
     if(currentDirectory()&&!blocked()&&!state.busy&&!state.staleError)options.unshift(action('新建','folder',newMenu));
     if(paneHost())options.unshift({...action('分屏布局','layoutColumns',()=>paneHost().openLayout(window)),id:'pane-layout'});
     if (isList()) options.unshift(action('显示方式','grid',viewMenu), action('排序','sort',sortMenu), ...((state.route.screen==='library'&&!state.route.folder&&state.route.category!=='recent')?[]:[action('全选','copy',()=>{ state.selected = new Set(currentEntries().map(e=>e.path)); paintSelection(); })]));
@@ -906,14 +909,105 @@
   }
   async function refreshServer() {
     const server = await api.serverStatus(); state.server=server;
-    $('server-status').textContent = server.running ? '共享目录：\n' + server.shares.map(s=>s.name+' · '+s.path).join('\n')+'\n\n'+server.endpoints.join('\n')+(server.discoveryError?'\n'+server.discoveryError:'')+(server.announcementError?'\n'+server.announcementError:'') : '文件服务未启动\n共享目录：'+serverRoots().map(s=>s.path).join('、');
-    $('btn-server-roots').disabled=server.running;
+    const roots=serverRoots();
+    const active=server.shares||[];
+    const details=server.running?[
+      '共享中：'+active.map(share=>share.name).join('、'),
+      ...(server.endpoints||[]),
+      server.discoveryError,
+      server.announcementError,
+      JSON.stringify(active)!==JSON.stringify(roots)?'下方保存的目录会在下次启动时应用。':'',
+    ]:['文件服务未启动'];
+    $('server-status').textContent=details.filter(Boolean).join('\n');
+    const list=$('server-shares');
+    list.replaceChildren();
+    if(!roots.length)list.append(ui.el('p','muted','尚未添加共享目录。'));
+    for(const share of roots){
+      const row=ui.el('div','server-share-row');
+      const info=ui.el('div','server-share-info');
+      info.append(ui.el('strong','',share.name),ui.el('span','muted',pathLabel(share.path)));
+      const edit=button('编辑','rename',()=>RHFilesAPI.invoke('fileServer.roots',{path:share.path,edit:true}),'icon-btn');
+      const remove=button('移除','trash',()=>RHFilesAPI.invoke('fileServer.share.remove',{path:share.path}),'icon-btn');
+      edit.setAttribute('aria-label','编辑共享目录 '+share.name);
+      remove.setAttribute('aria-label','移除共享目录 '+share.name);
+      row.append(info,edit,remove);list.append(row);
+    }
+    $('btn-server-roots').disabled=roots.length>=8;
     ui.serviceAction($('btn-server-toggle'),server.running?'停止文件服务':'启动文件服务',server.running);
+    $('btn-server-toggle').disabled=!server.running&&!roots.length;
     return server;
   }
-  function serverRoots(){try{const roots=JSON.parse(saved('rhfiles.phoneFileShares','null'));if(Array.isArray(roots)&&roots.length&&roots.length<=8&&roots.every(r=>typeof r.name==='string'&&typeof r.path==='string'))return roots;}catch{}return [{name:'Phone',path:state.root}];}
-  async function chooseServerRoots(){if(state.server?.running)throw Error('请先停止文件服务再修改共享目录');const root=serverRoots()[0];const form=await androidFeatures.form('共享本机目录',[{name:'name',label:'共享名称',value:root.name,required:true},{name:'path',label:'手机本地目录',value:root.path,required:true}],async value=>{cache('rhfiles.phoneFileShares',JSON.stringify([value]));await refreshServer();},'保存');return {opened:!!form};}
-  async function startServer(args={}){const roots=args.roots||serverRoots();if(!await ui.confirm('启动设备组文件服务？','仅向设备组成员开放以下目录：\n'+roots.map(r=>r.path).join('\n')+'\n读写权限由设备组设置决定。','启动'))return {started:false};await api.serverStart({roots,port:args.port||39128});return refreshServer();}
+  const canShareFolder=path=>api.nativeAvailable()&&typeof path==='string'&&path.startsWith('/');
+  function serverRoots(){
+    try{
+      const roots=JSON.parse(saved('rhfiles.phoneFileShares','[]'));
+      if(Array.isArray(roots)&&roots.length<=8&&roots.every(r=>typeof r?.name==='string'&&typeof r?.path==='string'))return roots.map(({name,path})=>({name,path}));
+    }catch{}
+    return [];
+  }
+  async function saveServerShares(shares){
+    cache('rhfiles.phoneFileShares',JSON.stringify(shares));
+    if(state.route.tool==='server')await refreshServer();
+    else ui.toast('已保存共享目录，可在「从电脑访问」启动文件服务。');
+    return {shares};
+  }
+  async function saveServerShare({name,path,previousPath}){
+    const share=await api.serverValidateShare({name,path});
+    const roots=serverRoots();
+    const index=roots.findIndex(root=>root.path===previousPath);
+    if(previousPath&&index<0)throw Error('共享目录已变更，请重新打开编辑');
+    if(index<0&&roots.length>=8)throw Error('最多添加 8 个共享目录');
+    if(roots.some((root,i)=>i!==index&&(root.path===share.path||root.path.startsWith(share.path+'/')||share.path.startsWith(root.path+'/'))))throw Error('共享目录不能与已有目录相同或互相包含');
+    if(roots.some((root,i)=>i!==index&&root.name.toLowerCase()===share.name.toLowerCase()))throw Error('共享名称已存在');
+    if(index<0)roots.push(share);else roots[index]=share;
+    return saveServerShares(roots);
+  }
+  async function removeServerShare(path){
+    return saveServerShares(serverRoots().filter(root=>root.path!==path));
+  }
+  async function chooseServerFolder(select,roots=state.roots.filter(root=>canShareFolder(root.path))){
+    if(!ui.openSheet('选择共享文件夹',roots.map(root=>action(rootLabel(root),'folder',()=>browse(root.path,root.path))),
+      roots.length?'':'请先在「存储权限」中授权手机存储。'))return;
+    async function browse(path,boundary,offset=0){
+      const loading=ui.el('p','sheet-note','正在读取文件夹…');
+      if(!ui.openSheet('选择共享文件夹',[]))return;
+      $('sheet-panel').append(loading);
+      try{
+        const result=await api.listDir({path,showHidden:state.hidden});
+        if(!loading.isConnected)return;
+        const directories=result.entries.filter(entry=>entry.isDir);
+        const parent=path===boundary?null:fmt.parentOf(path);
+        const actions=[action('使用此文件夹','check',()=>select(path))];
+        if(offset>0)actions.push(action('上一页','up',()=>browse(path,boundary,Math.max(0,offset-100))));
+        actions.push(parent?action('上一级','up',()=>browse(parent,boundary)):action('存储位置','external',()=>chooseServerFolder(select,roots)));
+        actions.push(...directories.slice(offset,offset+100).map(entry=>action(entry.name,'folder',()=>browse(entry.path,boundary))));
+        if(directories.length>offset+100)actions.push(action('下一页','other',()=>browse(path,boundary,offset+100)));
+        ui.openSheet('选择共享文件夹',actions,pathLabel(path));
+      }catch(err){if(loading.isConnected)loading.textContent='无法读取文件夹：'+(err?.message||err);}
+    }
+  }
+  async function chooseServerRoots({path,edit=false}={},draft){
+    const roots=serverRoots(),existing=edit?roots.find(root=>root.path===path):null;
+    if(edit&&!existing)throw Error('共享目录已变更');
+    if(!edit&&roots.length>=8)throw Error('最多添加 8 个共享目录');
+    const initial=draft||existing||{name:folderDisplayName(path),path:path||''};
+    const form=await androidFeatures.form(existing?'编辑共享目录':'添加共享目录',[
+      {name:'name',label:'共享名称',value:initial.name,required:true},
+      {name:'path',label:'手机本地目录',value:initial.path,required:true},
+    ],value=>RHFilesAPI.invoke('fileServer.share.save',{...value,...(existing?{previousPath:existing.path}:{})}),'保存');
+    if(form){
+      const browse=button('浏览文件夹','folder',()=>chooseServerFolder(selected=>chooseServerRoots({path,edit},
+        {name:form.elements.name.value||folderDisplayName(selected),path:selected})));
+      browse.type='button';form.insertBefore(browse,form.lastElementChild);
+    }
+    return {opened:!!form};
+  }
+  async function startServer(args={}){
+    const roots=args.roots||serverRoots();
+    if(!roots.length)throw Error('请先添加要共享的目录');
+    if(!await ui.confirm('启动设备组文件服务？','仅向设备组成员开放以下目录：\n'+roots.map(share=>share.name+' · '+pathLabel(share.path)).join('\n')+'\n读写权限由设备组设置决定。','启动'))return {started:false};
+    await api.serverStart({roots,port:args.port||39128});return refreshServer();
+  }
   async function stopServer(){await api.serverStop();return refreshServer();}
   async function refreshLogs() {
     const page = await api.logs({limit:200});
@@ -980,7 +1074,7 @@
     androidUpdates.init({go,error});
     window.rhfilesHandleBack = () => state.permissions ? back() : true;
     window.rhfilesPane={snapshot:()=>({route:{...state.route},busy:state.busy,ready:bootReady}),refresh:()=>refreshCurrent().catch(error)};
-    androidAutomation.install({state,go,back,ready:()=>bootReady,refresh:refreshCurrent,refreshLocations,refreshGroupDevices,paintSelection,activate,setClipboard,paste,remove,rename,currentDirectory,createEntry,search:runSearch,setSort,refreshServer,startServer,stopServer,chooseServerRoots,jumpToDeviceWindowsPath});
+    androidAutomation.install({state,go,back,ready:()=>bootReady,refresh:refreshCurrent,refreshLocations,refreshGroupDevices,paintSelection,activate,setClipboard,paste,remove,rename,currentDirectory,createEntry,search:runSearch,setSort,refreshServer,startServer,stopServer,chooseServerRoots,serverRoots,saveServerShare,removeServerShare,jumpToDeviceWindowsPath});
     window.addEventListener('rhfiles-panes-changed',renderShell);
     window.addEventListener('rhfiles-clipboard',event=>{state.clipboard=event.detail;renderList();renderShell();});
     window.addEventListener('rhfiles-pane-task',event=>{peerTask=event.detail;renderShell();});
@@ -1073,7 +1167,7 @@
     RHFilesUI.listen(document,'keydown',e=>{if(e.key==='Escape'){e.preventDefault();back();}},undefined,"android.web.js.app.boot.ea5a60ea371d");
     let width=0;
     new ResizeObserver(entries=>{const w=entries[0].contentRect.width;if(w!==width){width=w;renderList();}}).observe($('filelist'));
-    document.addEventListener('visibilitychange',()=>{if(!document.hidden){if(api.featuresAvailable())androidFeatures.onResume().catch(error);else if(state.permissions && !state.permissions.manageExternalStorage)bootStorage().catch(error);}});
+    document.addEventListener('visibilitychange',()=>{if(!document.hidden){if(state.route.tool==='server')refreshServer().catch(error);if(api.featuresAvailable())androidFeatures.onResume().catch(error);else if(state.permissions && !state.permissions.manageExternalStorage)bootStorage().catch(error);}});
     if(!api.available()) {showPlaceholder('此版本无法连接文件服务，请重新安装。');return;}
     const resume=api.shouldRestoreNavigation()?savedNavigation():null;
     try {

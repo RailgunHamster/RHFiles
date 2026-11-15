@@ -208,6 +208,7 @@ const api = (() => {
 
     // Reverse server (phone as a file source for a PC)
     serverStatus: () => nativeCall('fileServer.state'),
+    serverValidateShare: args => nativeCall('fileServer.validateShare',args),
     serverStart: args => nativeCall('fileServer.start',args),
     serverStop: () => nativeCall('fileServer.stop'),
 

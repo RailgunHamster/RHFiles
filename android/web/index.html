@@ -76,9 +76,14 @@
       <section id="tool-server" hidden>
         <div class="tool-illustration" data-icon="server"></div><h2>从电脑访问</h2>
         <p class="muted">在电脑 RHFiles 的设备组中打开此手机，浏览共享文件。支持局域网及 Tailscale，使用加密的 HTTPS／WebDAV。</p>
-        <p class="warning">只有已加入设备组且未被本机移除的设备可以访问。读写、重命名和删除权限在设备组中设置，删除后不能自动重新加入。</p>
-        <div class="button-row"><button id="btn-server-roots">共享目录</button><button id="btn-server-groups">设备组与权限</button></div>
-        <div id="server-status" class="kv"></div><button id="btn-server-toggle" class="service-action" aria-controls="server-status">启动文件服务</button>
+        <p class="muted">关闭 RHFiles 的任务会停止共享。设备组设置决定读写、重命名和删除权限。</p>
+        <div id="server-status" class="kv" role="status"></div>
+        <button id="btn-server-toggle" class="service-action" aria-controls="server-status">启动文件服务</button>
+        <section aria-labelledby="server-shares-title">
+          <h2 id="server-shares-title">共享目录</h2>
+          <div id="server-shares"></div>
+          <div class="button-row"><button id="btn-server-roots">添加共享目录</button><button id="btn-server-groups">设备组与权限</button></div>
+        </section>
         <section id="ftp-access" hidden><h2>FTP 访问</h2><p class="warning">适用于 Windows Explorer / FTP 客户端。FTP 是明文协议，仅限可信局域网。默认只读，可允许上传新文件；不允许覆盖或删除手机文件。</p><div id="ftp-status" class="kv"></div><button id="btn-ftp-toggle" class="service-action" aria-controls="ftp-status">启动 FTP 服务</button></section>
       </section>
       <section id="tool-usage" hidden>

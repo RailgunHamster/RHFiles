@@ -200,6 +200,7 @@ class MainActivity : TauriActivity() {
     "transfer.settings" -> DeviceTransferSettings.read(this)
     "transfer.configure" -> synchronized(settingsLock){DeviceTransferSettings.save(this,args)}
     "fileServer.state" -> DeviceFileServer.state()
+    "fileServer.validateShare" -> DeviceFileServer.validateShare(storage,args)
     "fileServer.start" -> DeviceFileServer.start(this,args)
     "fileServer.stop" -> DeviceFileServer.stop(this)
     "fileServer.requested" -> onUi{val requested=intent?.action=="com.railgunhamster.rhfiles.FILE_SERVER";if(requested)intent.action=Intent.ACTION_MAIN;requested}

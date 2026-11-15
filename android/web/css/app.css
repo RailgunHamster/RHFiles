@@ -122,6 +122,10 @@ svg { width:24px; height:24px; fill:none; stroke:currentColor; stroke-width:1.7;
 .tool-illustration { color:var(--accent); margin-top:16px; } .tool-illustration svg { width:48px; height:48px; }
 .warning { font-size:12px; padding:12px; border-radius:8px; background:var(--surface); color:var(--muted); }
 .setting-row { display:block; width:100%; text-align:left; margin-bottom:8px; }
+#server-status { white-space:pre-line; margin:12px 0; }
+.server-share-row { display:flex; align-items:center; gap:6px; min-height:56px; padding:4px 0; border-bottom:1px solid var(--line); }
+.server-share-info { display:grid; gap:4px; flex:1; min-width:0; overflow-wrap:anywhere; }
+.tool-page .server-share-row button { flex:none; margin:0; }
 .settings-nav { display:flex; gap:6px; overflow:auto; padding-bottom:10px; border-bottom:1px solid var(--line); scrollbar-width:thin; touch-action:pan-x; overscroll-behavior-x:contain; }
 .tool-page .network-location { display:flex; align-items:center; border-bottom:1px solid var(--line); min-height:56px; gap:6px; }
 .tool-page .network-location button { margin:0; border:0; background:transparent; border-radius:8px; }

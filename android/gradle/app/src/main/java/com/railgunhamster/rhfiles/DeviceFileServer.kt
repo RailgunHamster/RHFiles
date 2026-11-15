@@ -16,6 +16,8 @@ import java.util.concurrent.Executors
 internal object DeviceFileServer {
   init { System.loadLibrary("rhfiles_android_lib") }
   private var announcementError:String?=null
+  private var generation=0L
+  private var activeGeneration:Long?=null
   private fun decoded(encoded:String):JSONObject {
     val value=JSONObject(encoded)
     require(!value.has("error")){value.optString("error","文件服务失败")}
@@ -23,33 +25,60 @@ internal object DeviceFileServer {
   }
   @Synchronized fun state()=decoded(GroupServiceNative.state()).put("announcementError",announcementError?:JSONObject.NULL)
   @Synchronized fun membershipChanged(){try{decoded(GroupServiceNative.advertise());announcementError=null;if(state().optBoolean("running"))DeviceGroups.publishServiceRecords()}catch(error:Exception){announcementError=error.message?:"文件服务地址尚未发布，请停止后重新启动服务"}}
+  fun validateShare(storage:NativeStorage,root:JSONObject):JSONObject {
+    val path=root.getString("path")
+    require(!storage.isDocument(path)&&!storage.isRemote(path)){"请选择手机可直接访问的存储目录"}
+    val file=storage.local(path)
+    require(storage.localVolumes().any{volume->
+      val base=volume.canonicalPath
+      file.path==base||file.path.startsWith(base+File.separator)
+    }){"请选择内部存储或已挂载的外部存储目录"}
+    require(file.isDirectory&&file.canRead()){"共享目录无法读取，请检查存储权限或外置存储是否仍已连接"}
+    val name=root.getString("name").trim()
+    val reserved=name.substringBefore('.').matches(Regex("(?i)CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9]"))
+    require(name.length in 1..64&&!name.endsWith('.')&&!reserved&&!name.equals("lan-service-v1",true)&&
+      !name.startsWith(".rhfiles-service-",true)&&name.none{it.isISOControl()||it in "/\\%:#?\"<>|"}){"共享名称包含保留字符或不是有效名称"}
+    return JSONObject().put("name",name).put("path",file.path)
+  }
   @Synchronized fun start(context:Context,args:JSONObject):JSONObject {
     require(!state().optBoolean("running")){"文件服务已经启动"}
     val storage=NativeStorage(context.applicationContext)
     val roots=args.getJSONArray("roots");require(roots.length() in 1..8){"请选择 1 至 8 个本地共享目录"}
-    val seen=hashSetOf<String>();val names=hashSetOf<String>();val shares=JSONArray()
+    val paths=mutableListOf<String>();val names=hashSetOf<String>();val shares=JSONArray()
     for(i in 0 until roots.length()){
-      val root=roots.getJSONObject(i);val file=storage.local(root.getString("path"))
-      require(file.isDirectory&&file.canRead()){"共享目录无法读取，请先授予存储权限"}
-      require(seen.add(file.path)){"共享目录重复"}
-      val name=root.getString("name").trim()
-      require(name.length in 1..64&&name !in listOf(".","..")&&name.none{it<' '||it in "/\\%:#?"}&&names.add(name.lowercase())){"共享名称无效或重复"}
-      shares.put(JSONObject().put("name",name).put("path",file.path))
+      val share=validateShare(storage,roots.getJSONObject(i))
+      val path=share.getString("path")
+      require(paths.none{it==path||it.startsWith(path+File.separator)||path.startsWith(it+File.separator)}){"共享目录不能与已有目录相同或互相包含"}
+      require(names.add(share.getString("name").lowercase())){"共享名称重复"}
+      paths.add(path)
+      shares.put(share)
     }
     val port=args.optInt("port",39128);require(port in 1024..65535){"端口必须在 1024–65535 之间"}
     DeviceGroups.install(context)
     val config=JSONObject().put("directory",File(context.filesDir,"group-file-service-v1").path).put("shares",shares).put("port",port)
     val result=decoded(GroupServiceNative.start(config.toString(),GroupServiceAuthority()))
     announcementError=null
-    try{ContextCompat.startForegroundService(context,Intent(context,DeviceFileService::class.java))}
-    catch(error:Exception){GroupServiceNative.stop();throw error}
+    val session=++generation
+    activeGeneration=session
+    try{ContextCompat.startForegroundService(context,Intent(context,DeviceFileService::class.java).putExtra("session",session))}
+    catch(error:Exception){release(session);throw error}
     DeviceGroups.publishServiceRecords()
     return result
   }
-  @Synchronized fun stop(context:Context):JSONObject {
-    val result=decoded(GroupServiceNative.stop());context.stopService(Intent(context,DeviceFileService::class.java));return result
+  @Synchronized fun stop(context:Context,expected:Long?=null):JSONObject {
+    if(expected!=null&&expected!=activeGeneration)return state()
+    val result=decoded(GroupServiceNative.stop())
+    activeGeneration=null
+    announcementError=null
+    context.stopService(Intent(context,DeviceFileService::class.java))
+    return result
   }
-  internal fun release(){GroupServiceNative.stop()}
+  @Synchronized fun release(session:Long){
+    if(session!=activeGeneration)return
+    activeGeneration=null
+    announcementError=null
+    GroupServiceNative.stop()
+  }
 }
 
 /** connectedDevice foreground lifetime is user-visible and independent of panes.
@@ -57,6 +86,7 @@ internal object DeviceFileServer {
 class DeviceFileService:Service(){
   private var multicast:WifiManager.MulticastLock?=null
   private val worker=Executors.newSingleThreadExecutor()
+  private var session=0L
   override fun onBind(intent:Intent?):IBinder?=null
   override fun onCreate(){
     super.onCreate()
@@ -71,8 +101,11 @@ class DeviceFileService:Service(){
     multicast=(applicationContext.getSystemService(WIFI_SERVICE)as? WifiManager)?.createMulticastLock("RHFiles:device-file-service")?.apply{setReferenceCounted(false);acquire()}
   }
   override fun onStartCommand(intent:Intent?,flags:Int,startId:Int):Int{
-    if(intent?.action=="stop")worker.execute{DeviceFileServer.stop(this)}
+    if(intent?.action=="stop"){
+      val expected=session
+      worker.execute{DeviceFileServer.stop(this,expected)}
+    }else session=intent?.getLongExtra("session",0L)?:0L
     return START_NOT_STICKY
   }
-  override fun onDestroy(){worker.shutdown();DeviceFileServer.release();if(multicast?.isHeld==true)multicast?.release();super.onDestroy()}
+  override fun onDestroy(){worker.shutdown();DeviceFileServer.release(session);if(multicast?.isHeld==true)multicast?.release();super.onDestroy()}
 }

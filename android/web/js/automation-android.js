@@ -3,6 +3,8 @@
 const androidAutomation=(()=>{
   const ErrorType=RHFilesAutomationCore.ActionError,apiSchema=(properties={},required=[])=>({type:'object',properties,required,additionalProperties:false});
   const string={type:'string',minLength:1,maxLength:8192},bool={type:'boolean'},integer={type:'integer',minimum:0},paths={type:'array',items:string,maxItems:1000};
+  const shareName={type:'string',minLength:1,maxLength:64};
+  const share=apiSchema({name:shareName,path:string},['name','path']);
   const receiptReaders=new WeakSet();
   function provideReceipts(actions){if(!receiptReaders.has(actions)){actions.provideRunLookup(query=>api.native('automation.receipt',query));receiptReaders.add(actions);}}
   function install(app){
@@ -40,9 +42,12 @@ const androidAutomation=(()=>{
     register('fileServer.state',apiSchema(),()=>api.serverStatus(),'read','Read the explicitly started phone group HTTPS/WebDAV service');
     register('transfer.settings',apiSchema(),()=>api.native('transfer.settings'),'read','Read local bounded download policy');
     register('transfer.configure',apiSchema({parallelism:{type:'integer',minimum:1,maximum:4},rateMiB:{type:'number',minimum:0,maximum:1000}},['parallelism','rateMiB']),p=>api.native('transfer.configure',p),'settings','Set parallel streams and per-file MiB/s limit for new transfers');
-    register('fileServer.start',apiSchema({roots:{type:'array',minItems:1,maxItems:8,items:apiSchema({name:{type:'string',minLength:1,maxLength:64},path:string},['name','path'])},port:{type:'integer',minimum:1024,maximum:65535}}),p=>app.startServer(p),'external','Confirm selected local roots and start the device-group file service');
+    register('fileServer.start',apiSchema({roots:{type:'array',minItems:1,maxItems:8,items:share},port:{type:'integer',minimum:1024,maximum:65535}}),p=>app.startServer(p),'external','Confirm selected local roots and start the device-group file service');
     register('fileServer.stop',apiSchema(),()=>app.stopServer(),'external','Stop phone sharing and invalidate all active service sessions');
-    register('fileServer.roots',apiSchema(),()=>app.chooseServerRoots(),'ui','Open the same local share-directory form as the service page');
+    register('fileServer.roots',apiSchema({path:string,edit:bool}),p=>app.chooseServerRoots(p),'ui','Choose a shared folder or edit a saved share');
+    register('fileServer.shares',apiSchema(),()=>app.serverRoots(),'read','List the phone directories selected for the next service start');
+    register('fileServer.share.save',apiSchema({name:shareName,path:string,previousPath:string},['name','path']),p=>app.saveServerShare(p),'settings','Validate and save a directory for the next service start');
+    register('fileServer.share.remove',apiSchema({path:string},['path']),p=>app.removeServerShare(p.path),'settings','Remove one saved share without changing files or the active service');
     const reject=(code,message)=>{throw new ErrorType(code,message);};
     const entry=path=>{const value=state.entries.find(e=>e.path===path);if(!value)reject('ENTRY_NOT_FOUND','Path is outside the current listing');return value;};
     const snapshot=()=>({platform:'android',pane:workbench.id||'main',ready:app.ready(),route:{...state.route},busy:state.busy,root:state.root,selected:[...state.selected],entries:state.entries.length,error:state.navigationError??null,stale:!!state.staleError,refreshError:state.staleError??null});
