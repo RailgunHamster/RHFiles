@@ -1,0 +1,10 @@
+{
+  "platforms": {
+    "darwin-aarch64": {
+      "url": "https://cnb.cool/railgunhamster/RHFiles/-/releases/download/macos-v0.1.131/RHFiles-macos-arm64.app.tar.gz",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUblFJejFLdjc1Rk1SREsxdVozdW1JZytMNWs2MXVva2NLUFNEN1hoZUV5THM5T09Dc0dCVHZWTzMrUndnSWJPY0NzLzBvSHBodUlvRllSazBrM1g0N2V5dW1aYXI2VWdZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NzI1NjgzCWZpbGU6UkhGaWxlcy5hcHAudGFyLmd6CnBSbENOZmc4Q0RpVTZ5K0FodStteS9zNWZRa2JuRnA2VGhWaUpGWW9RUjNJQ0ViUlB4OHJkSEpVODRUeHpucDRYU1huR1ZvaUJFcEd6aUpLWmtSakNRPT0K"
+    }
+  },
+  "notes": "# RHFiles macOS 0.1.131\n\n- 支持从 CNB 或 GitHub 检查、下载并安装 macOS arm64 更新。\n- 下载后先验证更新签名，文件操作和共享传输结束后才允许重启。\n- 包含内置图片与视频查看、WebDAV 配置同步以及原生 7-Zip。\n\n- Check, download and install macOS arm64 updates from CNB or GitHub.\n- Updates verify the package signature and wait for file operations and shared transfers before restarting.\n- Includes built-in image and video viewing, WebDAV configuration sync and native 7-Zip.",
+  "version": "0.1.131"
+}

@@ -43,7 +43,7 @@ RHFiles 是无广告、无遥测的文件管理器，提供 **Windows 桌面版�
 | --- | --- | --- |
 | Windows 10 / 11 | [CNB 下载](https://cnb.cool/railgunhamster/RHFiles/-/releases) · [GitHub portable / 安装程序](https://github.com/RailgunHamster/RHFiles/releases/latest) | 正式标签 `v…`，支持 portable 原地更新 |
 | Android 7.0+ | [CNB APK](https://cnb.cool/railgunhamster/RHFiles/-/releases) · [GitHub Android 发布记录](https://github.com/RailgunHamster/RHFiles/releases?q=android-v) | 正式标签 `android-v…`；普通手机选择 ARM64 APK |
-| macOS 12+ / Apple Silicon | [macOS 预览构建](https://github.com/RailgunHamster/RHFiles/actions/workflows/macos.yml) | 从成功的运行记录下载 `.app.zip` / `.dmg`，不提供 Intel 版本 |
+| macOS 12+ / Apple Silicon | [CNB 下载](https://cnb.cool/railgunhamster/RHFiles/-/releases/tag/macos-v0.1.131) · [GitHub 下载](https://github.com/RailgunHamster/RHFiles/releases/tag/macos-v0.1.131) | 解压 `.app.zip` 后放进「应用程序」，之后在应用内检查更新 |
 
 GitHub 的 **Latest** 标记留给 Windows，不代表 Android 没有新版本。两个平台使用独立的更新清单与日志；已发布安装包不覆盖，修复使用新版本。详见[版本与发布规则](docs/RELEASING.md)。
 
@@ -96,7 +96,7 @@ GitHub 的 **Latest** 标记留给 Windows，不代表 Android 没有新版本�
 
 ### macOS 预览版
 
-支持 Apple Silicon（M 系列、arm64），与桌面源码共用版本。当前为 ad-hoc 签名、**未经 Apple 公证**的预览构建，不宣称与 Windows 功能完全一致，仍需 Mac 实机界面验收。安装、权限和平台差异见 [macOS 说明](docs/MACOS.md)。
+支持 Apple Silicon（M 系列、arm64），使用独立版本号和 CNB / GitHub 应用内更新渠道。应用采用 ad-hoc 签名，**未经 Apple 公证**。安装、权限和平台差异见 [macOS 说明](docs/MACOS.md)。
 
 ### 开发与测试
 
@@ -142,7 +142,7 @@ RHFiles is an ad-free, telemetry-free file manager with a **Windows desktop appl
 | --- | --- | --- |
 | Windows 10 / 11 | [CNB downloads](https://cnb.cool/railgunhamster/RHFiles/-/releases) · [GitHub portable / installer](https://github.com/RailgunHamster/RHFiles/releases/latest) | Stable tags `v…`; portable in-place updates |
 | Android 7.0+ | [CNB APKs](https://cnb.cool/railgunhamster/RHFiles/-/releases) · [GitHub Android releases](https://github.com/RailgunHamster/RHFiles/releases?q=android-v) | Tags `android-v…`; use ARM64 for ordinary phones |
-| macOS 12+ / Apple Silicon | [macOS preview artifacts](https://github.com/RailgunHamster/RHFiles/actions/workflows/macos.yml) | Download `.app.zip` / `.dmg` from a successful run; no Intel builds |
+| macOS 12+ / Apple Silicon | [CNB download](https://cnb.cool/railgunhamster/RHFiles/-/releases/tag/macos-v0.1.131) · [GitHub download](https://github.com/RailgunHamster/RHFiles/releases/tag/macos-v0.1.131) | Extract the .app ZIP into Applications, then check for updates in RHFiles |
 
 GitHub **Latest** is reserved for Windows; it does not indicate whether Android has an update. Each platform uses its own update feed and release notes. Published package bytes are immutable; corrections receive a new version. See [version and release policy](docs/RELEASING.md).
 
@@ -194,7 +194,7 @@ Connect to an existing RHVideo server from the sidebar. Browse videos, pictures,
 
 ### macOS preview
 
-Apple Silicon (M-series, arm64) builds share the desktop source version. They are ad-hoc-signed, **not Apple-notarized** previews, not a claim of Windows feature parity. GUI acceptance testing on a Mac is still needed. See [macOS setup, permissions and limits](docs/MACOS.md).
+The Apple Silicon (M-series, arm64) preview uses its own version and supports in-app updates from CNB and GitHub. The app uses ad-hoc code signing and is **not Apple-notarized**. See [macOS setup, permissions and limits](docs/MACOS.md).
 
 ### Development and tests
 
