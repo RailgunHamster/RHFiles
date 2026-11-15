@@ -1,14 +1,15 @@
-import {rhvideoReferenceDocument,rhvideoReferenceContext} from '../testing/rhvideo-reference.mjs';
-import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import path from 'node:path';import vm from 'node:vm';import{parse}from'acorn';import{createRequire}from'node:module';
-const I=createRequire(import.meta.url)('../../src/js/rhvideo-index.js'),reference=path.join(process.env.RHVIDEO_SOURCE||path.resolve('../RHVideo'),'static/index.html');
+import {rhvideoFrontendReference as reference,rhvideoReferenceDocument,rhvideoReferenceContext} from '../testing/rhvideo-reference.mjs';
+import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import vm from 'node:vm';import{parse}from'acorn';import{createRequire}from'node:module';
+const I=createRequire(import.meta.url)('../../src/js/rhvideo-index.js');
 const C=createRequire(import.meta.url)('../../src/js/rhvideo-configuration.js');
 
 test('differential: backup values preserve the reference percentage, speed multiplier and 60-second fade bound',{skip:!fs.existsSync(reference)},()=>{
  const wanted=new Set(['kenClampNum','updateKenburnsFadeCfg','updatePicStripSpeedUI','picStripAutoTick']),functions=[];
- for(const match of rhvideoReferenceDocument(reference).matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g))for(const node of parse(match[1],{ecmaVersion:'latest',sourceType:'script'}).body)if(node.type==='FunctionDeclaration'&&wanted.has(node.id.name))functions.push(match[1].slice(node.start,node.end));assert.equal(functions.length,wanted.size);
+ for(const match of rhvideoReferenceDocument(reference).matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g))for(const node of parse(match[1],{ecmaVersion:'latest',sourceType:'script'}).body)if(node.type==='FunctionDeclaration'&&(wanted.delete(node.id.name)||node.id.name==='picStripIsVertical'))functions.push(match[1].slice(node.start,node.end));assert.equal(wanted.size,0);
  for(const [scrollSpeed,ratio]of [[100,.05],[400,.3],[2000,.9]]){
   const config={volume:20,autoRotate:false,mixPictures:false,rule:{},lanes:1,scrollSpeed,stay:7,min:1,max:60,ratio,overlap:true,readerFont:19,readerLine:1.9,readerTheme:'sepia',favoriteStay:5,videoStay:15,favoriteFadeMs:800},values=C.referencePreferences(config),stored=new Map(),row={id:'qa',scrollLeft:0,scrollWidth:10000,clientWidth:100},nodes=new Map(Object.entries({'kenburns-fade-min':values.kenburns_fade_min,'kenburns-fade-max':values.kenburns_fade_max,'kenburns-fade-ratio':values.kenburns_fade_ratio,'pic-strip-speed':values.strip_speed}).map(([id,value])=>[id,{value}]));
   const context=rhvideoReferenceContext({Math,parseFloat,kenOn:false,kenFadeMin:1,kenFadeMax:2.5,kenFadeRatio:30,picStripSpeed:2,picStripAutoOn:true,picStripAutoLastTs:0,picStripVMode:false,picStripLoopOffsets:{},document:{getElementById:id=>nodes.get(id)||{}},localStorage:{setItem:(key,value)=>stored.set(key,value)},kenburnsFminKey:()=> 'min',kenburnsFmaxKey:()=> 'max',kenburnsFratioKey:()=> 'ratio',picStripSpeedKey:()=> 'speed',picStripRows:()=>[row],setPicStripScroll:(target,x)=>target.scrollLeft=x,psUpdateWindows(){},requestAnimationFrame:()=>1,togglePicStripAuto(){throw Error('Unexpected end of fixture');}});
+  context.picStripMode='horizontal';
   assert.equal(values.kenburns_fade_ratio,String(ratio*100));assert.equal(values.strip_speed,String(scrollSpeed/200));
   vm.runInContext(functions.join('\n'),context);vm.runInContext('updateKenburnsFadeCfg();updatePicStripSpeedUI();picStripAutoTick(100)',context);
   assert.equal(Number(stored.get('ratio')),ratio*100,'Reference persists a percentage, not a 0..1 fraction');assert(Math.abs(row.scrollLeft-scrollSpeed*.1)<1e-9,'Reference speed is 200 px/s times the saved multiplier');

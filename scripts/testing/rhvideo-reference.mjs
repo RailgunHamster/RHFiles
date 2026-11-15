@@ -2,8 +2,14 @@
 // cannot run it, not request personal credentials or pretend fixture parity.
 import fs from 'node:fs';
 import path from 'node:path';
+import {fileURLToPath} from 'node:url';
 import vm from 'node:vm';
 export const rhvideoReferenceSource=path.resolve(process.env.RHVIDEO_SOURCE||'../RHVideo');
+const localFrontend=path.join(rhvideoReferenceSource,'static/index.html');
+// The versioned frontend shipped by RHFiles also exists on a clean CI checkout.
+export const rhvideoFrontendReference=process.env.RHVIDEO_SOURCE||fs.existsSync(localFrontend)
+  ? localFrontend
+  : fileURLToPath(new URL('../../src/vendor/rhvideo/frontend/static/index.html',import.meta.url));
 // Differential tests read the canonical source, whether it is still inline or
 // has been mechanically extracted into ordinary script/style modules.
 export function rhvideoReferenceDocument(file){

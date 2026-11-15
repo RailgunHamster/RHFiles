@@ -1,14 +1,13 @@
-import {rhvideoReferenceDocument,rhvideoReferenceContext} from '../testing/rhvideo-reference.mjs';
+import {rhvideoFrontendReference as reference,rhvideoReferenceDocument,rhvideoReferenceContext} from '../testing/rhvideo-reference.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import path from 'node:path';
 import vm from 'node:vm';
 import {parse} from 'acorn';
 import {createRequire} from 'node:module';
 import fc from 'fast-check';
 const I=createRequire(import.meta.url)('../../src/js/rhvideo-index.js');
-const reference=path.join(process.env.RHVIDEO_SOURCE||path.resolve('../RHVideo'),'static/index.html'),functions=new Map();
+const functions=new Map();
 if(fs.existsSync(reference))for(const script of rhvideoReferenceDocument(reference).matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g))for(const node of parse(script[1],{ecmaVersion:'latest'}).body)if(node.type==='FunctionDeclaration')functions.set(node.id.name,script[1].slice(node.start,node.end));
 const picture=(id,resolution)=>({id,kind:'picture',original_resolution:resolution,resolution});
 test('strip stars do not cover every picture and keep keyboard access to each favorite action',()=>{
@@ -38,7 +37,10 @@ test('double horizontal strip divides the ordered pool into contiguous halves, n
 test('differential: vertical ends stop, horizontal rows wrap independently at their own leading-copy boundary',{skip:!functions.has('picStripAutoTick')},()=>{
  for(const vertical of [true,false])for(const speed of [100,400,2000]){
   const rows=[{id:'a',scrollLeft:989,scrollTop:490,scrollWidth:1400,clientWidth:200,scrollHeight:700,clientHeight:200},{id:'b',scrollLeft:1495,scrollWidth:1900,clientWidth:200}],context=rhvideoReferenceContext({picStripAutoOn:true,picStripAutoLastTs:0,picStripVMode:vertical,picStripSpeed:speed/200,picStripLoopOffsets:{a:1000,b:1500},picStripVContent:()=>rows[0],picStripRows:()=>rows,psUpdateWindows(){},requestAnimationFrame:()=>1,setPicStripScroll:(row,x)=>row.scrollLeft=Math.min(row.scrollWidth-row.clientWidth,x),togglePicStripAuto(value){context.picStripAutoOn=value;}});
-  vm.runInContext(functions.get('picStripAutoTick'),context);context.picStripAutoTick(100);
+  context.picStripMode=vertical?'vertical':'horizontal';
+  context.performance={now:()=>100};
+  vm.runInContext(['picStripIsVertical','picStripAutoTick'].map(name=>functions.get(name)).filter(Boolean).join('\n'),context);
+  context.picStripAutoTick(100);
   const first=I.stripAdvance(vertical?490:989,speed*.1,{vertical,maximum:vertical?500:1200,loopOffset:vertical?0:1000});assert.equal(first.position,vertical?rows[0].scrollTop:rows[0].scrollLeft);assert.equal(first.running,context.picStripAutoOn);
   if(!vertical)assert.equal(I.stripAdvance(1495,speed*.1,{maximum:1700,loopOffset:1500}).position,rows[1].scrollLeft);
  }
@@ -46,8 +48,9 @@ test('differential: vertical ends stop, horizontal rows wrap independently at th
 });
 test('differential: wheel and arrow distances use the same multiplier as the reference handlers',{skip:!functions.has('picStripKeyHandler')},()=>{
  for(const speed of [100,400,2000]){
-  const row={scrollLeft:50},context=rhvideoReferenceContext({picStripAutoOn:false,picStripSpeed:speed/200,picStripVMode:false,window:{innerWidth:1200},document:{getElementById:()=>({classList:{contains:()=>false}})},picStripRowA:()=>row,psUpdateWindows(){}});vm.runInContext(functions.get('onPicStripWheel')+'\n'+functions.get('picStripKeyHandler'),context);
-  context.onPicStripWheel({preventDefault(){},currentTarget:row,deltaY:30,deltaX:5});assert.equal(row.scrollLeft-50,I.stripInput(30,speed));let moved;row.scrollBy=args=>moved=args;context.picStripKeyHandler({key:'ArrowRight',preventDefault(){}});assert.equal(moved.left,I.stripInput(1200*.8,speed));assert.equal(moved.behavior,'smooth');
+  const row={scrollLeft:50},context=rhvideoReferenceContext({picStripAutoOn:false,picStripSpeed:speed/200,picStripMode:'horizontal',picStripVMode:false,picStripVideoSession:null,window:{innerWidth:1200},document:{getElementById:()=>({classList:{contains:()=>false}})},picStripRowA:()=>row,psUpdateWindows(){}});
+  vm.runInContext(['picStripIsVertical','onPicStripWheel','picStripKeyHandler'].map(name=>functions.get(name)).filter(Boolean).join('\n'),context);
+  context.onPicStripWheel({preventDefault(){},currentTarget:row,deltaY:30,deltaX:5});assert.equal(row.scrollLeft-50,I.stripInput(30,speed));let moved;row.scrollBy=args=>moved=args;context.picStripKeyHandler({key:'ArrowRight',target:{},preventDefault(){}});assert.equal(moved.left,I.stripInput(1200*.8,speed));assert.equal(moved.behavior,'smooth');
  }
 });
 test('loop layout repeats only the bounded complete leading pictures, with no duplicate in the logical selection pool',{skip:!functions.has('psTailCellCount')},()=>{
