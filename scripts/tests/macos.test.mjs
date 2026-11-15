@@ -60,9 +60,14 @@ test('macOS open-with menu routes to native apps, not Windows executables',()=>{
   assert.ok(items.some(item=>item.label==='Terminal'));
   assert.ok(!items.some(item=>['CMD','PowerShell','Visual Studio','Git Bash'].includes(item.label)));
 });
-test('macOS never automatically consumes a Windows update feed',()=>{
+test('macOS can check automatically but asks before installing',()=>{
   const c=mac(); c.G.settings={autoUpdateEnabled:true};
-  load(c,'main.js',['isAutomaticUpdateCheckEnabled']);
+  c.navigator={platform:'MacIntel'};
+  load(c,'main.js',['isAutomaticUpdateCheckEnabled','isAutomaticUpdateInstallEnabled']);
+  assert.equal(c.isAutomaticUpdateCheckEnabled(),true);
+  c.G.settings.autoInstallUpdates=true;
+  assert.equal(c.isAutomaticUpdateInstallEnabled(),false);
+  c.G.settings.autoUpdateEnabled=false;
   assert.equal(c.isAutomaticUpdateCheckEnabled(),false);
 });
 

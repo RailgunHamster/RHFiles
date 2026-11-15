@@ -138,3 +138,7 @@ version = "0.9"
 [target.'cfg(target_os = "macos")'.dependencies]
 ssh2 = { version = "0.9", features = ["vendored-openssl"] }
 ring = "0.17"
+tauri-plugin-updater = "=2.11.0"
+flate2 = "1"
+plist = "1"
+tar = "0.4"

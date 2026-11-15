@@ -7,19 +7,11 @@ function configureMacSettings() {
     terminal.value = G.settings.terminal === 'iterm' ? 'iterm' : 'terminal';
   }
   document.getElementById('settings-page-integration')?.remove();
-  for (const id of ['settings-auto-update','settings-update-source','settings-update-cnb','settings-update-github']) {
-    document.getElementById(id)?.closest('.settings-row')?.remove();
-  }
   document.querySelectorAll('[data-archive-tool="bandizip"], [data-archive-tool="winrar"]').forEach(el => el.remove());
   const effect = document.querySelector('#settings-page-appearance select[onchange*="WindowEffect"]');
   effect?.closest('.settings-row')?.remove();
   const ffmpeg = document.getElementById('settings-ffmpeg-path');
   if (ffmpeg) ffmpeg.placeholder = '/opt/homebrew/bin/ffmpeg';
-  const check = document.getElementById('settings-check-update');
-  if (check) {
-    check.textContent = t('mac.downloads');
-    RHFilesUI.assign(check,"click",() => window.__TAURI__?.shell?.open('https://github.com/RailgunHamster/RHFiles/actions/workflows/macos.yml'),"src.js.macos.configureMacSettings.cf86eeeeef16");
-  }
 }
 
 function macNativeDropTarget(element) {

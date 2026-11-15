@@ -4,7 +4,17 @@ use std::{env, fs, path::PathBuf};
 
 fn generate_release_history() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("manifest directory"));
-    let notes_dir = manifest_dir.join("..").join("docs").join("release-notes");
+    let mut notes_dir = manifest_dir.join("..").join("docs").join("release-notes");
+    let mac = env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos");
+    let mut package_version = env::var("CARGO_PKG_VERSION").expect("package version");
+    if mac {
+        notes_dir.push("macos");
+        let config = manifest_dir.join("tauri.macos.conf.json");
+        println!("cargo:rerun-if-changed={}", config.display());
+        let value: serde_json::Value = serde_json::from_slice(&fs::read(config).expect("read macOS config"))
+            .expect("parse macOS config");
+        package_version = value["version"].as_str().expect("macOS package version").to_owned();
+    }
     println!("cargo:rerun-if-changed={}", notes_dir.display());
     let dates_path = notes_dir.join("published-at.json");
     println!("cargo:rerun-if-changed={}", dates_path.display());
@@ -45,7 +55,7 @@ fn generate_release_history() {
     }
     assert!(!releases.is_empty(), "no release notes were found");
     releases.sort_by(|left, right| right.0.cmp(&left.0));
-    let package_version = Version::parse(&env::var("CARGO_PKG_VERSION").expect("package version"))
+    let package_version = Version::parse(&package_version)
         .expect("package version must be semantic");
     assert!(
         releases

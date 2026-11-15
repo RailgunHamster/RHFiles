@@ -432,6 +432,8 @@
   "update.statusReady": "版本 {version} 已下载，等待安装",
   "update.statusCurrent": "当前版本 {version} 已是最新",
   "update.bootstrapRequired": "这个旧式便携版不能自覆盖。请先换用一次 Velopack 便携版，之后即可自动更新。",
+  "update.macBootstrapRequired": "请先把 RHFiles.app 移到可写的本机「应用程序」文件夹。",
+  "update.macStatusBootstrap": "当前版本 {version}。把 RHFiles.app 移到可写的本机「应用程序」文件夹后即可更新。",
   "update.noUpdate": "RHFiles {version} 已是最新版本",
   "update.busy": "请等待本机文件任务及文件服务器传输结束，再更新 RHFiles",
   "update.availableTitle": "RHFiles 更新",

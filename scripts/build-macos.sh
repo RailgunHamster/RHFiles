@@ -1,6 +1,6 @@
 #!/bin/bash
 set -euo pipefail
-[[ "$(uname -s)" == Darwin ]] || { echo 'Build this package on macOS with Xcode command line tools.' >&2; exit 1; }
+[[ "$(uname -s):$(uname -m)" == Darwin:arm64 ]] || { echo 'Build on an Apple Silicon Mac with Xcode command line tools.' >&2; exit 1; }
 cd "$(dirname "$0")/.."
 bash scripts/prepare-7zip-macos.sh
 iconset="$(mktemp -d)/RHFiles.iconset"
@@ -10,7 +10,16 @@ for size in 16 32 128 256 512; do
   sips -z "$((size * 2))" "$((size * 2))" src-tauri/icons/rhfiles-icon-v4.png --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
 done
 iconutil -c icns "$iconset" -o src-tauri/icons/icon.icns
-npx --yes @tauri-apps/cli@2.10.1 build --bundles app,dmg
+if [[ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
+  npx --yes @tauri-apps/cli@2.10.1 build --bundles app --config '{"bundle":{"createUpdaterArtifacts":true}}' -- --locked
+  base=target/release/bundle/macos
+  for suffix in app.tar.gz app.tar.gz.sig; do
+    test -s "$base/RHFiles.$suffix"
+    cp "$base/RHFiles.$suffix" "target/release/bundle/RHFiles-macos-arm64.$suffix"
+  done
+else
+  npx --yes @tauri-apps/cli@2.10.1 build --bundles app,dmg -- --locked
+fi
 app=target/release/bundle/macos/RHFiles.app
 executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")
 binary="$app/Contents/MacOS/$executable"

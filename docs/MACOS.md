@@ -49,7 +49,7 @@ Executable discovery includes `/opt/homebrew/bin` and `/usr/local/bin`, so Finde
 
 The SFTP engine statically links its OpenSSL dependency on Mac; it does not require the build machine's Homebrew libraries at runtime. The package includes OpenSSL's license, and packaging verifies the application signature and checks for external absolute dylib dependencies.
 
-Updates are **manual** for now: quit RHFiles, replace the `.app`, reopen. Never run Windows `Update.exe` or use a Windows portable feed. Bundled version history remains readable offline. The Mac settings link opens the build downloads.
+macOS 0.1.131 and later can update from Settings using CNB or GitHub. For an earlier preview, install the new arm64 `.app` once. Start it from a locally writable Applications folder. macOS checks automatically at startup, when opening the update settings, and once an hour if enabled. Confirm installation in the update dialog. An active file task or file-server transfer blocks replacement. Update archives carry a separate release signature, even when the application uses ad-hoc macOS code signing.
 
 用户数据保存在 `~/Library/Application Support/RHFiles`，与其他 macOS 账号独立；系统 WebKit 缓存由 WebKit 管理。当前不按 macOS Spaces 自动拆分数据，也不调用非公开 Spaces 接口。
 

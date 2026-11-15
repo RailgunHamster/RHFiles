@@ -382,7 +382,6 @@ const UPDATE_CHECK_STARTUP_DELAY_MS = 5000;
 const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 
 function isAutomaticUpdateCheckEnabled() {
-  if (IS_MAC) return false; // macOS does not consume Windows Velopack feeds.
   return G.settings.autoUpdateEnabled !== false;
 }
 
@@ -575,7 +574,7 @@ function updateSettingsStatusText(status, error, state) {
   } else if (!status) {
     element.textContent = t('update.statusUnknown');
   } else if (!status.managed) {
-    element.textContent = t('update.statusBootstrap', {version: status.currentVersion || ''});
+    element.textContent = t(IS_MAC ? 'update.macStatusBootstrap' : 'update.statusBootstrap', {version: status.currentVersion || ''});
   } else if (status.availableVersion) {
     element.textContent = t(status.pendingRestart ? 'update.statusReady' : 'update.statusAvailable', {
       version: status.availableVersion,
@@ -656,7 +655,7 @@ async function checkForUpdates(manual, checked) {
     updateSettingsStatusText(status);
 
     if (!status || !status.managed) {
-      if (manual) showNotice(t('update.bootstrapRequired'));
+      if (manual) showNotice(t(IS_MAC ? 'update.macBootstrapRequired' : 'update.bootstrapRequired'));
       return;
     }
     if (!status.availableVersion) {

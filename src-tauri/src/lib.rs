@@ -125,6 +125,8 @@ pub fn run() {
             }
         }))
         .setup(|app| {
+            #[cfg(target_os = "macos")]
+            app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
             #[cfg(all(windows,any(debug_assertions,feature="rhvideo-host-trace")))]
             rhvideo_diagnostics::install(app.handle().clone());
             std::thread::spawn(lan_service::restore_if_enabled);
@@ -379,7 +381,11 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app, event| {
             #[cfg(target_os = "macos")]
-            if matches!(event, tauri::RunEvent::Reopen { .. }) { let _ = tray::show_main_window(app); }
+            match event {
+                tauri::RunEvent::Reopen { .. } => { let _ = tray::show_main_window(app); }
+                tauri::RunEvent::Exit => updates::release_restart_lock(&app.state::<CancelFlag>()),
+                _ => {}
+            }
             let _ = (app, event);
         });
 }

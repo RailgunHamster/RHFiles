@@ -432,6 +432,8 @@
   "update.statusReady": "Version {version} is ready to install",
   "update.statusCurrent": "Version {version} is up to date",
   "update.bootstrapRequired": "This legacy portable build cannot replace itself. Install the Velopack portable release once to enable automatic updates.",
+  "update.macBootstrapRequired": "Move RHFiles.app to a writable local Applications folder before updating.",
+  "update.macStatusBootstrap": "Version {version}. Move RHFiles.app to a writable local Applications folder to enable updates.",
   "update.noUpdate": "RHFiles {version} is up to date",
   "update.busy": "Wait for local file tasks and file-server transfers to finish before updating RHFiles",
   "update.availableTitle": "RHFiles update",

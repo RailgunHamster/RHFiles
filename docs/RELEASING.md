@@ -1,16 +1,15 @@
 # Platform versions / 平台版本维护
 
-Windows/desktop and Android have independent release numbers. A fix on one
-platform does not consume or require a release on the other. macOS currently
-shares the desktop sources/version, but its Apple Silicon preview builds are
-CI artifacts, not a stable Windows update feed.
+Windows, macOS and Android have independent release numbers. macOS uses the
+shared desktop source with an Apple Silicon version override.
 
 Windows/桌面端与 Android 独立编号，不为了数字一致而发布没有改动的平台。
-macOS 当前与桌面源码共用版本，但 Apple Silicon 预览构建仍从 CI 下载，不冒充 Windows 正式更新。
+macOS Apple Silicon 通过平台配置维护自己的版本号和更新清单。
 
 | Channel / 平台 | Version authority / 版本来源 | Git tag | Update manifest / 更新清单 |
 | --- | --- | --- | --- |
 | Windows / desktop | `src-tauri/tauri.conf.json` + matching `Cargo.toml` | `v<version>` | `releases.win.json` |
+| macOS arm64 | `src-tauri/tauri.macos.conf.json` | `macos-v<version>` | `updates/macos-cnb.json`, `updates/macos-github.json` |
 | Android | `android/src-tauri/tauri.conf.json` + matching `Cargo.toml` | `android-v<version>` | `releases.android.json` |
 
 Keep existing tags. The GitHub **Latest** marker belongs to stable Windows
@@ -72,6 +71,24 @@ References: [Tauri Android versionCode](https://v2.tauri.app/reference/config/#a
 The platform policy above supplements these existing operational instructions.
 Velopack is Windows-only; Android uses its separate APK feed. Family-server
 update sources have been retired; ordinary SMB/WebDAV file shares are unrelated.
+
+### macOS arm64
+
+Increment the macOS configuration version and add its Markdown and publication date
+in `docs/release-notes/macos`. On an Apple Silicon Mac, run
+`bash scripts/build-macos.sh` with the existing `TAURI_SIGNING_PRIVATE_KEY` and
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD` provided locally. Back up the private key
+outside the repository. Clients already shipped only trust the configured public key.
+The build outputs an installable .app ZIP and a signed .app.tar.gz under
+`target/release/bundle`. A build without the signing key produces preview artifacts
+for CI and cannot replace distributed clients through the update channel.
+
+Run `scripts/publish-macos.ps1` in Windows PowerShell 7 for each provider with
+the built artifact directory and its source commit. It leaves the repository-wide
+Latest release in place and writes a provider-specific feed after verifying its
+public downloads. Commit the generated feeds to `updates/` on `main` after the
+corresponding packages are public. The install ZIP enables updates for existing
+preview users after a one-time replacement.
 
 ## Local portable package
 
