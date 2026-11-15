@@ -210,6 +210,7 @@ const api = (() => {
     serverStatus: () => nativeCall('fileServer.state'),
     serverValidateShare: args => nativeCall('fileServer.validateShare',args),
     serverStart: args => nativeCall('fileServer.start',args),
+    serverStartOnLaunch: roots => nativeCall('fileServer.startOnLaunch',{roots}),
     serverStop: () => nativeCall('fileServer.stop'),
 
     // Diagnostics

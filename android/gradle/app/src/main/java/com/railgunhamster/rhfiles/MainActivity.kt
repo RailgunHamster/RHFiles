@@ -52,6 +52,9 @@ class MainActivity : TauriActivity() {
   private var shared=JSONArray()
   private var appWebView:WebView?=null
   private var restoreNavigation=false
+  private val fileServerLaunchLock=Any()
+  private var fileServerLaunchHandled=false
+  @Volatile private var fileServerLaunchError:String?=null
   private val paneTouch=PaneTouchRelay()
   private val settingsLock=Any()
   private val sharedConfig by lazy {ConfigSync(applicationContext,storage.remote,settingsLock)}
@@ -196,13 +199,30 @@ class MainActivity : TauriActivity() {
   private fun shareUri(path:String):Uri = if(storage.isDocument(path)) storage.docUri(path) else {
     val f=storage.local(path);require(f.isFile && f.canRead()){"文件不可读取"};FileProvider.getUriForFile(this,"$packageName.fileprovider",f)
   }
+  private fun fileServerState()=DeviceFileServer.state().put("autoStartError",fileServerLaunchError?:JSONObject.NULL)
+
+  private fun startFileServerOnLaunch(args:JSONObject)=synchronized(fileServerLaunchLock){
+    if(!fileServerLaunchHandled&&(args.optJSONArray("roots")?.length()?:0)>0){
+      fileServerLaunchHandled=true
+      try{
+        if(!DeviceFileServer.state().optBoolean("running"))DeviceFileServer.start(this,args)
+      }catch(e:Exception){
+        fileServerLaunchError=e.message?:"文件服务启动失败"
+      }
+    }
+    fileServerState()
+  }
   private fun dispatch(command:String,args:JSONObject):Any = when(command) {
     "transfer.settings" -> DeviceTransferSettings.read(this)
     "transfer.configure" -> synchronized(settingsLock){DeviceTransferSettings.save(this,args)}
-    "fileServer.state" -> DeviceFileServer.state()
+    "fileServer.state" -> fileServerState()
     "fileServer.validateShare" -> DeviceFileServer.validateShare(storage,args)
-    "fileServer.start" -> DeviceFileServer.start(this,args)
-    "fileServer.stop" -> DeviceFileServer.stop(this)
+    "fileServer.startOnLaunch" -> startFileServerOnLaunch(args)
+    "fileServer.start","fileServer.stop" -> synchronized(fileServerLaunchLock){
+      fileServerLaunchHandled=true
+      fileServerLaunchError=null
+      if(command=="fileServer.start")DeviceFileServer.start(this,args)else DeviceFileServer.stop(this)
+    }
     "fileServer.requested" -> onUi{val requested=intent?.action=="com.railgunhamster.rhfiles.FILE_SERVER";if(requested)intent.action=Intent.ACTION_MAIN;requested}
     "rhvideo.open" -> onUi{startActivity(Intent(this,RhVideoActivity::class.java).putExtra("rhvideoSharedFrontend",args.optBoolean("shared",false)));JSONObject().put("opened",true)}
     "groups.connect","groups.diagnostics","groups.cancel","groups.refresh" -> DeviceGroups.run(command.removePrefix("groups."),args,storage.remote)

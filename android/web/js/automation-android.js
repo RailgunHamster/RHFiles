@@ -46,6 +46,8 @@ const androidAutomation=(()=>{
     register('fileServer.stop',apiSchema(),()=>app.stopServer(),'external','Stop phone sharing and invalidate all active service sessions');
     register('fileServer.roots',apiSchema({path:string,edit:bool}),p=>app.chooseServerRoots(p),'ui','Choose a shared folder or edit a saved share');
     register('fileServer.shares',apiSchema(),()=>app.serverRoots(),'read','List the phone directories selected for the next service start');
+    register('fileServer.autoStart.state',apiSchema(),()=>app.serverAutoStart(),'read','Read the device-local autostart preference');
+    register('fileServer.autoStart.set',apiSchema({enabled:bool},['enabled']),p=>app.setServerAutoStart(p.enabled),'settings','Set whether to start saved shares the next time RHFiles opens');
     register('fileServer.share.save',apiSchema({name:shareName,path:string,previousPath:string},['name','path']),p=>app.saveServerShare(p),'settings','Validate and save a directory for the next service start');
     register('fileServer.share.remove',apiSchema({path:string},['path']),p=>app.removeServerShare(p.path),'settings','Remove one saved share without changing files or the active service');
     const reject=(code,message)=>{throw new ErrorType(code,message);};

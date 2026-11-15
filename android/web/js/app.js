@@ -25,6 +25,7 @@
     permissions: null, index: null, server: null, busy: false,navigationError:null,
   };
   let navigationId = 0, searchId = 0, searchTimer, indexTimer, quitArmedAt = 0,bootReady=false;
+  let checkedServerAutoStart=false;
   let refreshPromise = null, refreshAgain = false;
   let navigationTimer,lastNavigationSnapshot='';
   function rememberNavigation(){
@@ -865,6 +866,7 @@
     $('version').textContent = 'RHFiles Android ' + info.version;
     $('btn-theme').textContent = '主题：' + (document.documentElement.dataset.theme === 'dark' ? '深色' : '明亮');
     $('btn-hidden').textContent = '显示隐藏文件：' + (state.hidden ? '开' : '关');
+    paintServerAutoStart();
     document.querySelectorAll('[data-gallery-setting]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.gallerySetting===androidGallery.mode())));
     if(api.updatesAvailable())androidUpdates.onSettings().catch(error);
     if(api.syncAvailable())configSync.refresh().catch(error);
@@ -917,7 +919,7 @@
       server.discoveryError,
       server.announcementError,
       JSON.stringify(active)!==JSON.stringify(roots)?'下方保存的目录会在下次启动时应用。':'',
-    ]:['文件服务未启动'];
+    ]:['文件服务未启动',server.autoStartError?'自动启动共享失败：'+server.autoStartError:''];
     $('server-status').textContent=details.filter(Boolean).join('\n');
     const list=$('server-shares');
     list.replaceChildren();
@@ -944,6 +946,29 @@
       if(Array.isArray(roots)&&roots.length<=8&&roots.every(r=>typeof r?.name==='string'&&typeof r?.path==='string'))return roots.map(({name,path})=>({name,path}));
     }catch{}
     return [];
+  }
+  function serverAutoStart(){return {enabled:saved('rhfiles.phoneFileShareAutoStart','0')==='1'};}
+  function paintServerAutoStart(){
+    const enabled=serverAutoStart().enabled;
+    $('file-server-startup-settings').hidden=!api.nativeAvailable();
+    $('btn-server-auto-start').textContent='启动 RHFiles 时自动共享：'+(enabled?'开':'关');
+    $('btn-server-auto-start').setAttribute('aria-pressed',String(enabled));
+  }
+  function setServerAutoStart(enabled){
+    cache('rhfiles.phoneFileShareAutoStart',enabled?'1':'0');
+    paintServerAutoStart();
+    return serverAutoStart();
+  }
+  async function launchSavedServer(){
+    if(!bootReady || checkedServerAutoStart || !workbench.primary() || document.hidden || !api.nativeAvailable())return;
+    checkedServerAutoStart=true;
+    const roots=serverRoots();
+    if(!serverAutoStart().enabled || !roots.length)return;
+    state.server=await api.serverStartOnLaunch(roots);
+    if(state.server.autoStartError)ui.toast('自动启动共享失败：'+state.server.autoStartError,4500);
+    const host=paneHost();
+    if(host?.other(window)?.route?.tool==='server')host.refreshOther(window);
+    if(state.route.tool==='server')await refreshServer();
   }
   async function saveServerShares(shares){
     cache('rhfiles.phoneFileShares',JSON.stringify(shares));
@@ -1074,7 +1099,7 @@
     androidUpdates.init({go,error});
     window.rhfilesHandleBack = () => state.permissions ? back() : true;
     window.rhfilesPane={snapshot:()=>({route:{...state.route},busy:state.busy,ready:bootReady}),refresh:()=>refreshCurrent().catch(error)};
-    androidAutomation.install({state,go,back,ready:()=>bootReady,refresh:refreshCurrent,refreshLocations,refreshGroupDevices,paintSelection,activate,setClipboard,paste,remove,rename,currentDirectory,createEntry,search:runSearch,setSort,refreshServer,startServer,stopServer,chooseServerRoots,serverRoots,saveServerShare,removeServerShare,jumpToDeviceWindowsPath});
+    androidAutomation.install({state,go,back,ready:()=>bootReady,refresh:refreshCurrent,refreshLocations,refreshGroupDevices,paintSelection,activate,setClipboard,paste,remove,rename,currentDirectory,createEntry,search:runSearch,setSort,refreshServer,startServer,stopServer,chooseServerRoots,serverRoots,serverAutoStart,setServerAutoStart,saveServerShare,removeServerShare,jumpToDeviceWindowsPath});
     window.addEventListener('rhfiles-panes-changed',renderShell);
     window.addEventListener('rhfiles-clipboard',event=>{state.clipboard=event.detail;renderList();renderShell();});
     window.addEventListener('rhfiles-pane-task',event=>{peerTask=event.detail;renderShell();});
@@ -1083,6 +1108,7 @@
       if(event.key==='rhfiles.theme'){document.documentElement.dataset.theme=event.newValue==='dark'?'dark':'light';}
       if(event.key==='rhfiles.favorites'){try{state.favorites=JSON.parse(event.newValue||'[]');renderDrawer();if(state.route.screen==='home')renderHome();if(state.route.screen==='favorites')go(state.route,{replace:true}).catch(error);}catch{}}
       if(event.key==='rhfiles.hidden'){state.hidden=event.newValue==='1';if(isList())renderList();}
+      if(event.key==='rhfiles.phoneFileShareAutoStart')paintServerAutoStart();
     });
     for(const node of document.querySelectorAll('[data-icon]')) node.innerHTML=ui.icon(node.dataset.icon);
     document.documentElement.dataset.theme=saved('rhfiles.theme','light')==='dark'?'dark':'light';
@@ -1152,6 +1178,7 @@
     on('btn-refresh-logs',refreshLogs); on('btn-copy-logs',async()=>{await refreshLogs();await ui.copyText($('log-view').textContent);ui.toast('日志已复制');});
     on('btn-clear-logs',async()=>{await api.clearLogs();await refreshLogs();});
     on('btn-server-toggle',()=>RHFilesAPI.invoke(state.server?.running?'fileServer.stop':'fileServer.start'));
+    on('btn-server-auto-start',()=>RHFilesAPI.invoke('fileServer.autoStart.set',{enabled:!serverAutoStart().enabled}));
     on('btn-server-roots',()=>RHFilesAPI.invoke('fileServer.roots'));
     on('btn-server-groups',()=>RHFilesAPI.invoke('settings.open',{section:'storage'}));
     window.addEventListener('rhfiles-file-server-open',()=>go({screen:'tool',tool:'server'}).catch(error));
@@ -1167,7 +1194,7 @@
     RHFilesUI.listen(document,'keydown',e=>{if(e.key==='Escape'){e.preventDefault();back();}},undefined,"android.web.js.app.boot.ea5a60ea371d");
     let width=0;
     new ResizeObserver(entries=>{const w=entries[0].contentRect.width;if(w!==width){width=w;renderList();}}).observe($('filelist'));
-    document.addEventListener('visibilitychange',()=>{if(!document.hidden){if(state.route.tool==='server')refreshServer().catch(error);if(api.featuresAvailable())androidFeatures.onResume().catch(error);else if(state.permissions && !state.permissions.manageExternalStorage)bootStorage().catch(error);}});
+    document.addEventListener('visibilitychange',()=>{if(!document.hidden){launchSavedServer().catch(error);if(state.route.tool==='server')refreshServer().catch(error);if(api.featuresAvailable())androidFeatures.onResume().catch(error);else if(state.permissions && !state.permissions.manageExternalStorage)bootStorage().catch(error);}});
     if(!api.available()) {showPlaceholder('此版本无法连接文件服务，请重新安装。');return;}
     const resume=api.shouldRestoreNavigation()?savedNavigation():null;
     try {
@@ -1181,7 +1208,11 @@
         if(isList()&&!$('filelist').hidden)renderList(resume.route.scroll||0);else renderShell();
       }
       if(paneHost())state.clipboard=paneHost().currentClipboard(window);
-    } catch(err){showPlaceholder('启动失败：'+err,bootStorage);}finally{bootReady=true;api.native('fileServer.requested').then(requested=>{if(requested)return go({screen:'tool',tool:'server'});}).catch(error);}
+    } catch(err){showPlaceholder('启动失败：'+err,bootStorage);}finally{
+      bootReady=true;
+      launchSavedServer().catch(error);
+      api.native('fileServer.requested').then(requested=>{if(requested)return go({screen:'tool',tool:'server'});}).catch(error);
+    }
   }
   document.addEventListener('DOMContentLoaded',boot);
 })();
