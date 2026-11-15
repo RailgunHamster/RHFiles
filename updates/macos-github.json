@@ -1,10 +1,10 @@
 {
-  "version": "0.1.131",
-  "notes": "# RHFiles macOS 0.1.131\n\n- 支持从 CNB 或 GitHub 检查、下载并安装 macOS arm64 更新。\n- 下载后先验证更新签名，文件操作和共享传输结束后才允许重启。\n- 包含内置图片与视频查看、WebDAV 配置同步以及原生 7-Zip。\n\n- Check, download and install macOS arm64 updates from CNB or GitHub.\n- Updates verify the package signature and wait for file operations and shared transfers before restarting.\n- Includes built-in image and video viewing, WebDAV configuration sync and native 7-Zip.",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUblFJejFLdjc1Rk1SREsxdVozdW1JZytMNWs2MXVva2NLUFNEN1hoZUV5THM5T09Dc0dCVHZWTzMrUndnSWJPY0NzLzBvSHBodUlvRllSazBrM1g0N2V5dW1aYXI2VWdZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NzI1NjgzCWZpbGU6UkhGaWxlcy5hcHAudGFyLmd6CnBSbENOZmc4Q0RpVTZ5K0FodStteS9zNWZRa2JuRnA2VGhWaUpGWW9RUjNJQ0ViUlB4OHJkSEpVODRUeHpucDRYU1huR1ZvaUJFcEd6aUpLWmtSakNRPT0K",
-      "url": "https://github.com/RailgunHamster/RHFiles/releases/download/macos-v0.1.131/RHFiles-macos-arm64.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUblFJejFLdjc1Rk8yeXFOMmZ3QVljWnZ1TFpXRk1kN2szZThrMGw3RloyZkZ4WjJqcXpxemcwaDBORnZCNVNpOXRmK1I3QjFoZVdNVy9jazZTWGp4SG9qaGN4VStiUFF3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0NzI3NDk2CWZpbGU6UkhGaWxlcy5hcHAudGFyLmd6ClV6NGk5MGYzaEprZGtGUEtocDhyZU55enhRSG9zSVUycHlmd01VR3M4UENiV1NFQVhTWHdac0Ywd3NzM1NDUDZKK3ovMVVocTZsc3NPZ2FocnNGTkJ3PT0K",
+      "url": "https://github.com/RailgunHamster/RHFiles/releases/download/macos-v0.1.132/RHFiles-macos-arm64.app.tar.gz"
     }
-  }
+  },
+  "notes": "# RHFiles macOS 0.1.132\n\n- 下载、验签、安装及重启共用一个原生更新窗口。关闭主窗口后仍可看到更新进度，直到新版界面就绪。\n- 更新窗口跟随当前主题和界面语言，显示实际下载进度、速度和失败原因。\n\n- A single native window shows download, verification, installation and restart. It remains visible when the main window is closed and dismisses when the new interface is ready.\n- The update window follows the application's theme and language, and displays measured download progress, speed and errors.",
+  "version": "0.1.132"
 }

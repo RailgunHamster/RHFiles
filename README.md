@@ -43,7 +43,7 @@ RHFiles 是无广告、无遥测的文件管理器，提供 **Windows 桌面版�
 | --- | --- | --- |
 | Windows 10 / 11 | [CNB 下载](https://cnb.cool/railgunhamster/RHFiles/-/releases) · [GitHub portable / 安装程序](https://github.com/RailgunHamster/RHFiles/releases/latest) | 正式标签 `v…`，支持 portable 原地更新 |
 | Android 7.0+ | [CNB APK](https://cnb.cool/railgunhamster/RHFiles/-/releases) · [GitHub Android 发布记录](https://github.com/RailgunHamster/RHFiles/releases?q=android-v) | 正式标签 `android-v…`；普通手机选择 ARM64 APK |
-| macOS 12+ / Apple Silicon | [CNB 下载](https://cnb.cool/railgunhamster/RHFiles/-/releases/tag/macos-v0.1.131) · [GitHub 下载](https://github.com/RailgunHamster/RHFiles/releases/tag/macos-v0.1.131) | 解压 `.app.zip` 后放进「应用程序」，之后在应用内检查更新 |
+| macOS 12+ / Apple Silicon | [CNB 下载](https://cnb.cool/railgunhamster/RHFiles/-/releases/tag/macos-v0.1.132) · [GitHub 下载](https://github.com/RailgunHamster/RHFiles/releases/tag/macos-v0.1.132) | 解压 `.app.zip` 后放进「应用程序」，之后在应用内检查更新 |
 
 GitHub 的 **Latest** 标记留给 Windows，不代表 Android 没有新版本。两个平台使用独立的更新清单与日志；已发布安装包不覆盖，修复使用新版本。详见[版本与发布规则](docs/RELEASING.md)。
 
@@ -142,7 +142,7 @@ RHFiles is an ad-free, telemetry-free file manager with a **Windows desktop appl
 | --- | --- | --- |
 | Windows 10 / 11 | [CNB downloads](https://cnb.cool/railgunhamster/RHFiles/-/releases) · [GitHub portable / installer](https://github.com/RailgunHamster/RHFiles/releases/latest) | Stable tags `v…`; portable in-place updates |
 | Android 7.0+ | [CNB APKs](https://cnb.cool/railgunhamster/RHFiles/-/releases) · [GitHub Android releases](https://github.com/RailgunHamster/RHFiles/releases?q=android-v) | Tags `android-v…`; use ARM64 for ordinary phones |
-| macOS 12+ / Apple Silicon | [CNB download](https://cnb.cool/railgunhamster/RHFiles/-/releases/tag/macos-v0.1.131) · [GitHub download](https://github.com/RailgunHamster/RHFiles/releases/tag/macos-v0.1.131) | Extract the .app ZIP into Applications, then check for updates in RHFiles |
+| macOS 12+ / Apple Silicon | [CNB download](https://cnb.cool/railgunhamster/RHFiles/-/releases/tag/macos-v0.1.132) · [GitHub download](https://github.com/RailgunHamster/RHFiles/releases/tag/macos-v0.1.132) | Extract the .app ZIP into Applications, then check for updates in RHFiles |
 
 GitHub **Latest** is reserved for Windows; it does not indicate whether Android has an update. Each platform uses its own update feed and release notes. Published package bytes are immutable; corrections receive a new version. See [version and release policy](docs/RELEASING.md).
 
