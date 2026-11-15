@@ -3,6 +3,8 @@ const desktopMediaViewer=(()=>{
   const image=new Set('png jpg jpeg webp gif bmp ico tif tiff avif svg'.split(' ')),video=new Set('mp4 mkv mov avi webm m4v wmv flv mpeg mpg ts mts m2ts 3gp ogv'.split(' '));
   const kind=file=>{if(!file||file.is_dir)return null;const ext=String(file.extension||file.name?.split('.').pop()||file.path?.split('.').pop()||'').toLowerCase();return image.has(ext)?'image':video.has(ext)?'video':ext==='pdf'?'pdf':null;};
   const windowsViewerPath=/^(?:[A-Za-z]:[\\/]|\\\\|rhfiles-device:\/\/)/;
+  const macViewerPath=/^(?:\/|rhfiles-device:\/\/)/;
+  const macVideo=/\.(?:mp4|m4v|mov|webm|3gp)$/i;
   let prewarmRequested=false;
   function prewarmVideoLibrary(entries){
     if(prewarmRequested||!/Win/i.test(navigator.platform)||get().videoOpenWith==='system')return;
@@ -46,10 +48,12 @@ const desktopMediaViewer=(()=>{
     const pane=isRight?G.rp:getTab(),entries=pane?.entries||[];
     file=file||entries.find(e=>e.path===path)||{path,name:path.split(/[\\/]/).pop()};
     if(kind(file)==='pdf'){if(!force&&get().pdfOpenWith==='system')return false;await call('pdf_viewer_request',{action:'open',args:{path,name:file.name,language:typeof _lang==='string'?_lang:G.settings.language}});return true;}
-    if(!/Win/i.test(navigator.platform))return false;
-    if(!windowsViewerPath.test(path))return false;
     const type=kind(file);if(!type||!force&&get()[type+'OpenWith']==='system')return false;
-    let queue=entries.filter(e=>kind(e)===type&&!e.archive_entry).slice(0,5000);if(!queue.some(e=>e.path===path))queue=[file];
+    const onMac=/Mac/i.test(navigator.platform);
+    const viewerPath=onMac?macViewerPath:/Win/i.test(navigator.platform)?windowsViewerPath:null;
+    const supported=path=>viewerPath?.test(path)&&(!onMac||type!=='video'||macVideo.test(path));
+    if(!supported(path))return false;
+    let queue=entries.filter(e=>kind(e)===type&&!e.archive_entry&&supported(e.path)).slice(0,5000);if(!queue.some(e=>e.path===path))queue=[file];
     const unique=[...new Map(queue.map(e=>[e.path,{path:e.path,name:e.name||e.path.split(/[\\/]/).pop()}])).values()];
     const preferences=get();
     await call('file_viewer_request',{action:'open',args:{entries:unique,index:unique.findIndex(e=>e.path===path),mode:preferences.imageBrowseMode,videoDefaultVolume:preferences.videoDefaultVolume,language:typeof _lang==='string'?_lang:G.settings.language}});return true;

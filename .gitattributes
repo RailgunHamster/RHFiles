@@ -4,3 +4,4 @@
 # Offline PDF renderer and font/decoder data are checked against exact hashes.
 /src/vendor/pdfjs/** -text
 /android/web/vendor/pdfjs/** -text
+*.sh text eol=lf

@@ -114,7 +114,11 @@ fn token() -> Result<String, String> {
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 fn config_path() -> Result<PathBuf, String> {
-    Ok(crate::profile::data_dir()?.join("webdav-config.dpapi"))
+    Ok(crate::profile::data_dir()?.join(if cfg!(target_os = "macos") {
+        "webdav-config.sealed"
+    } else {
+        "webdav-config.dpapi"
+    }))
 }
 fn vault_scope(path: &Path) -> Result<Vec<u8>, String> {
     let parent = path.parent().ok_or("同步配置路径无效")?;
@@ -171,7 +175,9 @@ pub(crate) fn crypt(bytes: &[u8], scope: &[u8], encrypt: bool) -> Result<Vec<u8>
         Ok(data)
     }
 }
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub(crate) use crate::macos::credentials::crypt;
+#[cfg(not(any(windows, target_os = "macos")))]
 pub(crate) fn crypt(_: &[u8], _: &[u8], _: bool) -> Result<Vec<u8>, String> {
     Err("此平台尚未接入 WebDAV 同步凭据保护，未保存明文密码".into())
 }
@@ -676,7 +682,12 @@ pub(crate) fn save_network_profile(profile:Value,remove:bool)->Result<(),String>
     runtime.preview=None;Ok(())
 }
 fn as_local_favorite(favorite:&Value,profiles:&[Value])->Option<String>{
-    as_unc(favorite,profiles).or_else(||{let path=favorite["path"].as_str()?;let url=Url::parse(path).ok()?;(url.scheme()=="remote"&&profiles.iter().any(|p|p["id"].as_str()==url.host_str())).then(||path.into())})
+    if !cfg!(target_os = "macos") {
+        if let Some(path) = as_unc(favorite, profiles) {return Some(path);}
+    }
+    let path = favorite["path"].as_str()?;
+    let url = Url::parse(path).ok()?;
+    (url.scheme()=="remote"&&profiles.iter().any(|p|p["id"].as_str()==url.host_str())).then(||path.into())
 }
 fn apply(conn: &Connection, doc: &Value) -> Result<(), String> {
     store(conn,"rhvideoObserved",&raw_rhvideo()?.unwrap_or(Value::Null))?;
@@ -1052,7 +1063,14 @@ mod tests {
         let doc:Value=serde_json::from_str(include_str!("../../scripts/fixtures/shared-config.contract.json")).unwrap();validate(&doc).unwrap();
         let conn=connection();conn.execute("INSERT INTO pinned(path,name,ord) VALUES('C:\\local','Local',0)",[]).unwrap();apply(&conn,&doc).unwrap();
         assert_eq!(snapshot(&conn).unwrap(),doc);
-        let pins=pinned(&conn).unwrap();assert_eq!(pins.len(),4);assert_eq!(pins[0].0,r"C:\local");assert_eq!(pins[1].1,"云端报告");assert!(pins[2].0.starts_with(r"\\nas.example.invalid\Public\"));
+        let pins=pinned(&conn).unwrap();
+        assert_eq!(pins.len(),4);
+        assert_eq!(pins[0].0,r"C:\local");
+        assert_eq!(pins[1].1,"云端报告");
+        #[cfg(not(target_os = "macos"))]
+        assert!(pins[2].0.starts_with(r"\\nas.example.invalid\Public\"));
+        #[cfg(target_os = "macos")]
+        assert_eq!(pins[2].0,doc["favorites"][1]["path"].as_str().unwrap());
         conn.execute("DELETE FROM pinned WHERE path=?1",[&pins[1].0]).unwrap();let next=snapshot(&conn).unwrap();assert_eq!(next["favorites"].as_array().unwrap().len(),2);assert!(!next["favorites"].as_array().unwrap().iter().any(|f|f["label"]=="云端报告"));
     }
     #[test]fn old_non_smb_bookmarks_are_not_interpreted_as_local_deletions_before_migration(){
@@ -1270,7 +1288,10 @@ mod tests {
         assert!(!d.to_string().contains("rhfiles-device"));
         assert!(!d.to_string().contains(r"C:\local"));
         apply(&c, &d).unwrap();
+        #[cfg(not(target_os = "macos"))]
         assert_eq!(pinned(&c).unwrap()[1].0, r"\\qa.invalid\Public\中文");
+        #[cfg(target_os = "macos")]
+        assert_eq!(pinned(&c).unwrap()[1].0, d["favorites"][0]["path"].as_str().unwrap());
         assert_eq!(snapshot(&c).unwrap(), d);
     }
     #[test]

@@ -8,7 +8,14 @@
   },
   "bundle": {
     "targets": ["app", "dmg"],
-    "resources": {"macos-licenses/OpenSSL-LICENSE.txt": "licenses/OpenSSL-LICENSE.txt", "../LICENSE": "licenses/RHFiles-LICENSE.txt", "../NOTICE": "licenses/RHFiles-NOTICE.txt"},
+    "resources": {
+      "macos-licenses/OpenSSL-LICENSE.txt": "licenses/OpenSSL-LICENSE.txt",
+      "../LICENSE": "licenses/RHFiles-LICENSE.txt",
+      "../NOTICE": "licenses/RHFiles-NOTICE.txt",
+      "thirdparty/7zip-macos/7zz": "7zip/7zz",
+      "thirdparty/7zip-macos/License.txt": "7zip/License.txt",
+      "thirdparty/7zip-macos/readme.txt": "7zip/readme.txt"
+    },
     "icon": ["icons/icon.icns", "icons/rhfiles-icon-v4-256.png"],
     "macOS": {"minimumSystemVersion": "12.0", "signingIdentity": "-", "infoPlist": "Info.macos.plist"}
   }

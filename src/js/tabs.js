@@ -1399,6 +1399,10 @@ async function navigateTo(path, pushHistory) {
   if (!(tab.entries || []).length || path !== tab.path) renderNavigationLoading(path, false);
   const isSamePathReload = tab._loaded && path === tab.path;
   try {
+    if(IS_MAC&&networkLocations.isMacSmbPath(path)){
+      path=await networkLocations.resolveMacSmbPath(path);
+      if(navigationToken!==_navigationToken)return false;
+    }
     let entries = await withTimeout(
       listPathEntries(path, ""),
       typeof isDevicePath==='function'&&isDevicePath(path)?50000:10000,

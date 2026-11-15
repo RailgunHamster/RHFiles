@@ -756,6 +756,10 @@ async function rpNavigateTo(path, pushHistory) {
   if(typeof isRecyclePath==='function'&&isRecyclePath(path))return navigateRecycleLocation(pane,pushHistory,true);
   if (!(pane.entries || []).length) renderNavigationLoading(path, true);
   try {
+    if(IS_MAC&&networkLocations.isMacSmbPath(path)){
+      path=await networkLocations.resolveMacSmbPath(path);
+      if(navigationToken!==_rpNavigationToken||pane!==G.rp)return false;
+    }
     let entries = await withTimeout(
       listPathEntries(path, ""),
       typeof isDevicePath==='function'&&isDevicePath(path)?50000:10000,

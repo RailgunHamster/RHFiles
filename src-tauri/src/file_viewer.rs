@@ -223,6 +223,19 @@ async fn dispatch(app:AppHandle,action:String,args:Value,cancel:tauri::State<'_,
         }
         #[cfg(windows)]
         "video.state"|"video.bounds"=>{current(&args)?;file_player::request(app,&action,args).await}
+        #[cfg(target_os = "macos")]
+        "video.volume"=>{
+            let mut operations=OPEN.lock().await;
+            let state=current(&args)?;
+            if state.kind!="video"{return Err("当前不是视频".into());}
+            let volume=args["value"].as_u64().filter(|value|*value<=100).ok_or("音量范围是 0–100")? as u8;
+            let mut slot=SESSION.lock().map_err(|_|"查看器状态不可用")?;
+            let session=slot.as_mut().filter(|s|s.generation==state.generation&&s.selection==state.selection)
+                .ok_or("播放输入已改变")?;
+            session.video_volume=volume;
+            operations.session_volume=Some(volume);
+            Ok(Value::Null)
+        }
         #[cfg(not(windows))]
         "video.state"|"video.control"|"video.bounds"=>{current(&args)?;Err("此平台暂未提供内置视频内核".into())}
         _=>Err("未知媒体查看器操作".into())

@@ -1,6 +1,10 @@
 /* Bounded filesystem image canvas and native libVLC controls. */
 (()=>{'use strict';
-  const $=id=>document.getElementById(id),api=window.RHFilesAPI,core=window.__TAURI__.core,native=(action,args={})=>core.invoke('file_viewer_request',{action,args}),windowApi=window.__TAURI__.window.getCurrentWindow();
+  const $=id=>document.getElementById(id),api=window.RHFilesAPI,core=window.__TAURI__.core,windowApi=window.__TAURI__.window.getCurrentWindow();
+  const invoke=(action,args={})=>core.invoke('file_viewer_request',{action,args});
+  const macPlayback=/Mac/i.test(navigator.platform)?RHFilesMacPlayback.create({source,invoke,wake:wakeVideo}):null;
+  const native=(action,args={})=>macPlayback&&['video.state','video.control','video.bounds'].includes(action)
+    ?macPlayback.request(action,args):invoke(action,args);
   let state=null,position=0,zoom=1,angle=0,x=0,y=0,epoch=0,loading=false,pointer=null,video=null,poll=null,rendered=false,imageSeeking=false,selectionTask=null;
   const pages=new Map(),sources=new Map();let strip=null,stripFrames=new Map(),auto=null,autoSpeed=60,closing=false;
   let mousePoint=null,contextImage=null,saveTask=null;
@@ -220,7 +224,7 @@
     $('track').style.transform=continuous?'':`translateX(${-(position-center)*$('viewport').clientWidth}px)`;transform();
     boundary.update(continuous?[...stripFrames.values()]:wanted.map(at=>({slot:at,index:strip.item(at),left:(at-position)*$('viewport').clientWidth})),{width:$('viewport').clientWidth,count:state.entries.length,zoom,...(continuous?{cycle:Math.floor(Math.round(position)/state.entries.length)}:{})});
   }
-  function clear(){focusLeave();hideImageMenu();boundary.clear();auto?.pause();auto=null;++epoch;clearTimeout(poll);clearTimeout(chromeTimer);clearSliderSeek();volumeJob=null;volumeDragging=false;pendingToggle=false;wheelDelta=0;chromeHover=false;document.body.classList.remove('video-fullscreen');video=null;rendered=false;pointer=null;imageSeeking=false;zoom=1;angle=x=y=0;for(const p of pages.values())p.querySelector('img').removeAttribute('src');pages.clear();sources.clear();$('track').replaceChildren();$('track').style.transform='';$('message').textContent='';$('video-startup-status').textContent='';}
+  function clear(){focusLeave();hideImageMenu();boundary.clear();auto?.pause();auto=null;++epoch;clearTimeout(poll);clearTimeout(chromeTimer);clearSliderSeek();macPlayback?.clear();volumeJob=null;volumeDragging=false;pendingToggle=false;wheelDelta=0;chromeHover=false;document.body.classList.remove('video-fullscreen');video=null;rendered=false;pointer=null;imageSeeking=false;zoom=1;angle=x=y=0;for(const p of pages.values())p.querySelector('img').removeAttribute('src');pages.clear();sources.clear();$('track').replaceChildren();$('track').style.transform='';$('message').textContent='';$('video-startup-status').textContent='';}
   async function select(at){
     if(!state)return;if(closing)throw Error(text('查看器正在关闭','The viewer is closing'));const generation=state.generation;
     if(selectionTask){await selectionTask.catch(()=>{});if(generation!==state.generation)throw Error(text('查看内容已改变','The viewed content changed'));return select(at);}
@@ -255,7 +259,7 @@
   async function bounds(){if(!video?.opened)return;const r=$('viewport').getBoundingClientRect(),shown=fullVideo()&&controlsVisible;return native('video.bounds',{...scope(),expectedInput:video.inputId,x:r.x,y:r.y,width:r.width,height:r.height,clipTop:shown?document.querySelector('header').getBoundingClientRect().height:0,clipBottom:shown?document.querySelector('footer').getBoundingClientRect().height:0});}
   function paintVideoStartup() {
     const panel=$('video-diagnostics'), button=$('video-diagnostics-toggle');
-    button.hidden=state?.kind!=='video';
+    button.hidden=state?.kind!=='video'||!!macPlayback;
     button.textContent=text('播放诊断','Playback diagnostics');
     button.setAttribute('aria-expanded',String(diagnosticsOpen));
     panel.hidden=!diagnosticsOpen||button.hidden;
@@ -267,7 +271,7 @@
       startup?.phase==='stalled'?[text('首帧等待超时','First frame timed out'),waitingAt].filter(Boolean).join(' · '):
       startup?.phase==='firstFrame'&&waitingAt?waitingAt:phases[startup?.phase]||text('正在准备视频…','Opening video…');
     if(startup?.error)error(startup.error);
-    else if(!rendered&&!button.hidden)$('video-startup-status').textContent=status;
+    else if(!rendered&&state?.kind==='video')$('video-startup-status').textContent=status;
     if(panel.hidden)return;
     $('video-diagnostics-title').textContent=button.textContent;
     const source={local:text('本地文件','Local file'),smb:'SMB',device:text('RHFiles 设备','RHFiles device')}[startup?.transport];
@@ -382,6 +386,7 @@
     paintVolume();paintPlaybackToggle();paintRate();paintSeek();paintVideoStartup();
     const token=epoch;
     controlsVisible=true;
+    macPlayback?.open(state,$('track'));
     wakeVideo();
     const full=await windowApi.isFullscreen();
     if(token!==epoch)return;
@@ -394,7 +399,7 @@
   async function systemOpen(at=index()){if(!Number.isInteger(at)||at<0||at>=state.entries.length)throw Error(text('文件位置无效','Invalid file index'));const path=state.entries[at].path;return path.startsWith('rhfiles-device:')?core.invoke('device_transfer',{action:'open',args:{path,command:'open_file'}}):core.invoke('open_file',{path});}
   const actions={next:()=>select(index()+1),previous:()=>select(index()-1),fit:()=>{if(focused)return focusFit();auto?.pause();zoom=1;x=y=0;transform();},zoomIn:()=>{if(focused)return focusZoom(Math.min(16,focused.zoom*1.4));auto?.pause();zoom=Math.min(8,zoom*1.4);transform();},zoomOut:()=>{if(focused)return focusZoom(Math.max(.1,focused.zoom/1.4));auto?.pause();zoom=Math.max(.25,zoom/1.4);transform();},rotate:()=>{if(focused){focused.angle=(focused.angle+90)%360;paintFocus();return focusState();}auto?.pause();angle=(angle+90)%360;images();},close,systemOpen,fullscreen:toggleFullscreen};
   const object=(properties={},required=[])=>({type:'object',properties,required,additionalProperties:false});
-  api.provideState('application',()=>({platform:'windows',window:'window-file-viewer',ready:!!state}));api.register('media.viewer.state',snapshot,{params:object(),risk:'read'});api.register('media.viewer.mode.set',p=>mode(p.mode),{params:object({mode:{enum:['paged','continuous']}},['mode']),risk:'settings'});api.register('media.viewer.video.control',p=>videoControl(p.command,p.value),{params:object({command:{enum:['toggle','pause','resume','seek','volume','rate']},value:{type:'number'}},['command']),risk:'ui'});
+  api.provideState('application',()=>({platform:macPlayback?'macos':'windows',window:'window-file-viewer',ready:!!state}));api.register('media.viewer.state',snapshot,{params:object(),risk:'read'});api.register('media.viewer.mode.set',p=>mode(p.mode),{params:object({mode:{enum:['paged','continuous']}},['mode']),risk:'settings'});api.register('media.viewer.video.control',p=>videoControl(p.command,p.value),{params:object({command:{enum:['toggle','pause','resume','seek','volume','rate']},value:{type:'number'}},['command']),risk:'ui'});
   api.register('media.viewer.seek',p=>seekImage(p.index),{params:object({index:{type:'integer',minimum:0,maximum:4999}},['index']),risk:'ui'});
   api.register('media.viewer.focus.state',focusState,{params:object(),risk:'read'});
   api.register('media.viewer.focus.enter',p=>focusEnter(p.index),{params:object({index:{type:'integer',minimum:0,maximum:4999}}),risk:'ui'});

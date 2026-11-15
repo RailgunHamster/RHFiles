@@ -5004,6 +5004,7 @@ dependencies = [
  "rhfiles-core",
  "rhfiles-service",
  "rhfiles-transfer",
+ "ring",
  "rusqlite",
  "semver",
  "serde",

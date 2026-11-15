@@ -33,7 +33,11 @@ fn scope() -> Result<(PathBuf, Vec<u8>), String> {
         std::fs::canonicalize(&dir).map_err(err)?.display()
     )
     .into_bytes();
-    Ok((dir.join("network-secrets.dpapi"), scope))
+    Ok((dir.join(if cfg!(target_os = "macos") {
+        "network-secrets.sealed"
+    } else {
+        "network-secrets.dpapi"
+    }), scope))
 }
 fn vault() -> Result<BTreeMap<String, Secret>, String> {
     let (path, scope) = scope()?;
@@ -186,7 +190,7 @@ pub async fn network_location(
         .map_err(err)?
 }
 fn command(action: &str, args: &Value, app: &tauri::AppHandle) -> Result<Value, String> {
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "macos")))]
     if action!="list"{return Err("[unsupported] Saved network locations require this platform's secure credential integration; no metadata or password was changed".into());}
     if !args.is_object() {
         return Err("Invalid arguments".into());
@@ -218,6 +222,10 @@ fn command(action: &str, args: &Value, app: &tauri::AppHandle) -> Result<Value, 
                 };
                 if password.len() > 8192 {
                     return Err("Password too long".into());
+                }
+                #[cfg(target_os = "macos")]
+                if config["type"] == "smb" && !password.is_empty() {
+                    return Err("SMB 密码由 macOS 连接窗口处理 / Enter the SMB password in the macOS connection dialog".into());
                 }
                 v.insert(
                     id.clone(),
@@ -254,7 +262,12 @@ fn command(action: &str, args: &Value, app: &tauri::AppHandle) -> Result<Value, 
             )
         }
         "open" => {
-            let (c, s) = saved(field(args, "id")?)?;
+            let (c, secret) = saved(field(args, "id")?)?;
+            #[cfg(target_os = "macos")]
+            if c["type"] == "smb" {
+                return crate::macos::open_saved_share(&c, &path(args["path"].as_str().unwrap_or("/"))?);
+            }
+            #[cfg(windows)]
             if c["type"] == "smb" {
                 if port(&c) != 445 || field(&c, "host")?.contains(':') {
                     return Err(
@@ -271,23 +284,22 @@ fn command(action: &str, args: &Value, app: &tauri::AppHandle) -> Result<Value, 
                         format!("\\{share}")
                     }
                 );
-                if !s.password.is_empty() {
-                    #[cfg(windows)]
-                    {
-                        crate::network_io::execute_protocol(
-                            host,
-                            crate::network_io::Request::Protocol {
-                                config: c.clone(),
-                                password: s.password,
-                                pin: String::new(),
-                                action: "smb_connect".into(),
-                                args: json!({}),
-                            },
-                        )?;
-                    }
+                if !secret.password.is_empty() {
+                    crate::network_io::execute_protocol(
+                        host,
+                        crate::network_io::Request::Protocol {
+                            config: c.clone(),
+                            password: secret.password,
+                            pin: String::new(),
+                            action: "smb_connect".into(),
+                            args: json!({}),
+                        },
+                    )?;
                 }
                 return Ok(json!({"path":unc}));
             }
+            #[cfg(not(windows))]
+            let _ = secret;
             Ok(json!({"path":format!("remote://{}/",field(args,"id")?)}))
         }
         "fs" => {

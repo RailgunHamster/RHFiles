@@ -261,8 +261,12 @@ fn add_dir_to_zip(
 /// timestamps. The portable build bundles `7z.exe` + `7z.dll` next to
 /// RHFiles.exe, so the message below only appears when that pair was removed
 /// and no system 7-Zip is installed.
+#[cfg(not(target_os = "macos"))]
 const ARCHIVE_7Z_REQUIRED: &str =
     "7-Zip not found. Keep the bundled 7z.exe beside RHFiles.exe, or install 7-Zip from 7-zip.org";
+#[cfg(target_os = "macos")]
+const ARCHIVE_7Z_REQUIRED: &str =
+    "7-Zip not found. Reinstall RHFiles to restore the included archive engine.";
 
 /// Resolve a selected part to the archive entry volume. ZIP z01/z02 sets
 /// start at the final .zip central directory; numbered splits at .001;
@@ -656,7 +660,7 @@ fn run_7z_extraction(
 
 fn find_7z() -> Option<String> {
     #[cfg(target_os = "macos")]
-    return crate::macos::executable("7zz").or_else(||crate::macos::executable("7z")).map(|p|p.to_string_lossy().into_owned());
+    return crate::macos::archive_tool().map(|p|p.to_string_lossy().into_owned());
     // Prefer the copy bundled with RHFiles: portable builds keep 7z.exe and
     // its engine 7z.dll next to RHFiles.exe. Both must exist, 7z.exe alone
     // cannot run.
@@ -767,6 +771,9 @@ mod tests {
     use std::path::PathBuf;
 
     fn require_7z() -> String {
+        #[cfg(target_os = "macos")]
+        return find_7z().expect("Stage the macOS archive engine with bash scripts/prepare-7zip-macos.sh");
+        #[cfg(not(target_os = "macos"))]
         find_7z().unwrap_or_else(|| {
             let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("thirdparty");
             assert!(dir.join("7z.exe").is_file() && dir.join("7z.dll").is_file(),

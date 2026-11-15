@@ -5,6 +5,12 @@ const networkLocations=(()=>{
   const text=(zh,en)=>String(_lang||'').startsWith('zh')?zh:en;
   const native=(action,args={})=>call('network_location',{action,args});
   const label=id=>profiles.find(p=>p.id===id)?.config.name||text('网络位置','Network location');
+  const isMacSmbPath=path=>IS_MAC&&isSavedNetworkPath(path)&&profiles.some(p=>p.id===new URL(path).host&&p.config.type==='smb');
+  async function resolveMacSmbPath(path){
+    const result=await native('open',savedNetworkLocation(path));
+    if(result.connecting)showNotice(text('请在系统窗口中连接共享，连接后可再次打开这里。','Connect in the system dialog, then open this location again.'));
+    return result.path;
+  }
   const display=path=>{const u=new URL(path);return label(u.host)+decodeURIComponent(u.pathname);};
   async function refresh(){profiles=(await native('list')).profiles;paint();return {profiles};}
   async function save(p){const result=await native('save',p);await refresh();desktopConfigSync.changed();return result;}
@@ -17,7 +23,9 @@ const networkLocations=(()=>{
     if(profile&&!profile.hasPassword&&profile.config.username&&profile.config.username!=='anonymous'&&profile.config.type!=='smb'){
       if(!dialog)await show();edit(profile);errorNode.textContent=text('密码不会随配置同步，请在此设备补填一次。','Passwords are not synchronized. Enter credentials on this device.');throw Error(errorNode.textContent);
     }
-    const result=await native('open',p);dialog?.remove();dialog=null;closeSettings();
+    const path='remote://'+p.id+'/';
+    const result=isMacSmbPath(path)?{path:await resolveMacSmbPath(path)}:await native('open',p);
+    dialog?.remove();dialog=null;closeSettings();
     if(p.newTab)addTab(result.path,false);await navigateTo(result.path);return result;
   }
   function button(label,action,id,secondary=false){const b=document.createElement('button');b.type='button';b.className=secondary?'dialog-btn':'sidebar-item';b.textContent=label;RHFilesUI.listen(b,'click',()=>Promise.resolve().then(action).catch(showError),undefined,id);return b;}
@@ -42,9 +50,18 @@ const networkLocations=(()=>{
     fields.password.placeholder=profile?.hasPassword?text('已保存；不参与配置同步','Saved; never synchronized'):text('新设备需要在这里补填密码','Enter credentials on each new device');
     field('clearPassword',text('清除本机保存的密码','Clear locally saved password'),{type:'checkbox'});
     field('insecure',text('明确允许明文连接（FTP / HTTP）','Explicitly allow plaintext (FTP / HTTP)'),{type:'checkbox'});
-    const update=()=>{const value=type.value;for(const key of ['host','port','share','domain','url','insecure'])fields[key].parentElement.hidden=key==='url'?value!=='webdav':key==='share'||key==='domain'?value!=='smb':key==='insecure'?!['ftp','webdav'].includes(value):value==='webdav';};
+    const update=()=>{
+      const value=type.value;
+      for(const key of ['host','port','share','domain','url','insecure'])fields[key].parentElement.hidden=key==='url'?value!=='webdav':key==='share'||key==='domain'?value!=='smb':key==='insecure'?!['ftp','webdav'].includes(value):value==='webdav';
+      for(const key of ['password','clearPassword']){
+        fields[key].disabled=IS_MAC&&value==='smb';
+        fields[key].parentElement.hidden=fields[key].disabled;
+      }
+    };
     RHFilesUI.listen(type,'change',()=>{fields.port.value=type.value==='smb'?'445':type.value==='sftp'?'22':'21';update();},undefined,'networkLocations.form.type');update();
-    const note=document.createElement('p');note.className='settings-card-description';note.textContent=text('SMB 使用 Windows 网络连接。SFTP 首次保存前会显示服务器 SHA-256 指纹，确认后才发送密码。FTP 不加密；建议使用 SFTP、FTPS 或 HTTPS WebDAV。','SMB uses Windows connections. SFTP shows a SHA-256 server fingerprint before sending credentials. FTP is unencrypted; prefer SFTP, FTPS or HTTPS WebDAV.');form.append(note);
+    const note=document.createElement('p');note.className='settings-card-description';
+    note.textContent=(IS_MAC?text('SMB 由 macOS 挂载并提示登录。','macOS mounts SMB shares and prompts for login. '):text('SMB 使用 Windows 网络连接。','SMB uses Windows connections. '))+text('SFTP 会在发送密码前要求确认服务器 SHA-256 指纹。','SFTP requires confirming the server SHA-256 fingerprint before sending credentials.');
+    form.append(note);
     const actions=document.createElement('div');actions.className='dialog-actions';const submit=document.createElement('button');submit.type='submit';submit.className='dialog-btn primary';submit.textContent=text('保存连接','Save connection');actions.append(button(t('btn.cancel'),()=>editor.replaceChildren(),'networkLocations.form.cancel',true),submit);form.append(actions);
     RHFilesUI.listen(form,'submit',async event=>{
       event.preventDefault();errorNode.textContent='';submit.disabled=true;
@@ -59,19 +76,18 @@ const networkLocations=(()=>{
           if(!await showConfirmDialog({title:text('确认 SFTP 服务器指纹','Verify SFTP server fingerprint'),message:config.host+':'+config.port,detail:probe.fingerprint+'\n'+text('请与服务器管理员提供的指纹核对。确认前不会发送密码。','Compare this with the fingerprint provided by the server administrator. No password is sent before confirmation.'),confirmLabel:text('信任此指纹','Trust this fingerprint')}))return;
           fingerprint=probe.fingerprint;
         }
-        await save({...(profile?{id:profile.id}:{}),config,password:fields.password.value,clearPassword:value.clearPassword,...(fingerprint?{fingerprint}:{})});editor.replaceChildren();
+        await save({...(profile?{id:profile.id}:{}),config,password:fields.password.disabled?'':fields.password.value,clearPassword:!fields.clearPassword.disabled&&value.clearPassword,...(fingerprint?{fingerprint}:{})});editor.replaceChildren();
       }catch(error){showError(error);}finally{submit.disabled=false;}
     },undefined,'networkLocations.form.save');editor.append(form);fields.name.focus();
   }
   async function show(){
-    if(IS_MAC){await showFtpDialog();return {opened:true};}
     dialog?.remove();dialog=document.createElement('div');dialog.className='overlay';dialog.id='network-locations-dialog';dialog.style.display='flex';
     const box=document.createElement('div');box.className='dialog-box dialog-wide';box.setAttribute('role','dialog');box.setAttribute('aria-modal','true');
     const heading=document.createElement('div');heading.className='dialog-title';heading.textContent=text('网络位置','Network locations');
     const body=document.createElement('div');body.className='dialog-scroll';list=document.createElement('div');editor=document.createElement('div');errorNode=document.createElement('p');errorNode.className='media-convert-error';errorNode.setAttribute('role','status');
     body.append(list,editor,errorNode);const actions=document.createElement('div');actions.className='dialog-actions';actions.append(button(text('添加位置','Add location'),()=>edit(),'networkLocations.add',true),button(t('btn.close'),()=>{dialog.remove();dialog=null;},'networkLocations.close',true));box.append(heading,body,actions);dialog.append(box);document.body.append(dialog);await refresh();return {opened:true};
   }
-  async function init(){const btn=document.getElementById('network-locations-manage');if(btn)RHFilesUI.listen(btn,'click',()=>window.RHFilesAPI.invoke('networkLocations.show').catch(showError),undefined,'networkLocations.sidebar.manage');if(IS_MAC){if(btn)btn.querySelector('span').textContent=text('连接 FTP…','Connect to FTP…');return {profiles:[]};}const listen=window.__TAURI__?.event?.listen||window.__TAURI_INTERNALS__?.event?.listen;if(listen)listen('config-sync-changed',()=>refresh().catch(()=>{})).catch(()=>{});return refresh();}
+  async function init(){const btn=document.getElementById('network-locations-manage');if(btn)RHFilesUI.listen(btn,'click',()=>window.RHFilesAPI.invoke('networkLocations.show').catch(showError),undefined,'networkLocations.sidebar.manage');const listen=window.__TAURI__?.event?.listen||window.__TAURI_INTERNALS__?.event?.listen;if(listen)listen('config-sync-changed',()=>refresh().catch(()=>{})).catch(()=>{});return refresh();}
   const string={type:'string',maxLength:8192},id={type:'string',pattern:'^[a-f0-9-]{36}$'},object=(properties,required=[])=>({type:'object',properties,required,additionalProperties:false}),api=window.RHFilesAPI;
   api.register('networkLocations.list',refresh,{params:object({}),risk:'read'});
   api.register('networkLocations.show',show,{params:object({}),risk:'ui'});
@@ -81,5 +97,5 @@ const networkLocations=(()=>{
   api.register('networkLocations.remove',remove,{params:object({id},['id']),risk:'destructive',description:'Confirm removal of connection metadata/local secret only, never remote files.'});
   api.register('networkLocations.probe',p=>native('probe',p),{params:object({config},['config']),risk:'external',description:'Read an SSH server fingerprint without authenticating or saving trust.'});
   api.register('networkLocations.fs',p=>native('fs',p),{params:object({id,operation:{type:'string',enum:['list','mkdir','rename','delete','upload','download']},path:string,newName:string,isDir:{type:'boolean'},localPath:string},['id','operation','path']),risk:'write',description:'Protocol filesystem adapter with bounded isolated Windows workers. Writes are not retried and existing destinations are not replaced automatically.'});
-  return {init,refresh,show,display,label,native};
+  return {init,refresh,show,display,label,native,isMacSmbPath,resolveMacSmbPath};
 })();

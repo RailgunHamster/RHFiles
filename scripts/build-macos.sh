@@ -2,6 +2,7 @@
 set -euo pipefail
 [[ "$(uname -s)" == Darwin ]] || { echo 'Build this package on macOS with Xcode command line tools.' >&2; exit 1; }
 cd "$(dirname "$0")/.."
+bash scripts/prepare-7zip-macos.sh
 iconset="$(mktemp -d)/RHFiles.iconset"
 mkdir -p "$iconset"
 for size in 16 32 128 256 512; do

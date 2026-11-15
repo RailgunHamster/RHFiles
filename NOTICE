@@ -41,6 +41,10 @@ License text: src/vendor/rhvideo/LICENSE (also bundled with the Android media UI
 pinyin-pro 3.29.5 — MIT; see src/vendor/pinyin-pro/LICENSE.
 
 Windows native playback:
+The macOS distribution includes 7-Zip 26.06, Copyright (C) 1999-2026 Igor Pavlov.
+Its license and upstream notices are included in the 7zip resource directory.
+Corresponding upstream source: https://github.com/ip7z/7zip/releases/tag/26.06
+
 libVLC 3.0.24 — Copyright (C) 1996-2026 VideoLAN and contributors — LGPL-2.1-or-later.
 The non-GPL VideoLAN.LibVLC.Windows runtime is distributed in vlc/ with its
 license, package metadata, source links and RHFiles-NOTICE.txt. The GPL cache

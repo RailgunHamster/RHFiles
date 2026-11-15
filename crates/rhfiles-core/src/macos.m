@@ -1,6 +1,7 @@
 // Native macOS services, statically linked: no shell interpolation or helper download.
 #import <AppKit/AppKit.h>
 #import <Foundation/Foundation.h>
+#import <Security/Security.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #include <stdio.h>
 #include <errno.h>
@@ -11,6 +12,38 @@ static id perform(NSDictionary *request, NSError **error) {
     NSString *action = request[@"action"];
     NSString *path = request[@"path"];
     NSFileManager *fm = NSFileManager.defaultManager;
+    if ([action isEqual:@"credential-key"]) {
+        NSString *account = request[@"account"];
+        if (![account isKindOfClass:NSString.class] || account.length != 64)
+            @throw [NSException exceptionWithName:@"Keychain" reason:@"Invalid credential scope" userInfo:nil];
+        NSDictionary *item = @{(__bridge id)kSecClass:(__bridge id)kSecClassGenericPassword,
+            (__bridge id)kSecAttrService:@"RHFiles local credential encryption",
+            (__bridge id)kSecAttrAccount:account};
+        NSMutableDictionary *query = [item mutableCopy];
+        query[(__bridge id)kSecReturnData] = @YES;
+        CFTypeRef key = NULL;
+        OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &key);
+        if (status == errSecItemNotFound && [request[@"create"] boolValue]) {
+            NSMutableData *candidate = [NSMutableData dataWithLength:32];
+            status = SecRandomCopyBytes(kSecRandomDefault, candidate.length, candidate.mutableBytes);
+            if (status == errSecSuccess) {
+                NSMutableDictionary *record = [item mutableCopy];
+                record[(__bridge id)kSecValueData] = candidate;
+                status = SecItemAdd((__bridge CFDictionaryRef)record, NULL);
+                if (status == errSecSuccess) return [candidate base64EncodedStringWithOptions:0];
+                if (status == errSecDuplicateItem)
+                    status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &key);
+            }
+        }
+        if (status != errSecSuccess) {
+            *error = [NSError errorWithDomain:NSOSStatusErrorDomain code:status userInfo:nil];
+            return nil;
+        }
+        NSData *data = CFBridgingRelease(key);
+        if (![data isKindOfClass:NSData.class] || data.length != 32)
+            @throw [NSException exceptionWithName:@"Keychain" reason:@"Invalid stored credential key" userInfo:nil];
+        return [data base64EncodedStringWithOptions:0];
+    }
     if ([action isEqual:@"drives"]) {
         NSMutableArray *items = [NSMutableArray array];
         NSArray *keys = @[NSURLVolumeNameKey, NSURLVolumeTotalCapacityKey, NSURLVolumeAvailableCapacityKey];
@@ -25,6 +58,23 @@ static id perform(NSDictionary *request, NSError **error) {
                 @"free_bytes":v[NSURLVolumeAvailableCapacityKey] ?: @0}];
         }
         return items;
+    }
+    if ([action isEqual:@"smb.mounted"]) {
+        NSURLComponents *target = [NSURLComponents componentsWithString:request[@"url"]];
+        NSArray *parts = target.URL.pathComponents;
+        if (parts.count < 2) return NSNull.null;
+        NSArray *keys = @[NSURLVolumeURLForRemountingKey];
+        for (NSURL *volume in [fm mountedVolumeURLsIncludingResourceValuesForKeys:keys options:0]) {
+            NSURL *remote = [volume resourceValuesForKeys:keys error:nil][NSURLVolumeURLForRemountingKey];
+            if (![remote isKindOfClass:NSURL.class] || ![remote.scheme.lowercaseString isEqual:@"smb"] ||
+                ![remote.host.lowercaseString isEqual:target.host.lowercaseString] ||
+                (remote.port ? remote.port.intValue : 445) != (target.port ? target.port.intValue : 445) ||
+                remote.pathComponents.count < 2 ||
+                ![remote.pathComponents[1] isEqual:parts[1]]) continue;
+            if (target.user.length && ![remote.user isEqual:target.user]) continue;
+            return volume.path;
+        }
+        return NSNull.null;
     }
     NSString *boardName = request[@"testPasteboard"];
     if (boardName && ![boardName hasPrefix:@"com.rhfiles.test."])

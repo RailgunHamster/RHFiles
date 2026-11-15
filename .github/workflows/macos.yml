@@ -30,6 +30,8 @@ jobs:
           cache-on-failure: true
       - run: npm ci --ignore-scripts
       - run: npm test
+      - name: Stage native 7-Zip
+        run: bash scripts/prepare-7zip-macos.sh
       - name: Native filesystem, Trash and business regression tests
         run: cargo test --workspace --locked
       - name: Build application and disk image

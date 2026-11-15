@@ -1421,7 +1421,7 @@ function importAllData() {
       try {
         const data = JSON.parse(reader.result);
         if (!data._version) { alert(t('alert.invalidBackup')); return; }
-        if (!IS_MAC) await call('config_sync_disable',{});
+        await call('config_sync_disable',{});
         for (const k in data) {
           if (k.startsWith("_")) continue;
           localStorage.setItem(k, data[k]);

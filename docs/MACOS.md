@@ -14,6 +14,7 @@ Build on an Apple Silicon Mac with Xcode Command Line Tools, Rust and Node.js 22
 
 ```sh
 npm ci --ignore-scripts
+bash scripts/prepare-7zip-macos.sh
 cargo test --workspace --locked
 bash scripts/build-macos.sh
 ```
@@ -28,7 +29,9 @@ The script generates the current icon's ICNS representation and builds `target/r
 - File clipboard uses NSPasteboard file URLs and interoperates with Finder. RHFiles cut uses its own cut marker; Finder itself normally copies files. Finder drops into a pane, folder, sidebar or tab use the same copy/move confirmation. Cross-RHFiles HTML dragging remains available.
 - Normal deletion uses the system Trash, never an implicit permanent-delete fallback. Undo records the actual Trash location and refuses to overwrite a new occupant. Permanent deletion keeps the existing two-confirmation workflow.
 - Copy preserves POSIX permissions, timestamps, ACLs and extended attributes using Apple's metadata-copy API. Symbolic links are copied as links, including dangling links; directory cycles are not traversed. Unsupported filesystem operations report an error rather than silently dropping metadata.
-- Mounted volumes, iCloud Drive and File Provider directories appear as locations. Enter `smb://server/share` to open the system connection dialog, then browse the mounted share under `/Volumes` (refresh after connecting). Authentication is handled by macOS; do not embed passwords in URLs.
+- Mounted volumes, iCloud Drive and File Provider directories appear as locations. Save SMB, SFTP, FTP/FTPS and WebDAV in Network locations. SMB uses the macOS connection dialog and mounted volumes. You can also enter `smb://server/share` in the address bar. Reopen the saved location after mounting. Enter SMB credentials in the system dialog.
+- WebDAV settings sync shares the same file format with Windows and Android. Network locations, network bookmarks and their labels/order, device aliases and the RHVideo address and username can sync. The sync document excludes passwords and group credentials. Local WebDAV and protocol credentials use a Keychain-protected profile encryption key.
+- The built-in image viewer supports continuous browsing and local, mounted and RHFiles device paths. The built-in video viewer uses WebKit for MP4, MOV, M4V, WebM and 3GP. Playback depends on the actual codec and macOS version. Other formats can open in a system application.
 - Current-folder search uses the built-in Pinyin/initials/wildcard/regex engine. Global scope currently means the user's home folder, not a Spotlight-wide index. Scanning is bounded to five seconds / 100,000 visited entries and may return partial results.
 - Use Command for copy/paste, tabs, settings and undo. Delete: Command+Backspace; permanently delete: Command+Option+Backspace. Control+Tab still cycles tabs; Alt+[ / Alt+] cycle typed-search matches. Bindings remain configurable.
 
@@ -36,10 +39,10 @@ The script generates the current icon's ICNS representation and builds `target/r
 
 Windows-only Everything, Explorer/Open-Save companion, NTFS stream tools, Windows ACL UI, Bandizip/WinRAR integration and Velopack feeds are not used on Mac. No Windows binaries are bundled in the Mac application.
 
-ZIP creation and standard previews are built in. Additional archive browsing/extraction, media conversion and disk usage analysis need native tools:
+ZIP creation and standard previews are built in. The application includes native 7-Zip for additional archive formats, passwords and split archives. Media conversion and disk usage analysis can use these native tools:
 
 ```sh
-brew install sevenzip ffmpeg dust
+brew install ffmpeg dust
 ```
 
 Executable discovery includes `/opt/homebrew/bin` and `/usr/local/bin`, so Finder launches do not depend on shell startup files. FFmpeg and 7-Zip paths/arguments can also be configured in Settings. Media codecs remain subject to the system WebView's capabilities.
