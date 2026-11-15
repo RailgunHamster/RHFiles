@@ -55,7 +55,8 @@ mod tray;
 mod types;
 #[cfg_attr(target_os = "macos", path = "macos/updates.rs")]
 mod updates;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
+#[cfg_attr(target_os = "macos", path = "macos/update_splash.rs")]
 mod update_splash;
 #[cfg(windows)]
 mod update_package;
@@ -345,6 +346,8 @@ pub fn run() {
 
             updates::check_updates, updates::get_last_update_failure, updates::get_release_history,
             updates::download_update, updates::apply_update, updates::defer_update,
+            #[cfg(target_os = "macos")]
+            updates::update_main_window_ready,
             types::get_update_readiness,
         ])
         .on_window_event(|window, event| {

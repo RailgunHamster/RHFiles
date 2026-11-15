@@ -51,6 +51,8 @@ The SFTP engine statically links its OpenSSL dependency on Mac; it does not requ
 
 macOS 0.1.131 and later can update from Settings using CNB or GitHub. For an earlier preview, install the new arm64 `.app` once. Start it from a locally writable Applications folder. macOS checks automatically at startup, when opening the update settings, and once an hour if enabled. Confirm installation in the update dialog. An active file task or file-server transfer blocks replacement. Update archives carry a separate release signature, even when the application uses ad-hoc macOS code signing.
 
+Starting with 0.1.132, the independent update window shows download, signature verification, installation, and restart. You can close the main window during the update. The progress window stays open until the new version is ready.
+
 用户数据保存在 `~/Library/Application Support/RHFiles`，与其他 macOS 账号独立；系统 WebKit 缓存由 WebKit 管理。当前不按 macOS Spaces 自动拆分数据，也不调用非公开 Spaces 接口。
 
 文件夹打不开时，先检查“系统设置 → 隐私与安全性 → 文件与文件夹”的授权。系统受保护位置可能需要用户自行授予完全磁盘访问权限；RHFiles 不提权、不修改权限以绕过保护。Finder 属性窗口可能请求自动化授权。

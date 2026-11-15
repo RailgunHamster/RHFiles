@@ -132,6 +132,19 @@ fn main() {
 }
 
 fn build_update_splash() {
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        let relative = "src/macos/UpdateWindow.swift";
+        println!("cargo:rerun-if-changed={relative}");
+        let source = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join(relative);
+        let output = PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("RHFiles.UpdateWindow");
+        let arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap();
+        let target = format!("{}-apple-macos12.0", if arch == "aarch64" { "arm64" } else { &arch });
+        let result = std::process::Command::new("xcrun")
+            .args(["--sdk", "macosx", "swiftc", "-parse-as-library", "-target", &target, "-O", "-o"])
+            .arg(output).arg(source).output().expect("compile macOS update window");
+        assert!(result.status.success(), "macOS update window compiler: {}", String::from_utf8_lossy(&result.stderr));
+        return;
+    }
     println!("cargo:rerun-if-changed=src/RHFilesUpdateSplash.cs");
     if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") { return; }
     // Build from reviewed source, never compile on the user's machine or trust

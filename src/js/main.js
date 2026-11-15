@@ -39,6 +39,9 @@ function completeStartup() {
   document.documentElement.dataset.appReady = 'true';
   clearTimeout(_startupWatchdogTimer);
   _startupWatchdogTimer = null;
+  if (IS_MAC && G.windowLabel === 'main') {
+    call('update_main_window_ready', {}).catch(error => reportStartupIssue('update-window', error));
+  }
 }
 
 document.addEventListener("DOMContentLoaded", async () => {

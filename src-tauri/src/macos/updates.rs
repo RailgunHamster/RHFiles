@@ -5,9 +5,10 @@ use std::{
     ffi::CString, io, os::unix::ffi::OsStrExt, path::{Component, Path, PathBuf},
     process::Command, sync::Mutex, time::{Duration, Instant},
 };
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 use tauri_plugin_updater::{Update, UpdaterExt};
 use url::Url;
+use crate::update_splash::{self, Appearance, Session};
 
 const DEFAULT_SOURCE: &str = "https://cnb.cool/railgunhamster/RHFiles";
 const BUNDLE_ID: &str = "com.rhfiles.app";
@@ -15,6 +16,7 @@ static OPERATION: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static STAGED: Mutex<Option<Staged>> = Mutex::new(None);
 static INSTALLING: Mutex<Option<crate::lan_service::UpdateReservation>> = Mutex::new(None);
 static FAILURE: Mutex<Option<Value>> = Mutex::new(None);
+static UPDATE_WINDOW: Mutex<Option<Session>> = Mutex::new(None);
 
 struct Staged {
     endpoint: Url,
@@ -143,17 +145,44 @@ pub async fn check_updates(app: AppHandle, source: Option<String>, proxy: Option
     Ok(value)
 }
 
+fn send_progress(app: &AppHandle, frame: Value) {
+    let _ = app.emit("update-progress", &frame);
+    if let Ok(mut window) = UPDATE_WINDOW.lock() {
+        if let Some(session) = window.as_mut() {
+            let _ = session.send(&frame);
+        }
+    }
+}
+
 fn progress(app: &AppHandle, phase: &str, version: &str, bytes: u64, total: u64, speed: u64) {
     let percentage = if phase == "downloading" {
         bytes.saturating_mul(100).checked_div(total).unwrap_or(0).min(99)
     } else { 100 };
-    let _ = app.emit("update-progress", json!({"phase":phase,"version":version,"percentage":percentage,
+    send_progress(app, json!({"phase":phase,"version":version,"percentage":percentage,
         "downloadedBytes":bytes,"totalBytes":total,"speed":speed}));
+}
+
+async fn ensure_window(app: &AppHandle, version: &str, phase: &'static str, appearance: Option<Appearance>) {
+    let from = app.package_info().version.to_string();
+    let to = version.to_owned();
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        if let Ok(mut window) = UPDATE_WINDOW.lock() {
+            if window.as_mut().is_some_and(|session| session.shows(&to)) {
+                return;
+            }
+            window.take();
+            match update_splash::launch(&from, &to, phase, appearance.unwrap_or_default()) {
+                Ok(session) => *window = Some(session),
+                Err(error) => eprintln!("RHFiles update window: {error}"),
+            }
+        }
+    }).await;
 }
 
 #[tauri::command]
 pub async fn download_update(
     app: AppHandle, source: Option<String>, proxy: Option<String>, target_version: Option<String>,
+    appearance: Option<Appearance>,
 ) -> Result<String, String> {
     let _operation = OPERATION.try_lock().map_err(|_| "[update_busy] Another update is running")?;
     installed_bundle()?;
@@ -161,6 +190,8 @@ pub async fn download_update(
     let update = offer(&app, &channel, proxy.as_deref()).await.map_err(|e| failure("network", e))?
         .filter(|update| target_version.as_ref().is_none_or(|v| v == &update.version))
         .ok_or("The selected update changed. Check again before downloading.")?;
+    ensure_window(&app, &update.version, "downloading", appearance).await;
+    progress(&app, "downloading", &update.version, 0, 0, 0);
     let mut bytes = 0u64;
     let mut last = Instant::now();
     let started = last;
@@ -173,7 +204,11 @@ pub async fn download_update(
             progress(&app, "downloading", &update.version, bytes, total.unwrap_or(0), rate);
         }
     }, || progress(&app, "verifying", &update.version, 0, 0, 0)).await
-    .map_err(|e| failure("package", e.to_string()))?;
+    .map_err(|e| {
+        let message = failure("package", e.to_string());
+        send_progress(&app, json!({"phase":"failed","version":update.version,"message":message}));
+        message
+    })?;
     *STAGED.lock().map_err(|e| e.to_string())? = Some(Staged { endpoint:channel.feed,
         version:update.version.clone(), notes:update.body.unwrap_or_default(), bytes:archive });
     clear_failure();
@@ -234,38 +269,75 @@ fn exchange(current: &Path, next: &Path) -> io::Result<()> {
 #[tauri::command]
 pub async fn apply_update(
     app: AppHandle, source: Option<String>, target_version: Option<String>, cancel: State<'_, crate::types::CancelFlag>,
+    appearance: Option<Appearance>,
 ) -> Result<(), String> {
     let _operation = OPERATION.try_lock().map_err(|_| "[update_busy] Another update is running")?;
     let current = installed_bundle()?;
     let channel = channel(source.as_deref())?;
+    let version = STAGED.lock().map_err(|e| e.to_string())?.as_ref()
+        .filter(|s| s.endpoint == channel.feed && target_version.as_ref().is_none_or(|v| v == &s.version))
+        .map(|s| s.version.clone()).ok_or("Download and verify this update before installing it")?;
+    ensure_window(&app, &version, "applying", appearance).await;
+    progress(&app, "applying", &version, 0, 0, 0);
+    if let Err(error) = install_update(&app, current, &cancel).await {
+        let phase = if error.starts_with("[update_busy]") || error.starts_with("[update_deferred]")
+            || error.starts_with("[update_other_instances]") { "ready" } else { "failed" };
+        send_progress(&app, json!({"phase":phase,"version":version,"message":error}));
+        return Err(error);
+    }
+    Ok(())
+}
+
+// The caller holds OPERATION across this function and the staged package has
+// already been checked against the selected source and confirmed version.
+async fn install_update(app: &AppHandle, current: PathBuf, cancel: &crate::types::CancelFlag) -> Result<(), String> {
+    let executable = std::env::current_exe().map_err(|e| e.to_string())?;
     let install = tauri::async_runtime::spawn_blocking(move || {
         let choice = STAGED.lock().map_err(|e| e.to_string())?;
-        let staged = choice.as_ref().filter(|s| s.endpoint == channel.feed
-            && target_version.as_ref().is_none_or(|v| v == &s.version))
-            .ok_or("Download and verify this update before installing it")?;
+        let staged = choice.as_ref().ok_or("No verified update package")?;
         let workspace = tempfile::tempdir_in(current.parent().ok_or("Missing application folder")?)
             .map_err(|e| failure("permission", e.to_string()))?;
         let replacement = extract_bundle(&staged.bytes, workspace.path()).map_err(|e| failure("package", e))?;
         validate_bundle(&replacement, &staged.version).map_err(|e| failure("package", e))?;
-        Ok::<_, String>((workspace, current, replacement, staged.version.clone()))
+        Ok::<_, String>((workspace, current, replacement))
     }).await.map_err(|e| e.to_string())??;
-    let (_workspace, current, replacement, version) = install;
+    let (_workspace, current, replacement) = install;
     let mut installing = INSTALLING.lock().map_err(|e| e.to_string())?;
     let reservation = crate::lan_service::reserve_update(Duration::ZERO)?;
     cancel.begin_update()?;
-    progress(&app, "applying", &version, 0, 0, 0);
     if let Err(error) = exchange(&current, &replacement) {
         cancel.abort_update();
         return Err(failure("permission", format!("Could not replace RHFiles.app: {error}")));
     }
     *installing = Some(reservation);
     clear_failure();
+    if let Ok(mut window) = UPDATE_WINDOW.lock() {
+        if let Some(session) = window.take() {
+            if let Err(error) = session.handoff(executable) {
+                eprintln!("RHFiles update window handoff: {error}");
+            }
+        }
+    }
     app.request_restart();
     Ok(())
 }
 
 #[tauri::command]
-pub fn defer_update() {}
+pub fn defer_update(app: AppHandle) {
+    let Ok(_operation) = OPERATION.try_lock() else { return; };
+    let version = STAGED.lock().ok().and_then(|staged| staged.as_ref().map(|s| s.version.clone()));
+    if let Some(version) = version {
+        progress(&app, "ready", &version, 0, 0, 0);
+    }
+}
+
+#[tauri::command]
+pub async fn update_main_window_ready(window: WebviewWindow) -> Result<(), String> {
+    if window.label() == "main" && window.is_visible().map_err(|e| e.to_string())? {
+        update_splash::mark_ready(&window.app_handle().package_info().version.to_string())?;
+    }
+    Ok(())
+}
 
 pub(crate) fn release_restart_lock(cancel: &crate::types::CancelFlag) {
     if INSTALLING.lock().is_ok_and(|state| state.is_some()) {
