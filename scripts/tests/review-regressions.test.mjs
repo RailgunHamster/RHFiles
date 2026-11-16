@@ -43,7 +43,7 @@ test('late background listing cannot replace a navigated tab', async () => {
 
 test('metadata changes count even with unchanged filenames',()=>{
   const ctx=context();
-  vm.runInContext(section('tabs.js','function _entriesChanged(', '// --- tab drag-and-drop ---'),ctx);
+  vm.runInContext(section('tabs.js','function _entriesChanged(', '// --- reorder tabs within the window ---'),ctx);
   assert.equal(ctx._entriesChanged([{name:'a',size:1}],[{name:'a',size:2}]),true);
 });
 

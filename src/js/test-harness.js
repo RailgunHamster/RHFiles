@@ -533,10 +533,6 @@
     });
 
     await test("[tabs] Dragging a rendered tab persists the new order", async () => {
-      if (typeof DataTransfer !== 'function' || typeof DragEvent !== 'function') {
-        log("SKIP: DragEvent/DataTransfer constructors unavailable");
-        return;
-      }
       if (G.tabs.length < 2) {
         addTab(getTab().path, false);
         await sleep(100);
@@ -548,11 +544,16 @@
         const source = document.querySelector(`#tab-bar .tab[data-tab-id="${originalOrder[0]}"]`);
         const target = document.querySelector(`#tab-bar .tab[data-tab-id="${originalOrder[originalOrder.length - 1]}"]`);
         assert(source && target, "Rendered drag source or target is missing");
-        const transfer = new DataTransfer();
-        source.dispatchEvent(new DragEvent('dragstart', {bubbles:true, cancelable:true, dataTransfer:transfer}));
+        target.scrollIntoView({block:'nearest'});
+        const start = source.getBoundingClientRect();
         const rect = target.getBoundingClientRect();
-        target.dispatchEvent(new DragEvent('dragover', {bubbles:true, cancelable:true, dataTransfer:transfer, clientX:rect.right - 1}));
-        target.dispatchEvent(new DragEvent('drop', {bubbles:true, cancelable:true, dataTransfer:transfer, clientX:rect.right - 1}));
+        const pointer = {bubbles:true, pointerId:1, isPrimary:true, button:0};
+        source.dispatchEvent(new PointerEvent('pointerdown', {...pointer, buttons:1, clientX:start.left + 5, clientY:start.top + 10}));
+        const end = {...pointer, clientX:rect.right - 5, clientY:rect.top + 10};
+        source.dispatchEvent(new PointerEvent('pointermove', {...end, buttons:1}));
+        await new Promise(requestAnimationFrame);
+        assert(target.classList.contains('drag-over-after'), "Dragging did not mark the insertion point");
+        source.dispatchEvent(new PointerEvent('pointerup', end));
         assertEqual(G.tabs[G.tabs.length - 1].id, originalOrder[0], "Rendered tab drag did not move the source after the target");
         const stored = JSON.parse(localStorage.getItem('rhfiles-tabs') || '{}');
         assertEqual(stored.tabs?.map(tab => tab.id).join(','), G.tabs.map(tab => tab.id).join(','), "Dragged tab order was not persisted");

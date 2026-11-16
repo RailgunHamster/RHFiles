@@ -115,7 +115,7 @@ function renderTabMarkup(tab, isRight, index, tabs) {
   const closeButton = pinned ? '' : `<button class="tab-close" onclick="event.stopPropagation();closeTab(${tab.id},${isRight})">&times;</button>`;
   // No native title attribute: the rich hover preview card below is the only
   // tooltip, so two competing bubbles never stack on the same tab.
-  return `<div class="tab ${tab.id===activeId?'active':''} ${pinned?'pinned':''} ${boundary?'pinned-boundary':''}" data-tab-id="${tab.id}" data-pane="${pane}" data-pinned="${pinned}" onclick="${isRight?'switchRightTab':'switchTab'}(${tab.id})" onauxclick="if(event.button===1)closeTab(${tab.id},${isRight})" draggable="true">
+  return `<div class="tab ${tab.id===activeId?'active':''} ${pinned?'pinned':''} ${boundary?'pinned-boundary':''}" data-tab-id="${tab.id}" data-pane="${pane}" data-pinned="${pinned}" onclick="${isRight?'switchRightTab':'switchTab'}(${tab.id})" onauxclick="if(event.button===1)closeTab(${tab.id},${isRight})">
     ${pinned ? tabPinIndicator() : ''}<span class="tab-label">${esc(tabName(tab.path))}</span>${closeButton}
   </div>`;
 }
@@ -130,6 +130,7 @@ function normalizePinnedTabOrder(tabs) {
 function renderTabs() {
   const bar = document.getElementById("tab-bar");
   if (!bar) return;
+  if (_tabReorder?.bar === bar) finishTabReorder();
   const paneBadge = G.dualOn ? `<span class="tab-pane-index" title="${esc(t('pane.left'))}">1</span>` : '';
   bar.innerHTML = paneBadge + G.tabs.map((tab, index) => renderTabMarkup(tab, false, index, G.tabs)).join("") + `<button class="tab-new" onclick="addTab(undefined,false)" title="${t('nav.newTab')}">
     <svg width="10" height="10" viewBox="0 0 12 12"><path d="M6 1v10M1 6h10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
@@ -143,6 +144,7 @@ function renderTabs() {
 function renderRightTabs() {
   const bar = document.getElementById('right-tab-bar');
   if (!bar) return;
+  if (_tabReorder?.bar === bar) finishTabReorder();
   bar.innerHTML = `<span class="tab-pane-index" title="${esc(t('pane.right'))}">2</span>` + G.rpTabs.map((tab, index) => renderTabMarkup(tab, true, index, G.rpTabs)).join('') + `<button class="tab-new" onclick="addTab(undefined,true)" title="${t('nav.newTab')}">
     <svg width="10" height="10" viewBox="0 0 12 12"><path d="M6 1v10M1 6h10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
   </button>`;
@@ -657,10 +659,111 @@ function _entriesChanged(oldE, newE) {
   return false;
 }
 
-// --- tab drag-and-drop ---
-let _dragTabId = null;
-let _dragTabPane = null;
-const RHFILES_TAB_DRAG_MIME = 'application/x-rhfiles-tab+json';
+// --- reorder tabs within the window ---
+let _tabReorder = null;
+let _suppressTabReorderClick = false;
+
+function tabReorderTarget(drag, x, y) {
+  // Pointer capture keeps the gesture on the source. Hit-test the actual
+  // coordinates to find the tab underneath it, including on wrapped rows.
+  const tab = document.elementFromPoint(x, y)?.closest('.tab');
+  if (!tab || tab === drag.source || tab.parentElement !== drag.bar ||
+      tab.dataset.pinned !== drag.source.dataset.pinned) return null;
+  const rect = tab.getBoundingClientRect();
+  return {tab, after: x >= rect.left + rect.width / 2};
+}
+
+function updateTabReorderIndicator(drag, target) {
+  if (drag.target?.tab === target?.tab && drag.target?.after === target?.after) return;
+  drag.target?.tab.classList.remove('drag-over-before', 'drag-over-after');
+  drag.target = target;
+  if (target) target.tab.classList.add(target.after ? 'drag-over-after' : 'drag-over-before');
+}
+
+function finishTabReorder(event) {
+  const drag = _tabReorder;
+  if (!drag) return;
+  _tabReorder = null;
+  if (!drag.active) return;
+  const target = event ? tabReorderTarget(drag, event.clientX, event.clientY) : null;
+  cancelAnimationFrame(drag.frame);
+  updateTabReorderIndicator(drag, null);
+  drag.source.classList.remove('dragging');
+  drag.bar.classList.remove('tab-reordering');
+  if (drag.source.hasPointerCapture(drag.pointerId)) drag.source.releasePointerCapture(drag.pointerId);
+  if (!target) return;
+  const isRight = drag.source.dataset.pane === 'right';
+  const tabs = isRight ? G.rpTabs : G.tabs;
+  if (!reorderTabsByDrop(tabs, Number(drag.source.dataset.tabId), Number(target.tab.dataset.tabId), target.after)) return;
+  if (isRight) renderRightTabs(); else renderTabs();
+  saveTabState();
+}
+
+RHFilesUI.listen(window,'pointerdown', event => {
+  if (event.button !== 0 || !event.isPrimary) return;
+  finishTabReorder();
+  _suppressTabReorderClick = false;
+  if (event.target.closest?.('button')) return;
+  const source = event.target.closest?.('.tab');
+  const bar = source?.parentElement;
+  if (bar?.id !== 'tab-bar' && bar?.id !== 'right-tab-bar') return;
+  _tabReorder = {
+    source, bar, pointerId:event.pointerId, startX:event.clientX, startY:event.clientY,
+    active:false, frame:0, target:null,
+  };
+},true,'desktop.tabs.reorder.pointerdown');
+
+RHFilesUI.listen(window,'pointermove', event => {
+  const drag = _tabReorder;
+  if (!drag || event.pointerId !== drag.pointerId) return;
+  if (event.buttons !== 1 || !drag.source.isConnected) {
+    finishTabReorder();
+    return;
+  }
+  const x = event.clientX, y = event.clientY;
+  if (!drag.active) {
+    if (Math.hypot(x - drag.startX, y - drag.startY) < 5) return;
+    drag.active = true;
+    _suppressTabReorderClick = true;
+    if (event.isTrusted) drag.source.setPointerCapture(event.pointerId);
+    hideTabPreview();
+    drag.source.classList.add('dragging');
+    drag.bar.classList.add('tab-reordering');
+  }
+  drag.x = x;
+  drag.y = y;
+  if (!drag.frame) {
+    drag.frame = requestAnimationFrame(() => {
+      drag.frame = 0;
+      updateTabReorderIndicator(drag, tabReorderTarget(drag, drag.x, drag.y));
+    });
+  }
+},true,'desktop.tabs.reorder.pointermove');
+
+RHFilesUI.listen(window,'pointerup', event => {
+  if (event.pointerId === _tabReorder?.pointerId) finishTabReorder(event);
+},true,'desktop.tabs.reorder.pointerup');
+RHFilesUI.listen(window,'pointercancel', event => {
+  if (event.pointerId === _tabReorder?.pointerId) finishTabReorder();
+},true,'desktop.tabs.reorder.pointercancel');
+window.addEventListener('lostpointercapture', event => {
+  if (event.target === _tabReorder?.source && event.pointerId === _tabReorder.pointerId) finishTabReorder();
+},true);
+RHFilesUI.listen(window,'blur', () => finishTabReorder(),undefined,'desktop.tabs.reorder.blur');
+RHFilesUI.listen(window,'keydown', event => {
+  if (event.key !== 'Escape' || !_tabReorder?.active) return;
+  event.preventDefault();
+  event.stopPropagation();
+  finishTabReorder();
+},true,'desktop.tabs.reorder.escape');
+RHFilesUI.listen(window,'click', event => {
+  if (!_suppressTabReorderClick || !event.detail) return;
+  _suppressTabReorderClick = false;
+  event.preventDefault();
+  event.stopPropagation();
+},true,'desktop.tabs.reorder.click');
+
+// --- file drop targets and hover-to-switch ---
 const TAB_FILE_DRAG_SWITCH_DELAY_MS = 480;
 let _fileDragTabHoverTimer = null;
 let _fileDragTabHoverTarget = null;
@@ -669,21 +772,13 @@ let _fileDragTabLeaveTimer = null;
 function isRhfilesFileDrag(dataTransfer) {
   const types = Array.from(dataTransfer?.types || []).map(type => String(type).toLowerCase());
   if (types.includes(RHFILES_FILE_DRAG_MIME)) return true;
-  if (G._activeFileDragPayload?.paths?.length && !types.includes(RHFILES_TAB_DRAG_MIME)) return true;
+  if (G._activeFileDragPayload?.paths?.length) return true;
   if (!types.includes('text/plain')) return false;
   try {
     return String(dataTransfer.getData('text/plain') || '').startsWith(RHFILES_FILE_DRAG_PREFIX);
   } catch (error) {
     return false;
   }
-}
-
-function isRhfilesTabDrag(dataTransfer) {
-  return Array.from(dataTransfer?.types || []).includes(RHFILES_TAB_DRAG_MIME);
-}
-
-function clearTabReorderIndicators(bar) {
-  bar?.querySelectorAll('.tab').forEach(tab => tab.classList.remove('drag-over-before', 'drag-over-after'));
 }
 
 function reorderTabsByDrop(tabs, fromId, toId, afterTarget) {
@@ -738,53 +833,17 @@ function initTabDragDrop(bar, isRight) {
   bar = bar || document.getElementById("tab-bar");
   if (!bar) return;
   bar.querySelectorAll(".tab").forEach(tabEl => {
-    RHFilesUI.listen(tabEl,"dragstart", e => {
-      _dragTabId = parseInt(tabEl.dataset.tabId);
-      _dragTabPane = isRight ? 'right' : 'left';
-      tabEl.classList.add("dragging");
-      e.dataTransfer.effectAllowed = "move";
-      e.dataTransfer.setData(RHFILES_TAB_DRAG_MIME, JSON.stringify({
-        kind: 'rhfiles-tab',
-        tabId: _dragTabId,
-        pane: _dragTabPane,
-      }));
-    },undefined,"src.js.tabs.initTabDragDrop.ef9830216525");
-    RHFilesUI.listen(tabEl,"dragend", () => {
-      _dragTabId = null;
-      _dragTabPane = null;
-      clearFileDragTabHover();
-      tabEl.classList.remove("dragging");
-      clearTabReorderIndicators(bar);
-    },undefined,"src.js.tabs.initTabDragDrop.36ecc4657f81");
     RHFilesUI.listen(tabEl,"dragover", e => {
-      if (isRhfilesFileDrag(e.dataTransfer)) {
-        e.preventDefault();
-        e.stopPropagation();
-        e.dataTransfer.dropEffect = 'copy';
-        clearTabReorderIndicators(bar);
-        scheduleFileDragTabSwitch(tabEl, isRight);
-        return;
-      }
-      if (!isRhfilesTabDrag(e.dataTransfer) || _dragTabPane !== (isRight ? 'right' : 'left')) return;
-      const tabs = isRight ? G.rpTabs : G.tabs;
-      const dragged = tabs.find(tab => tab.id === _dragTabId);
-      const target = tabs.find(tab => tab.id === parseInt(tabEl.dataset.tabId));
-      if (!dragged || !target || (dragged.pinned === true) !== (target.pinned === true)) {
-        clearTabReorderIndicators(bar);
-        e.dataTransfer.dropEffect = 'none';
-        return;
-      }
+      if (!isRhfilesFileDrag(e.dataTransfer)) return;
       e.preventDefault();
-      e.dataTransfer.dropEffect = "move";
-      clearTabReorderIndicators(bar);
-      const rect = tabEl.getBoundingClientRect();
-      tabEl.classList.add(e.clientX >= rect.left + rect.width / 2 ? 'drag-over-after' : 'drag-over-before');
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = 'copy';
+      scheduleFileDragTabSwitch(tabEl, isRight);
     },undefined,"src.js.tabs.initTabDragDrop.01f81eb4b44d");
     RHFilesUI.listen(tabEl,"dragleave", e => {
       // Child elements (label, pin, close button) emit their own bubbling
       // dragleave events while the pointer is still inside the tab.
       if (e.target !== tabEl) return;
-      tabEl.classList.remove('drag-over-before', 'drag-over-after');
       if (e.relatedTarget && tabEl.contains(e.relatedTarget)) return;
       if (_fileDragTabLeaveTimer) clearTimeout(_fileDragTabLeaveTimer);
       _fileDragTabLeaveTimer = setTimeout(() => {
@@ -793,41 +852,23 @@ function initTabDragDrop(bar, isRight) {
       }, 180);
     },undefined,"src.js.tabs.initTabDragDrop.de5965b8f949");
     RHFilesUI.listen(tabEl,"drop", async e => {
-      if (isRhfilesFileDrag(e.dataTransfer)) {
-        e.preventDefault();
-        e.stopPropagation();
-        const payload = readRhfilesFileDragData(e.dataTransfer);
-        clearTabReorderIndicators(bar);
-        clearFileDragTabHover();
-        const targetId = parseInt(tabEl.dataset.tabId);
-        const tabs = isRight ? G.rpTabs : G.tabs;
-        const target = tabs.find(tab => tab.id === targetId);
-        if (isRight) switchRightTab(targetId);
-        else switchTab(targetId);
-        try {
-          if (payload && target && target.path !== 'home://' && typeof handleRhfilesFileDrop === 'function') {
-            await handleRhfilesFileDrop(payload, target.path, target.entries || [], isRight);
-          }
-        } finally {
-          clearRhfilesFileDragSession();
-        }
-        return;
-      }
-      if (!isRhfilesTabDrag(e.dataTransfer) || _dragTabPane !== (isRight ? 'right' : 'left')) return;
+      if (!isRhfilesFileDrag(e.dataTransfer)) return;
       e.preventDefault();
       e.stopPropagation();
-      const afterTarget = tabEl.classList.contains('drag-over-after');
-      clearTabReorderIndicators(bar);
-      let payload = null;
-      try { payload = JSON.parse(e.dataTransfer.getData(RHFILES_TAB_DRAG_MIME) || 'null'); } catch (error) {}
-      const fromId = Number(payload?.tabId ?? _dragTabId);
-      const toId = parseInt(tabEl.dataset.tabId);
+      const payload = readRhfilesFileDragData(e.dataTransfer);
+      clearFileDragTabHover();
+      const targetId = parseInt(tabEl.dataset.tabId);
       const tabs = isRight ? G.rpTabs : G.tabs;
-      if (!reorderTabsByDrop(tabs, fromId, toId, afterTarget)) return;
-      _dragTabId = null;
-      _dragTabPane = null;
-      if (isRight) renderRightTabs(); else renderTabs();
-      saveTabState();
+      const target = tabs.find(tab => tab.id === targetId);
+      if (isRight) switchRightTab(targetId);
+      else switchTab(targetId);
+      try {
+        if (payload && target && target.path !== 'home://' && typeof handleRhfilesFileDrop === 'function') {
+          await handleRhfilesFileDrop(payload, target.path, target.entries || [], isRight);
+        }
+      } finally {
+        clearRhfilesFileDragSession();
+      }
     },undefined,"src.js.tabs.initTabDragDrop.7b5da02de11a");
   });
 }
@@ -844,7 +885,7 @@ function initTabPreview() {
     if (tabEl.dataset.previewBound === 'true') return;
     tabEl.dataset.previewBound = 'true';
     RHFilesUI.listen(tabEl,"mouseenter", () => {
-      if (_fileDragTabHoverTarget || _dragTabId !== null) return;
+      if (_fileDragTabHoverTarget || _tabReorder?.active) return;
       hideTabPreview();
       _previewTimer = setTimeout(() => showTabPreview(tabEl), 300);
     },undefined,"src.js.tabs.initTabPreview.925363532b88");

@@ -7,10 +7,11 @@
 .tab.pinned-boundary { margin-right:6px; }
 .tab.pinned-boundary::after { content:""; position:absolute; top:6px; right:-5px; bottom:6px; width:1px; background:var(--border); }
 .tab-pin { display:flex; align-items:center; justify-content:center; flex:0 0 13px; color:var(--accent); opacity:.82; }
-.tab.drag-over-before::before,.tab.drag-over-after::before { content:""; position:absolute; top:3px; bottom:3px; width:3px; border-radius:2px; background:var(--accent); box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 24%,transparent); z-index:2; }
+.tab.drag-over-before::before,.tab.drag-over-after::before { content:""; position:absolute; top:3px; bottom:3px; width:3px; border-radius:2px; background:var(--accent); box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 24%,transparent); z-index:2; pointer-events:none; }
 .tab.drag-over-before::before { left:-3px; }
 .tab.drag-over-after::before { right:-3px; }
 .tab.dragging { opacity:0.4; }
+.tab-reordering .tab,.tab-reordering .tab-close { cursor:grabbing; }
 .tab.file-drag-hover { color:var(--text-1); background:color-mix(in srgb, var(--accent) 12%, var(--bg-card)); }
 .tab.file-drag-hover::after { content:""; position:absolute; left:0; right:0; bottom:0; height:2px; background:var(--accent); transform-origin:left center; animation:tab-file-drag-switch 480ms linear forwards; }
 @keyframes tab-file-drag-switch { from { transform:scaleX(0); } to { transform:scaleX(1); } }
