@@ -3,7 +3,7 @@ use crate::{
     auth::{Access, Auth},
     dav::DavFs,
     model::*,
-    storage::Storage,
+    storage::{Node, Storage},
     uploads::{MAX_UPLOAD, Uploads},
 };
 use axum::{
@@ -136,6 +136,11 @@ impl State {
             .check(&path, Some(&a.id), false, true, &[])
             .await
             .map_err(|_| Error::new("locked", "文件被 WebDAV 客户端锁定，请先解锁"))
+    }
+    async fn mutation_node(&self, path: &str, a: &Access, follow_final: bool, legacy: bool) -> Result<Node> {
+        let node = self.storage.mutation_node(path, follow_final, legacy)?;
+        self.unlocked(&node.canonical_path(), a).await?;
+        Ok(node)
     }
     fn invalidate(&self) {
         self.cache.lock().unwrap().clear();
@@ -634,13 +639,16 @@ async fn handle_direct(s: Arc<State>, mut r: Request) -> Result<Response> {
         }
         return Ok(response.map(Body::new));
     }
+    // An older client may recursively delete the children of a selected
+    // directory link. Only link-aware clients can mutate paths through links.
+    let legacy = header(&r, "X-RHFiles-Link-Operations") != Some("1");
     match (method.as_str(),path.as_str()) {
-        ("GET","/api/v1/capabilities")=>Ok(Json(serde_json::json!({"protocol":1,"name":"RHFiles","permissions":a.permissions,"features":["list","stat","range","versioned-ranges-sha256","mkdir","rename","delete","tus","webdav","image-thumbnails","checked-mutations","async-mutation-receipts","batch-recycle","webdav-client-grant"],"recycleBin":cfg!(windows),"windowsCompatibility":s.compatibility.lock().unwrap().clone(),"overwrite":false,"webdav":"/dav/","uploads":"/api/v1/uploads","maxUpload":MAX_UPLOAD})).into_response()),
+        ("GET","/api/v1/capabilities")=>Ok(Json(serde_json::json!({"protocol":1,"name":"RHFiles","permissions":a.permissions,"features":["list","stat","range","versioned-ranges-sha256","mkdir","rename","delete","tus","webdav","image-thumbnails","checked-mutations","async-mutation-receipts","batch-recycle","webdav-client-grant","symlink-mutations","conditional-uploads"],"recycleBin":cfg!(windows),"windowsCompatibility":s.compatibility.lock().unwrap().clone(),"overwrite":false,"webdav":"/dav/","uploads":"/api/v1/uploads","maxUpload":MAX_UPLOAD})).into_response()),
         ("GET","/api/v1/list")=>{
             let q:ListQuery=query(&r)?;if q.limit==0||q.limit>2000{return Err(bad("limit 必须在 1–2000 之间"));}
             let cached=s.cache.lock().unwrap().get(&q.path).filter(|c|header(&r,"Cache-Control")!=Some("no-cache")&&c.0.elapsed()<Duration::from_secs(2)).cloned();
             let (_,revision,entries)=if let Some(c)=cached{c}else{
-                let storage=s.storage.clone();let path=q.path.clone();let entries=tokio::task::spawn_blocking(move||storage.list(&path)).await.map_err(|_|Error::new("internal","读取目录失败"))??;
+                let storage=s.storage.clone();let path=q.path.clone();let entries=tokio::task::spawn_blocking(move||storage.device_list(&path)).await.map_err(|_|Error::new("internal","读取目录失败"))??;
                 a.check(false,false)?;
                 let revision=format!("{:x}",Sha256::digest(serde_json::to_vec(&entries).unwrap()));let c=(Instant::now(),revision,Arc::new(entries));
                 let mut cache=s.cache.lock().unwrap();let bytes=|entries:&Vec<Entry>|entries.iter().map(|e|e.path.len()+e.name.len()+e.revision.len()+128).sum::<usize>();
@@ -652,9 +660,9 @@ async fn handle_direct(s: Arc<State>, mut r: Request) -> Result<Response> {
         ("GET","/api/v1/stat")=>{
             let q:PathQuery=query(&r)?;let storage=s.storage.clone();let reader=a.clone();
             let value=tokio::task::spawn_blocking(move||->Result<serde_json::Value>{
-                let entry=storage.stat(&q.path)?;
-                let read=if entry.is_dir{None}else{
-                    let file=storage.node(&q.path)?.open_read()?;
+                let entry=storage.device_stat(&q.path)?;
+                let read=if entry.is_dir||entry.link_target_available==Some(false){None}else{
+                    let file=storage.device_open_read(&q.path)?;
                     if crate::connection::file_revision(&file).map_err(|_|Error::new("io_error","无法读取文件身份"))?!=entry.revision{return Err(Error::new("conflict","读取文件信息时源文件发生变化"));}
                     match crate::content::authorized_revision(&reader,&file){Ok(revision)=>Some(revision),Err(error)if error.code=="unsupported"=>None,Err(error)=>return Err(error)}
                 };
@@ -666,15 +674,17 @@ async fn handle_direct(s: Arc<State>, mut r: Request) -> Result<Response> {
         ("GET"|"HEAD","/api/v1/content")=>{
             let q:PathQuery=query(&r)?;
             if let Some(revision)=q.revision{return crate::content::response(s.storage.clone(),a,r,q.path,revision).await;}
-            s.storage.node(&q.path)?.open_read()?;
+            let storage=s.storage.clone();let source=q.path.clone();
+            tokio::task::spawn_blocking(move||storage.device_open_read(&source)).await.map_err(|_|Error::new("internal","无法打开源文件"))??;
             *r.uri_mut()=format!("/dav{}",encode_path(&q.path)).parse().map_err(|_|bad("路径无效"))?;
-            let principal=a.id.clone();Ok(s.dav.handle_guarded(r,principal,a).await.map(Body::new))
+            let mut access=a;access.device_read=true;
+            let principal=access.id.clone();Ok(s.dav.handle_guarded(r,principal,access).await.map(Body::new))
         },
         ("GET","/api/v1/thumbnail")=>{
             let _permit=tokio::time::timeout(Duration::from_secs(10),s.thumbnails.clone().acquire_owned()).await.map_err(|_|Error::new("busy","缩略图队列繁忙，请稍后重试"))?.map_err(|_|Error::new("busy","服务正在停止"))?;
-            let q:PathQuery=query(&r)?;let node=s.storage.node(&q.path)?;
+            let q:PathQuery=query(&r)?;let storage=s.storage.clone();
             let bytes=tokio::task::spawn_blocking(move||->Result<Vec<u8>>{
-                let file=node.open_read()?;if file.metadata()?.len()>32*1024*1024{return Err(Error::new("too_large","图片过大，请直接预览"));}
+                let file=storage.device_open_read(&q.path)?;if file.metadata()?.len()>32*1024*1024{return Err(Error::new("too_large","图片过大，请直接预览"));}
                 let mut reader=image::ImageReader::new(std::io::BufReader::new(file)).with_guessed_format()?;
                 let mut limits=image::Limits::default();limits.max_alloc=Some(64*1024*1024);limits.max_image_width=Some(32768);limits.max_image_height=Some(32768);reader.limits(limits);
                 let image=reader.decode().map_err(|_|Error::new("unsupported","暂不支持此图片缩略图"))?.thumbnail(320,320);
@@ -689,26 +699,28 @@ async fn handle_direct(s: Arc<State>, mut r: Request) -> Result<Response> {
             if m.entries.is_empty()||m.entries.len()>64{return Err(bad("回收站每批须为 1–64 项"));}
             a.check(false,true)?;
             let mut names=Vec::new();
-            for item in &m.entries {
+            let mut nodes=Vec::new();
+            for item in m.entries {
                 if item.revision.as_ref().is_some_and(|v|v.is_empty()||v.len()>256){return Err(bad("文件版本无效"));}
-                let node=s.storage.node(&item.path)?;node.require_child()?;
-                let key=if cfg!(windows){node.virtual_path.to_lowercase()}else{node.virtual_path.clone()};
+                let node=s.mutation_node(&item.path,&a,false,legacy).await?;node.require_child()?;
+                let key=node.canonical_path();
+                let key=if cfg!(windows){key.to_lowercase()}else{key};
                 if names.iter().any(|p:&String|p==&key||p.starts_with(&(key.clone()+"/"))||key.starts_with(&(p.clone()+"/"))){return Err(bad("批次不能包含重复或嵌套的来源"));}
-                names.push(key);s.unlocked(&item.path,&a).await?;
+                names.push(key);nodes.push((item,node));
             }
             let storage=s.storage.clone();let owner=a.id.clone();
             let result=tokio::task::spawn_blocking(move||{
                 // Capture all revisions before touching any source. A selected
                 // revision, when supplied, is never replaced by a fresh one.
-                let plan=m.entries.into_iter().map(|item|{
-                    let stamp=storage.stat(&item.path).and_then(|e|{
+                let plan=nodes.into_iter().map(|(item,node)|{
+                    let stamp=node.stat().and_then(|e|{
                         if item.revision.as_ref().is_some_and(|r|r!=&e.revision){Err(Error::new("conflict","源文件已变化，文件已保留"))}else{Ok(e.revision)}
-                    });(item.path,stamp)
+                    });(item.path,node,stamp)
                 }).collect::<Vec<_>>();
                 let mut recycled=Vec::new();let mut errors=Vec::new();
-                for (path,stamp) in plan {
+                for (path,node,stamp) in plan {
                     let access=a.clone();
-                    match stamp.and_then(|revision|storage.recycle_checked(&path,&revision,&owner,move||access.check(false,true))) {
+                    match stamp.and_then(|revision|storage.recycle_node(node,&revision,&owner,move||access.check(false,true))) {
                         Ok(receipt)=>recycled.push(serde_json::json!({"path":path,"receipt":receipt})),
                         Err(error)=>errors.push(serde_json::json!({"path":path,"code":error.code,"message":error.message})),
                     }
@@ -720,10 +732,10 @@ async fn handle_direct(s: Arc<State>, mut r: Request) -> Result<Response> {
         ("POST","/api/v1/recycle-checked")=>{
             let m:CheckedMutation=json(r).await?;
             if m.revision.is_empty() || m.revision.len()>256 || m.destination.is_some() || m.target_revision.is_some() {return Err(bad("回收站操作参数无效"));}
-            a.check(false,true)?;s.unlocked(&m.path,&a).await?;
+            a.check(false,true)?;let node=s.mutation_node(&m.path,&a,false,legacy).await?;
             let storage=s.storage.clone();
             let owner=a.id.clone();
-            let result=tokio::task::spawn_blocking(move||storage.recycle_checked(&m.path,&m.revision,&owner,move||a.check(false,true))).await.map_err(|_|Error::new("internal","移入回收站失败"))?;
+            let result=tokio::task::spawn_blocking(move||storage.recycle_node(node,&m.revision,&owner,move||a.check(false,true))).await.map_err(|_|Error::new("internal","移入回收站失败"))?;
             s.invalidate();Ok(Json(serde_json::json!({"receipt":result?})).into_response())
         },
         ("POST","/api/v1/recycle-restore")=>{
@@ -741,15 +753,30 @@ async fn handle_direct(s: Arc<State>, mut r: Request) -> Result<Response> {
             let m:CheckedMutation=json(r).await?;
             let deleting=path.ends_with("/delete-checked");
             if m.revision.is_empty() || m.revision.len()>256 || m.target_revision.as_ref().is_some_and(|v|v.is_empty()||v.len()>256) || deleting&&m.destination.is_some() || !deleting&&m.destination.is_none() {return Err(bad("条件操作参数无效"));}
-            a.check(!deleting,deleting||m.target_revision.is_some())?;s.unlocked(&m.path,&a).await?;
-            if let Some(to)=&m.destination{s.unlocked(to,&a).await?;}
-            let storage=s.storage.clone();tokio::task::spawn_blocking(move||{a.check(!deleting,deleting||m.target_revision.is_some())?;storage.checked_mutation(&m.path,m.destination.as_deref(),&m.revision,m.target_revision.as_deref())}).await.map_err(|_|Error::new("internal","条件操作失败"))??;
+            a.check(!deleting,deleting||m.target_revision.is_some())?;
+            let source=s.mutation_node(&m.path,&a,false,legacy).await?;
+            let destination=if let Some(to)=&m.destination{Some(s.mutation_node(to,&a,false,legacy).await?)}else{None};
+            let storage=s.storage.clone();tokio::task::spawn_blocking(move||storage.checked_mutation(source,destination,&m.revision,m.target_revision.as_deref(),||a.check(!deleting,deleting||m.target_revision.is_some()))).await.map_err(|_|Error::new("internal","条件操作失败"))??;
             s.invalidate();Ok(StatusCode::NO_CONTENT.into_response())
         },
         ("POST","/api/v1/mkdir"|"/api/v1/rename"|"/api/v1/copy"|"/api/v1/delete")=>{
-            let m:Mutation=json(r).await?;let deleting=path.ends_with("/delete");a.check(!deleting,deleting)?;s.unlocked(&m.path,&a).await?;
-            if let Some(to)=&m.destination{s.unlocked(to,&a).await?;}
-            let storage=s.storage.clone();tokio::task::spawn_blocking(move||->Result<()>{a.check(!deleting,deleting)?;match path.as_str(){"/api/v1/mkdir"=>storage.mkdir(&m.path),"/api/v1/rename"=>storage.rename(&m.path,m.destination.as_deref().ok_or_else(||bad("缺少目标路径"))?),"/api/v1/copy"=>storage.copy_file(&m.path,m.destination.as_deref().ok_or_else(||bad("缺少目标路径"))?,||a.check(true,false)),_=>{let entry=storage.stat(&m.path)?;storage.remove(&m.path,entry.is_dir)}}}).await.map_err(|_|Error::new("internal","文件操作失败"))??;
+            let m:Mutation=json(r).await?;let deleting=path.ends_with("/delete");a.check(!deleting,deleting)?;
+            let destination=if let Some(to)=&m.destination{Some(s.mutation_node(to,&a,false,legacy).await?)}else{None};
+            let source=if path.ends_with("/copy"){None}else{Some(s.mutation_node(&m.path,&a,false,legacy).await?)};
+            let storage=s.storage.clone();tokio::task::spawn_blocking(move||->Result<()>{
+                a.check(!deleting,deleting)?;
+                let dest=||destination.ok_or_else(||bad("缺少目标路径"));
+                match path.as_str(){
+                    "/api/v1/mkdir"=>storage.mkdir_node(source.unwrap()),
+                    "/api/v1/rename"=>{
+                        let from=source.unwrap();let to=dest()?;
+                        if !legacy&&!Arc::ptr_eq(&from.root,&to.root){return Err(bad("重命名必须在同一共享中"));}
+                        storage.rename_nodes(from,to)
+                    },
+                    "/api/v1/copy"=>storage.copy_device_file(&m.path,dest()?,||a.check(true,false)),
+                    _=>storage.remove_node(source.unwrap()),
+                }
+            }).await.map_err(|_|Error::new("internal","文件操作失败"))??;
             s.invalidate();Ok(StatusCode::NO_CONTENT.into_response())
         },
         ("OPTIONS","/api/v1/uploads")=>Ok((StatusCode::NO_CONTENT,[("Tus-Version","1.0.0"),("Tus-Extension","creation,termination"),("Tus-Max-Size","1099511627776")]).into_response()),
@@ -759,7 +786,13 @@ async fn handle_direct(s: Arc<State>, mut r: Request) -> Result<Response> {
             let metadata=header(&r,"Upload-Metadata").ok_or_else(||bad("缺少 path 上传元数据"))?;
             let encoded=metadata.split(',').find_map(|v|v.trim().strip_prefix("path ")).ok_or_else(||bad("缺少 path 上传元数据"))?;
             let target=String::from_utf8(base64::engine::general_purpose::STANDARD.decode(encoded).map_err(|_|bad("无效 path 编码"))?).map_err(|_|bad("path 必须是 UTF-8"))?;
-            s.unlocked(&target,&a).await?;let u=s.uploads.create(&s.storage,&a,target,length)?;s.invalidate();
+            a.check(true,false)?;
+            let edit_revision=header(&r,"If-Match").map(|value|{
+                if legacy{return Err(bad("条件写入需要支持链接操作的客户端"));}
+                value.strip_prefix('"').and_then(|v|v.strip_suffix('"')).filter(|v|!v.is_empty()&&v.len()<=256&&v.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'-')).map(str::to_owned).ok_or_else(||bad("编辑版本无效"))
+            }).transpose()?;
+            let node=s.mutation_node(&target,&a,edit_revision.is_some(),legacy).await?;
+            let u=s.uploads.create(&s.storage,&a,target,length,node,edit_revision,legacy)?;s.invalidate();
             let mut response=(StatusCode::CREATED,[("Location",format!("/api/v1/uploads/{}",u.id)),("Upload-Offset","0".into())]).into_response();if let Some(revision)=u.revision{response.headers_mut().insert("Upload-Revision",revision.parse().map_err(|_|Error::new("internal","上传身份无效"))?);}Ok(response)
         },
         ("HEAD"|"PATCH"|"DELETE",_)if path.starts_with("/api/v1/uploads/")=>{
@@ -768,7 +801,7 @@ async fn handle_direct(s: Arc<State>, mut r: Request) -> Result<Response> {
             if method==Method::DELETE{s.uploads.cancel(&s.storage,&a,&u)?;return Ok(StatusCode::NO_CONTENT.into_response());}
             s.uploads.authorize(&u,&a)?;
             if method==Method::HEAD{let offset=s.uploads.offset(&s.storage,&u)?;return Ok((StatusCode::OK,[("Upload-Length",u.length.to_string()),("Upload-Offset",offset.to_string())]).into_response());}
-            s.unlocked(&u.path,&a).await?;
+            if !u.completed { s.unlocked(&u.destination(&s.storage)?.canonical_path(),&a).await?; }
             if header(&r,"Content-Type")!=Some("application/offset+octet-stream"){return Ok(StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response());}
             let offset=number(&r,"Upload-Offset")?;let actual=s.uploads.offset(&s.storage,&u)?;
             if actual!=offset{return Ok((StatusCode::CONFLICT,[("Upload-Offset",actual.to_string())]).into_response());}

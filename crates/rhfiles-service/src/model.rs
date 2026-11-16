@@ -32,6 +32,10 @@ pub struct Entry {
     pub is_system: bool,
     pub revision: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub link_revision: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub link_target_available: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub total_bytes: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub free_bytes: Option<u64>,

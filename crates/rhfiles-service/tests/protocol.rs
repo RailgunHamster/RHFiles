@@ -2,6 +2,201 @@ use base64::Engine;
 use reqwest::{Client, Method};
 use rhfiles_service::{Permissions, Service, ShareConfig};
 use serde_json::{Value, json};
+
+#[cfg(any(unix, windows))]
+#[tokio::test]
+async fn device_protocol_lists_and_reads_links_within_the_share() {
+    use std::path::Path;
+    #[cfg(unix)]
+    use std::os::unix::fs::{symlink as symlink_dir, symlink as symlink_file};
+    #[cfg(windows)]
+    use std::os::windows::fs::{symlink_dir, symlink_file};
+
+    let f = Fixture::new(true, true).await;
+    let publish = f.share.join("publish");
+    std::fs::create_dir(&publish).unwrap();
+    let original = f.share.join("folder/models.json");
+    std::fs::write(&original, b"0123456789").unwrap();
+    let outside = f.data.join("outside.txt");
+    std::fs::write(&outside, b"private fixture").unwrap();
+    #[cfg(windows)]
+    let original = Path::new(original.to_str().unwrap().trim_start_matches(r"\\?\"));
+    symlink_file(&original, publish.join("models.json")).unwrap();
+    symlink_dir(Path::new("../folder"), publish.join("folder-link")).unwrap();
+    symlink_file(&outside, publish.join("outside.txt")).unwrap();
+    symlink_file(Path::new("loop.txt"), publish.join("loop.txt")).unwrap();
+
+    let link_path = "/Files/publish/models.json";
+    let list: Value = f.request("GET", "/api/v1/list?path=/Files/publish")
+        .send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
+    let entries = list["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 4);
+    assert_eq!(entries[0]["name"], "folder-link");
+    assert_eq!(entries[0]["isDir"], true);
+    let model = entries.iter().find(|entry| entry["path"] == link_path).unwrap();
+    assert_eq!(model["readonly"], false);
+    assert_eq!(model["size"], 10);
+    assert!(model["linkRevision"].is_string());
+    assert!(entries.iter().all(|entry| entry.get("target").is_none()));
+
+    let nested: Value = f.request("GET", "/api/v1/list?path=/Files/publish/folder-link")
+        .send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
+    assert_eq!(nested["entries"][0]["path"], "/Files/publish/folder-link/models.json");
+    assert_eq!(nested["entries"][0]["readonly"], false);
+    let stat: Value = f.request("GET", "/api/v1/stat").query(&[("path", link_path)])
+        .send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
+    let revision = stat["readRevision"].as_str().unwrap();
+    for (path, checked) in [(link_path, true), ("/Files/publish/folder-link/models.json", false)] {
+        let mut request = f.request("GET", "/api/v1/content").query(&[("path", path)])
+            .header("Range", "bytes=2-5");
+        if checked {
+            request = request.query(&[("revision", revision)]).header("If-Match", format!("\"{revision}\""));
+        }
+        let response = request.send().await.unwrap();
+        assert_eq!(response.status(), 206);
+        assert_eq!(response.text().await.unwrap(), "2345");
+    }
+    for name in ["outside.txt", "loop.txt"] {
+        let path = format!("/Files/publish/{name}");
+        assert_eq!(f.request("GET", "/api/v1/content").query(&[("path", path)])
+            .send().await.unwrap().status(), 403);
+    }
+    assert_eq!(f.request("POST", "/api/v1/copy")
+        .json(&json!({"path":link_path,"destination":"/Files/copy.json"}))
+        .send().await.unwrap().status(), 204);
+    assert_eq!(std::fs::read(f.share.join("copy.json")).unwrap(), b"0123456789");
+    assert_eq!(f.request("POST", "/api/v1/delete").json(&json!({"path":link_path}))
+        .send().await.unwrap().status(), 403);
+    assert_eq!(f.request("POST", "/api/v1/rename")
+        .json(&json!({"path":"/Files/publish/folder-link/models.json","destination":"/Files/changed.json"}))
+        .send().await.unwrap().status(), 403);
+    assert_eq!(std::fs::read(&original).unwrap(), b"0123456789");
+    assert_eq!(f.request("GET", "/dav/Files/publish/models.json").send().await.unwrap().status(), 403);
+
+    // An older desktop client can still see the directory alias. It must
+    // never be able to recursively modify its contents during link deletion.
+    assert_eq!(f.request("POST", "/api/v1/delete")
+        .json(&json!({"path":"/Files/publish/folder-link/models.json"}))
+        .send().await.unwrap().status(), 403);
+    let aware = |method, route| f.request(method, route).header("X-RHFiles-Link-Operations", "1");
+    let directory = "/Files/publish/folder-link";
+    for suffix in ["new-folder", "another-folder"] {
+        assert_eq!(aware("POST", "/api/v1/mkdir")
+            .json(&json!({"path":format!("{directory}/{suffix}")}))
+            .send().await.unwrap().status(), 204);
+        assert!(f.share.join("folder").join(suffix).is_dir());
+    }
+    let alias_file = format!("{directory}/models.json");
+    let stat:Value=aware("GET","/api/v1/stat").query(&[("path",&alias_file)]).send().await.unwrap().json().await.unwrap();
+    assert_eq!(aware("POST","/api/v1/rename-checked").json(&json!({"path":alias_file,
+        "destination":format!("{directory}/renamed.json"),"revision":stat["revision"]}))
+        .send().await.unwrap().status(),204);
+    assert_eq!(std::fs::read(f.share.join("folder/renamed.json")).unwrap(), b"0123456789");
+    assert_eq!(aware("POST","/api/v1/rename-checked").json(&json!({"path":directory,
+        "destination":"/Files/publish/renamed-link","revision":entries[0]["linkRevision"]}))
+        .send().await.unwrap().status(),204);
+    assert!(std::fs::symlink_metadata(publish.join("renamed-link")).unwrap().file_type().is_symlink());
+    let published_link:Value=aware("GET","/api/v1/stat").query(&[("path","/Files/publish/renamed-link")])
+        .send().await.unwrap().json().await.unwrap();
+    assert_eq!(aware("POST","/api/v1/delete-checked").json(&json!({"path":"/Files/publish/renamed-link","revision":published_link["linkRevision"]}))
+        .send().await.unwrap().status(),204);
+    assert!(!publish.join("renamed-link").exists());
+    assert!(f.share.join("folder/renamed.json").is_file());
+}
+
+#[cfg(any(unix, windows))]
+#[tokio::test]
+async fn editing_links_needs_write_permission_and_uploads_bind_to_the_initial_directory() {
+    #[cfg(unix)]
+    use std::os::unix::fs::{symlink as symlink_dir, symlink as symlink_file};
+    #[cfg(windows)]
+    use std::os::windows::fs::{symlink_dir, symlink_file};
+    use std::path::Path;
+    let f=Fixture::new(true,false).await;
+    let file=f.share.join("folder/models.json");
+    std::fs::write(&file,b"original").unwrap();
+    std::fs::create_dir(f.share.join("alternate")).unwrap();
+    symlink_file(Path::new("folder/models.json"),f.share.join("model-link")).unwrap();
+    symlink_dir(Path::new("folder"),f.share.join("dir-link")).unwrap();
+    let aware=|method,route|f.request(method,route).header("X-RHFiles-Link-Operations","1");
+    let stat:Value=aware("GET","/api/v1/stat").query(&[("path","/Files/model-link")]).send().await.unwrap().json().await.unwrap();
+    let start=|path:&str,size:u64|aware("POST","/api/v1/uploads")
+        .header("Tus-Resumable","1.0.0").header("Upload-Length",size)
+        .header("Upload-Metadata",format!("path {}",base64::engine::general_purpose::STANDARD.encode(path)));
+    let patch=|id|aware("PATCH",id).header("Tus-Resumable","1.0.0").header("Upload-Offset","0")
+        .header("Content-Type","application/offset+octet-stream").body("changed");
+    let edit=start("/Files/model-link",7).header("If-Match",format!("\"{}\"",stat["revision"].as_str().unwrap())).send().await.unwrap();
+    assert_eq!(edit.status(),201);
+    let id=edit.headers()["Location"].to_str().unwrap();
+    assert_eq!(patch(id).send().await.unwrap().status(),204);
+    assert_eq!(std::fs::read(&file).unwrap(),b"changed");
+    assert!(std::fs::symlink_metadata(f.share.join("model-link")).unwrap().file_type().is_symlink());
+    assert_eq!(start("/Files/model-link",0).header("If-Match",format!("\"{}\"",stat["revision"].as_str().unwrap()))
+        .send().await.unwrap().status(),409);
+    assert_eq!(aware("POST","/api/v1/delete").json(&json!({"path":"/Files/model-link"})).send().await.unwrap().status(),403);
+
+    let added=start("/Files/dir-link/added.txt",7).send().await.unwrap();
+    assert_eq!(added.status(),201);
+    assert_eq!(patch(added.headers()["Location"].to_str().unwrap()).send().await.unwrap().status(),204);
+    assert_eq!(std::fs::read(f.share.join("folder/added.txt")).unwrap(),b"changed");
+    let pending=start("/Files/dir-link/retarget.txt",7).send().await.unwrap();
+    assert_eq!(pending.status(),201);
+    let alias=f.share.join("dir-link");
+    std::fs::rename(&alias,f.share.join("swapped-link")).unwrap();
+    symlink_dir(Path::new("alternate"),&alias).unwrap();
+    assert_eq!(patch(pending.headers()["Location"].to_str().unwrap()).send().await.unwrap().status(),409);
+    assert!(!f.share.join("folder/retarget.txt").exists());
+    assert!(!f.share.join("alternate/retarget.txt").exists());
+
+    let current:Value=aware("GET","/api/v1/stat").query(&[("path","/Files/model-link")]).send().await.unwrap().json().await.unwrap();
+    let pending=start("/Files/model-link",7).header("If-Match",format!("\"{}\"",current["revision"].as_str().unwrap())).send().await.unwrap();
+    assert_eq!(pending.status(),201);
+    std::fs::write(f.share.join("alternate/models.json"),b"other").unwrap();
+    std::fs::rename(f.share.join("model-link"),f.share.join("previous-model-link")).unwrap();
+    symlink_file(Path::new("alternate/models.json"),f.share.join("model-link")).unwrap();
+    assert_eq!(patch(pending.headers()["Location"].to_str().unwrap()).send().await.unwrap().status(),409);
+    assert_eq!(std::fs::read(&file).unwrap(),b"changed");
+    assert_eq!(std::fs::read(f.share.join("alternate/models.json")).unwrap(),b"other");
+
+    let reader=Fixture::new(false,true).await;
+    symlink_file(Path::new("中文 file.txt"),reader.share.join("file-link")).unwrap();
+    let denied=reader.request("POST","/api/v1/uploads").header("X-RHFiles-Link-Operations","1")
+        .header("Tus-Resumable","1.0.0").header("Upload-Length","0")
+        .header("Upload-Metadata",format!("path {}",base64::engine::general_purpose::STANDARD.encode("/Files/file-link")))
+        .header("If-Match","\"test-revision\"").send().await.unwrap();
+    assert_eq!(denied.status(),403);
+    assert_eq!(std::fs::read(reader.share.join("中文 file.txt")).unwrap(),b"0123456789");
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn recycling_links_and_linked_children_preserves_the_expected_object() {
+    use std::os::windows::fs::{symlink_dir, symlink_file};
+    use std::path::Path;
+    let f = Fixture::new(true, true).await;
+    let marker = f.share.join("folder/owned-link-test.txt");
+    std::fs::write(&marker, b"owned fixture").unwrap();
+    let relative = Path::new("folder").join(marker.file_name().unwrap());
+    symlink_file(&relative, f.share.join("trash-file-link")).unwrap();
+    symlink_dir(Path::new("folder"), f.share.join("trash-dir-link")).unwrap();
+    let aware=|method,route|f.request(method,route).header("X-RHFiles-Link-Operations","1");
+    for path in [
+        "/Files/trash-file-link".to_string(),
+        "/Files/trash-dir-link".to_string(),
+        format!("/Files/trash-dir-link/{}",marker.file_name().unwrap().to_string_lossy()),
+    ] {
+        let entry:Value=aware("GET","/api/v1/stat").query(&[("path",&path)]).send().await.unwrap().error_for_status().unwrap().json().await.unwrap();
+        let revision=entry.get("linkRevision").unwrap_or(&entry["revision"]);
+        let response=aware("POST","/api/v1/recycle-checked").json(&json!({"path":path,"revision":revision})).send().await.unwrap();
+        assert_eq!(response.status(),200);
+        let receipt:Value=response.json().await.unwrap();
+        assert_eq!(marker.exists(),entry["linkRevision"].is_string());
+        let response=aware("POST","/api/v1/recycle-restore").json(&json!({"receipt":receipt["receipt"]})).send().await.unwrap();
+        assert_eq!(response.status(),200);
+        assert_eq!(std::fs::read(&marker).unwrap(),b"owned fixture");
+    }
+}
+
 struct Fixture {
     _temp: tempfile::TempDir,
     data: std::path::PathBuf,

@@ -399,6 +399,7 @@ async fn desktop_writes_use_tus_and_cannot_replace_existing_targets_or_replay_a_
             FileRequest::UploadCreate {
                 path: "/Files/上传/文件.txt".into(),
                 length: 6,
+                revision: None,
             },
         )
         .await

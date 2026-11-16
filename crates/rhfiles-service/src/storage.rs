@@ -4,7 +4,7 @@ use crate::model::*;
 #[cfg(windows)]
 use cap_fs_ext::OsMetadataExt;
 use cap_std::fs::{Dir, OpenOptions};
-use cap_fs_ext::MetadataExt as IdentityMetadataExt;
+use cap_fs_ext::{DirExt, FollowSymlinks, MetadataExt as IdentityMetadataExt, OpenOptionsFollowExt};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -13,6 +13,7 @@ use std::{
 };
 
 pub const PRIVATE_PREFIX: &str = ".rhfiles-service-";
+mod read_links;
 
 pub fn valid_name(name: &str) -> Result<()> {
     let stem = name.split('.').next().unwrap_or("").to_ascii_uppercase();
@@ -62,7 +63,10 @@ pub fn components(path: &str) -> Result<Vec<&str>> {
 pub struct Root {
     pub dir: Dir,
     pub host_path: PathBuf,
+    #[cfg(windows)]
+    short_host_path: Option<PathBuf>,
     excluded: Vec<PathBuf>,
+    excluded_ids: Vec<(u64, u64)>,
 }
 #[derive(Debug)]
 pub struct Storage {
@@ -82,6 +86,7 @@ pub struct Node {
     pub root: Arc<Root>,
     pub relative: PathBuf,
     pub virtual_path: String,
+    parent: Option<(Arc<Dir>, std::ffi::OsString)>,
 }
 
 fn local_root(path: &Path) -> Result<PathBuf> {
@@ -194,7 +199,15 @@ impl Storage {
                 }
             }
             let dir = Dir::open_ambient_dir(&path, cap_std::ambient_authority())?;
-            roots.insert(share.name.clone(), Arc::new(Root { dir, host_path: path, excluded }));
+            let excluded_ids = excluded.iter().map(|path| dir.metadata(path).map(|meta| object_id(&meta))).collect::<std::io::Result<Vec<_>>>()?;
+            roots.insert(share.name.clone(), Arc::new(Root {
+                dir,
+                #[cfg(windows)]
+                short_host_path: read_links::short_path(&path),
+                host_path: path,
+                excluded,
+                excluded_ids,
+            }));
         }
         let storage=Self {
             roots,
@@ -247,6 +260,7 @@ impl Storage {
             root,
             relative,
             virtual_path: format!("/{}", parts.join("/")),
+            parent: None,
         })
     }
     pub fn stat(&self, path: &str) -> Result<Entry> {
@@ -259,6 +273,8 @@ impl Storage {
                 modified_ms: 0,
                 created_ms:0,readonly:false,is_hidden:false,is_system:false,
                 revision: "root".into(),
+                link_revision: None,
+                link_target_available: None,
                 total_bytes: None,
                 free_bytes: None,
             });
@@ -276,9 +292,15 @@ impl Storage {
             return Ok(items);
         }
         let node = self.node(path)?;
+        let dir = node.root.dir.open_dir(node.relative_or_dot())?;
+        scan_entries(&dir, &node.virtual_path, |_, child| self.stat(child))
+    }
+}
+
+fn scan_entries(dir: &Dir, path: &str, mut stat: impl FnMut(&str, &str) -> Result<Entry>) -> Result<Vec<Entry>> {
         let mut entries = Vec::new();
         let mut bytes = 0usize;
-        for item in node.root.dir.read_dir(node.relative_or_dot())? {
+        for item in dir.entries()? {
             let item = item?;
             let Some(name) = item.file_name().to_str().map(str::to_owned) else {
                 continue;
@@ -286,8 +308,8 @@ impl Storage {
             if valid_name(&name).is_err() {
                 continue;
             }
-            let child = format!("{}/{}", node.virtual_path, name);
-            if let Ok(entry) = self.stat(&child) {
+            let child = format!("{path}/{name}");
+            if let Ok(entry) = stat(&name, &child) {
                 bytes += entry.path.len() + entry.name.len() + entry.revision.len() + 128;
                 if bytes > 32 * 1024 * 1024 {
                     return Err(Error::new(
@@ -308,12 +330,17 @@ impl Storage {
                 .then_with(|| a.name.cmp(&b.name))
         });
         Ok(entries)
-    }
+}
+
+impl Storage {
     pub fn mkdir(&self, path: &str) -> Result<()> {
-        let node = self.node(path)?;
+        self.mkdir_node(self.node(path)?)
+    }
+    pub(crate) fn mkdir_node(&self, node: Node) -> Result<()> {
         node.require_child()?;
         let _guard = self.mutation.lock().unwrap();
-        node.root.dir.create_dir(&node.relative)?;
+        let (dir, leaf) = node.location();
+        dir.create_dir(leaf)?;
         Ok(())
     }
     pub fn remove(&self, path: &str, directory: bool) -> Result<()> {
@@ -327,9 +354,15 @@ impl Storage {
         }
         Ok(())
     }
-    pub fn recycle_checked(&self, path: &str, revision: &str, owner: &str, check: impl Fn() -> Result<()> + Send + Sync + 'static) -> Result<String> {
+    pub(crate) fn remove_node(&self, node: Node) -> Result<()> {
+        node.require_child()?;
         let _guard = self.mutation.lock().unwrap();
-        let node = self.node(path)?;
+        let (dir, leaf) = node.location();
+        unlink_entry(dir, leaf, &node.metadata()?)?;
+        Ok(())
+    }
+    pub(crate) fn recycle_node(&self, node: Node, revision: &str, owner: &str, check: impl Fn() -> Result<()> + Send + Sync + 'static) -> Result<String> {
+        let _guard = self.mutation.lock().unwrap();
         node.require_child()?;
         check()?;
         if node.stat()?.revision != revision {
@@ -349,11 +382,14 @@ impl Storage {
         let index = records.iter().position(|(id, record)| id == token && record.owner == owner)
             .ok_or_else(|| Error::new("history_unavailable", "回收站撤销记录已过期或不属于此设备，未按路径猜测还原"))?;
         let record = &records[index].1;
-        let node = self.node(&record.node.virtual_path)?;
+        let node = self.mutation_node(&record.node.canonical_path(), false, false)?;
+        if node.binding()? != record.node.binding()? {
+            return Err(Error::new("conflict", "还原目录已变化，文件仍保留在回收站"));
+        }
         node.require_child()?;
         let check=Arc::new(check);
         check()?;
-        if node.root.dir.symlink_metadata(&node.relative).is_ok() { return Err(Error::new("conflict", "原位置已有新项目，未覆盖")); }
+        if node.metadata().is_ok() { return Err(Error::new("conflict", "原位置已有新项目，未覆盖")); }
         let stage = node.root.staging()?;
         let captured = format!("capture-{token}");
         let journal = format!("mutation-{token}.json");
@@ -369,9 +405,10 @@ impl Storage {
             let authorize=check.clone();
             crate::recycle::restore_to(&record.item,&node,&node.root.host_path.join(format!("{PRIVATE_PREFIX}staging")).join(&captured),move||authorize())?;
         }
-        if metadata_revision(&stage.metadata(&captured)?) != record.item.revision { return Err(Error::new("conflict", "待还原项目已变化，未覆盖")); }
+        if metadata_revision(&stage.symlink_metadata(&captured)?) != record.item.revision { return Err(Error::new("conflict", "待还原项目已变化，未覆盖")); }
         check()?;
-        rename_noreplace(&stage,Path::new(&captured),&node.root.dir,&node.relative)?;
+        let (parent, leaf) = node.location();
+        rename_noreplace(&stage,Path::new(&captured),parent,leaf)?;
         let entry=node.stat()?;
         let _=stage.remove_file(&journal);
         records.remove(index);
@@ -379,38 +416,41 @@ impl Storage {
     }
     pub(crate) fn recycled_path(&self, token: &str, owner: &str) -> Result<String> {
         self.recycled.lock().unwrap().iter().find(|(id,record)|id==token&&record.owner==owner)
-            .map(|(_,record)|record.node.virtual_path.clone()).ok_or_else(||Error::new("history_unavailable","回收站撤销记录不可用"))
+          .map(|(_,record)|record.node.canonical_path()).ok_or_else(||Error::new("history_unavailable","回收站撤销记录不可用"))
     }
     pub fn rename(&self, from: &str, to: &str) -> Result<()> {
-        let from = self.node(from)?;
-        let to = self.node(to)?;
+        self.rename_nodes(self.node(from)?, self.node(to)?)
+    }
+    pub(crate) fn rename_nodes(&self, from: Node, to: Node) -> Result<()> {
         from.require_child()?;
         to.require_child()?;
         let _guard = self.mutation.lock().unwrap();
-        rename_noreplace(&from.root.dir, &from.relative, &to.root.dir, &to.relative)?;
+        let (from_dir, from_leaf) = from.location();
+        let (to_dir, to_leaf) = to.location();
+        rename_noreplace(from_dir, from_leaf, to_dir, to_leaf)?;
         Ok(())
     }
     /// Capture by no-replace rename before checking identity. A path which was
     /// replaced since selection is restored, never removed as the old object.
-    pub fn checked_mutation(&self, from: &str, to: Option<&str>, revision: &str, target_revision: Option<&str>) -> Result<()> {
-        let source = self.node(from)?;
-        let destination = to.map(|path| self.node(path)).transpose()?;
-        self.checked_nodes(source,destination,revision,target_revision,true)
+    pub(crate) fn checked_mutation(&self, source: Node, destination: Option<Node>, revision: &str, target_revision: Option<&str>, authorize: impl FnOnce() -> Result<()>) -> Result<()> {
+        self.checked_nodes(source,destination,revision,target_revision,true,authorize)
     }
-    fn checked_nodes(&self,source:Node,destination:Option<Node>,revision:&str,target_revision:Option<&str>,lock_source:bool)->Result<()>{
+    fn checked_nodes(&self,source:Node,destination:Option<Node>,revision:&str,target_revision:Option<&str>,lock_source:bool,authorize:impl FnOnce()->Result<()>)->Result<()>{
         source.require_child()?;
         if let Some(target) = &destination {
             target.require_child()?;
             if !Arc::ptr_eq(&source.root, &target.root) || source.relative == target.relative
-                || target.relative.starts_with(&source.relative) || source.relative.starts_with(&target.relative) {
+                || within(&target.relative, &source.relative) && !within(&source.relative, &target.relative)
+                || within(&source.relative, &target.relative) && !within(&target.relative, &source.relative) {
                 return Err(Error::new("invalid_path", "条件移动必须在同一共享内，且不能互相包含"));
             }
         }
         let _guard = self.mutation.lock().unwrap();
+        authorize()?;
         if source.stat()?.revision != revision { return Err(Error::new("conflict", "源文件已变化，未修改")); }
-        let lock_file=|node:&Node|->Result<Option<cap_std::fs::File>>{if node.stat()?.is_dir{return Ok(None);}let mut options=OpenOptions::new();options.read(true);
+        let lock_file=|node:&Node|->Result<Option<cap_std::fs::File>>{let meta=node.metadata()?;if meta.is_dir()||meta.file_type().is_symlink(){return Ok(None);}let mut options=OpenOptions::new();options.read(true).follow(FollowSymlinks::No);
             #[cfg(windows)]{use cap_std::fs::OpenOptionsExt;options.share_mode(1|4);}
-            Ok(Some(node.root.dir.open_with(&node.relative,&options)?))};
+            let (dir,leaf)=node.location();Ok(Some(dir.open_with(leaf,&options)?))};
         let _source_lock=if lock_source{lock_file(&source)?}else{None};
         let stage = source.root.staging()?;
         let id = random()?;
@@ -427,11 +467,14 @@ impl Storage {
         drop(log);
         let result = (|| -> Result<()> {
             let mut _target_lock=None;
-            rename_noreplace(&source.root.dir, &source.relative, &stage, Path::new(&captured))?;
-            if metadata_revision(&stage.metadata(&captured)?) != revision {
+            let (parent, leaf) = source.location();
+            rename_noreplace(parent, leaf, &stage, Path::new(&captured))?;
+            let captured_meta = stage.symlink_metadata(&captured)?;
+            if metadata_revision(&captured_meta) != revision {
                 return Err(Error::new("conflict", "源文件身份已变化，未删除或覆盖"));
             }
             if let Some(target) = &destination {
+                let (parent, leaf) = target.location();
                 match target.stat() {
                     Ok(entry) => {
                         if entry.readonly{return Err(Error::new("forbidden","目标文件是只读的，未覆盖"));}
@@ -439,8 +482,8 @@ impl Storage {
                             return Err(Error::new("conflict", "目标已变化或是文件夹，未覆盖"));
                         }
                         _target_lock=lock_file(target)?;
-                        rename_noreplace(&target.root.dir, &target.relative, &stage, Path::new(&backup))?;
-                        if metadata_revision(&stage.metadata(&backup)?) != entry.revision {
+                        rename_noreplace(parent, leaf, &stage, Path::new(&backup))?;
+                        if metadata_revision(&stage.symlink_metadata(&backup)?) != entry.revision {
                             return Err(Error::new("conflict", "目标文件身份已变化，未覆盖"));
                         }
                     }
@@ -448,31 +491,45 @@ impl Storage {
                     Err(e) if e.code == "not_found" => return Err(Error::new("conflict", "原目标已移走，未覆盖")),
                     Err(e) => return Err(e),
                 }
-                rename_noreplace(&stage, Path::new(&captured), &target.root.dir, &target.relative)?;
-                if stage.symlink_metadata(&backup).is_ok() { stage.remove_file(&backup)?; }
+                rename_noreplace(&stage, Path::new(&captured), parent, leaf)?;
+                if let Ok(meta) = stage.symlink_metadata(&backup) { unlink_entry(&stage, Path::new(&backup), &meta)?; }
             } else {
                 // Never recursively delete a directory: a newly created child
                 // must survive an already accepted move/removal.
-                if stage.metadata(&captured)?.is_dir() { stage.remove_dir(&captured)?; }
-                else { stage.remove_file(&captured)?; }
+                unlink_entry(&stage, Path::new(&captured), &captured_meta)?;
             }
             Ok(())
         })();
         if let Err(error) = result {
-            let rollback = self.restore_checked(&source.root, &state);
+            let rollback = (|| -> Result<()> {
+                if stage.symlink_metadata(&captured).is_ok() {
+                    let (parent, leaf) = source.location();
+                    rename_noreplace(&stage, Path::new(&captured), parent, leaf)?;
+                }
+                if let Some(target) = &destination {
+                    if stage.symlink_metadata(&backup).is_ok() {
+                        let (parent, leaf) = target.location();
+                        rename_noreplace(&stage, Path::new(&backup), parent, leaf)?;
+                    }
+                }
+                Ok(())
+            })();
             return Err(match rollback { Ok(()) => {let _=stage.remove_file(&record);error}, Err(_) => {let message=format!("条件操作未完成：{record}。原数据保留在共享私有暂存区，未覆盖现有文件。");let mut warnings=self.recovery_warnings.lock().unwrap();if warnings.len()<256{warnings.push(message.clone());}Error::new("recovery_required", message)} });
         }
         stage.remove_file(&record)?;
         Ok(())
     }
     pub(crate) fn commit_edit(&self,staged:&mut Staged,expected:&str)->Result<()>{
+        self.commit_edit_authorized(staged, expected, || Ok(()))
+    }
+    pub(crate) fn commit_edit_authorized(&self,staged:&mut Staged,expected:&str,authorize:impl FnOnce()->Result<()>)->Result<()>{
         if staged.committed{return Ok(());}
         staged.file.sync_all()?;
         let revision=crate::connection::file_revision(&staged.file).map_err(|_|Error::new("io_error","无法核对编辑副本身份"))?;
         // This source is our exclusively writable, private staged file, never
         // a URI accepted from a client. Its open handles deny other writers.
-        let source=Node{root:staged.node.root.clone(),relative:PathBuf::from(format!("{PRIVATE_PREFIX}staging")).join(&staged.name),virtual_path:String::new()};
-        self.checked_nodes(source,Some(staged.node.clone()),&revision,Some(expected),false)?;
+        let source=Node{root:staged.node.root.clone(),relative:PathBuf::from(format!("{PRIVATE_PREFIX}staging")).join(&staged.name),virtual_path:String::new(),parent:None};
+        self.checked_nodes(source,Some(staged.node.clone()),&revision,Some(expected),false,authorize)?;
         staged.committed=true;Ok(())
     }
     fn restore_checked(&self, root: &Arc<Root>, state: &serde_json::Value) -> Result<()> {
@@ -486,14 +543,16 @@ impl Storage {
             return Err(Error::new("invalid_config", "恢复路径越界"));
         }
         if stage.symlink_metadata(captured).is_ok() {
-            rename_noreplace(&stage, Path::new(captured), &root.dir, source)?;
+            let (parent, leaf) = root.recovery_destination(source)?;
+            rename_noreplace(&stage, Path::new(captured), &parent, leaf)?;
         }
         if stage.symlink_metadata(backup).is_ok() {
             let target = Path::new(get("target")?);
             if target.is_absolute() || target.components().any(|p| !matches!(p,std::path::Component::Normal(_))) {
                 return Err(Error::new("invalid_config", "恢复目标越界"));
             }
-            rename_noreplace(&stage, Path::new(backup), &root.dir, target)?;
+            let (parent, leaf) = root.recovery_destination(target)?;
+            rename_noreplace(&stage, Path::new(backup), &parent, leaf)?;
         }
         Ok(())
     }
@@ -514,9 +573,11 @@ impl Storage {
                     valid_name(captured)?;valid_name(backup)?;
                     let target_path=Path::new(target);
                     if target_path.is_absolute()||target_path.components().any(|v|!matches!(v,std::path::Component::Normal(_))){return Err(Error::new("invalid_config","恢复目标越界"));}
-                    if stage.symlink_metadata(captured).is_err()&&root.dir.metadata(target_path).ok().is_some_and(|m|metadata_revision(&m)==expected)
-                        &&stage.metadata(backup).ok().is_some_and(|m|!m.is_dir()&&metadata_revision(&m)==previous){
-                        stage.remove_file(backup)?;stage.remove_file(name)?;continue;
+                    let installed = root.recovery_destination(target_path).ok().and_then(|(parent, leaf)|parent.symlink_metadata(leaf).ok());
+                    let saved = stage.symlink_metadata(backup).ok();
+                    if stage.symlink_metadata(captured).is_err()&&installed.is_some_and(|m|metadata_revision(&m)==expected)
+                        &&saved.as_ref().is_some_and(|m|!m.is_dir()&&metadata_revision(m)==previous){
+                        unlink_entry(&stage,Path::new(backup),&saved.unwrap())?;stage.remove_file(name)?;continue;
                     }
                 }
                 // Recovery only restores captured originals into vacant names.
@@ -531,10 +592,16 @@ impl Storage {
         Ok(())
     }
     pub fn copy_file(&self, from: &str, to: &str, check: impl Fn() -> Result<()>) -> Result<()> {
-        let source = self.node(from)?;
-        let destination = self.node(to)?;
+        self.copy_from(self.node(from)?.open_read()?, to, check)
+    }
+    pub(crate) fn copy_device_file(&self, from: &str, destination: Node, check: impl Fn() -> Result<()>) -> Result<()> {
+        self.copy_to(self.device_open_read(from)?, destination, check)
+    }
+    fn copy_from(&self, input: std::fs::File, to: &str, check: impl Fn() -> Result<()>) -> Result<()> {
+        self.copy_to(input, self.node(to)?, check)
+    }
+    fn copy_to(&self, mut input: std::fs::File, destination: Node, check: impl Fn() -> Result<()>) -> Result<()> {
         destination.require_child()?;
-        let mut input = source.open_read()?;
         let mut staged = destination.stage()?;
         use std::io::{Read, Write};
         let mut buffer = [0u8; 65536];
@@ -552,6 +619,38 @@ impl Storage {
     }
 }
 impl Node {
+    pub(crate) fn location(&self) -> (&Dir, &Path) {
+        match &self.parent {
+            Some((parent, leaf)) => (parent, Path::new(leaf)),
+            None => (&self.root.dir, self.relative_or_dot()),
+        }
+    }
+    pub(crate) fn metadata(&self) -> Result<cap_std::fs::Metadata> {
+        let (dir, leaf) = self.location();
+        let meta = dir.symlink_metadata(leaf)?;
+        #[cfg(windows)]
+        if meta.file_attributes() & 0x400 != 0 && !meta.file_type().is_symlink() {
+            return Err(Error::new("forbidden", "不允许修改此类重解析点"));
+        }
+        Ok(meta)
+    }
+    pub(crate) fn canonical_path(&self) -> String {
+        let share = self.virtual_path.split('/').nth(1).unwrap_or_default();
+        let mut path = format!("/{share}");
+        for part in &self.relative {
+            path.push('/');
+            path.push_str(&part.to_string_lossy());
+        }
+        path
+    }
+    pub(crate) fn binding(&self) -> Result<String> {
+        let parent = match &self.parent {
+            Some((parent, _)) => parent.dir_metadata()?,
+            None => self.root.dir.metadata(self.relative.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new(".")))?,
+        };
+        let (device, inode) = object_id(&parent);
+        Ok(format!("{device:x}:{inode:x}:{}", self.canonical_path()))
+    }
     pub fn relative_or_dot(&self) -> &Path {
         if self.relative.as_os_str().is_empty() {
             Path::new(".")
@@ -576,7 +675,21 @@ impl Node {
         }
     }
     pub fn stat(&self) -> Result<Entry> {
-        let meta = self.root.dir.metadata(self.relative_or_dot())?;
+        let meta = self.metadata()?;
+        Ok(entry_for(&meta, &self.virtual_path,
+            self.relative.as_os_str().is_empty().then_some(&self.root.host_path), false))
+    }
+    pub fn open_read(&self) -> Result<std::fs::File> {
+        let (dir, leaf) = self.location();
+        let file = dir.open_with(leaf, OpenOptions::new().read(true).follow(FollowSymlinks::No))?;
+        if !file.metadata()?.is_file() {
+            return Err(Error::new("forbidden", "只能读取普通文件"));
+        }
+        Ok(file.into_std())
+    }
+}
+
+fn entry_for(meta: &cap_std::fs::Metadata, virtual_path: &str, mount: Option<&PathBuf>, linked: bool) -> Entry {
         let modified = meta
             .modified()
             .ok()
@@ -586,41 +699,40 @@ impl Node {
         let attributes=meta.file_attributes();
         #[cfg(not(windows))]
         let attributes=0u32;
-        Ok(Entry {
-            name: self.virtual_path.rsplit('/').next().unwrap_or("").into(),
-            path: self.virtual_path.clone(),
+        let space = mount.and_then(|path| volume_space(path));
+        Entry {
+            name: virtual_path.rsplit('/').next().unwrap_or("").into(),
+            path: virtual_path.into(),
             is_dir: meta.is_dir(),
             size: meta.len(),
             modified_ms: modified.as_millis() as u64,
             created_ms:meta.created().ok().and_then(|v|v.into_std().duration_since(UNIX_EPOCH).ok()).map(|v|v.as_millis() as u64).unwrap_or(0),
-            readonly:meta.permissions().readonly(),
+            readonly:linked||meta.permissions().readonly(),
             // An explicitly configured share is a virtual mount, not the
             // backing directory. Windows volume roots normally carry hidden
             // and system bits; inheriting them hides every advertised drive.
             // Descendant files retain their actual visibility attributes.
-            is_hidden:!self.relative.as_os_str().is_empty()&&(attributes&2!=0||self.virtual_path.rsplit('/').next().unwrap_or("").starts_with('.')),
-            is_system:!self.relative.as_os_str().is_empty()&&attributes&4!=0,
-            revision: metadata_revision(&meta),
-            total_bytes: if self.relative.as_os_str().is_empty() { volume_space(&self.root.host_path).map(|v| v.0) } else { None },
-            free_bytes: if self.relative.as_os_str().is_empty() { volume_space(&self.root.host_path).map(|v| v.1) } else { None },
-        })
-    }
-    pub fn open_read(&self) -> Result<std::fs::File> {
-        let file = self.root.dir.open(&self.relative)?;
-        if !file.metadata()?.is_file() {
-            return Err(Error::new("forbidden", "只能读取普通文件"));
+            is_hidden:mount.is_none()&&(attributes&2!=0||virtual_path.rsplit('/').next().unwrap_or("").starts_with('.')),
+            is_system:mount.is_none()&&attributes&4!=0,
+            revision: metadata_revision(meta),
+            link_revision: None,
+            link_target_available: None,
+            total_bytes: space.map(|v| v.0),
+            free_bytes: space.map(|v| v.1),
         }
-        Ok(file.into_std())
-    }
+}
+
+impl Node {
     pub fn stage(&self) -> Result<Staged> {
         self.require_child()?;
-        if self.root.dir.symlink_metadata(&self.relative).is_ok() {
+        if self.metadata().is_ok() {
             return Err(Error::new("conflict", "目标已存在，未覆盖"));
         }
         self.stage_private(false)
     }
     pub(crate) fn stage_edit(&self,revision:&str)->Result<Staged>{
         self.require_child()?;
+        if self.metadata()?.file_type().is_symlink() { return Err(Error::new("conflict", "编辑目标已变成符号链接")); }
         let entry=self.stat()?;
         if entry.readonly{return Err(Error::new("forbidden","原文件为只读，未修改"));}
         if entry.is_dir||entry.revision!=revision{return Err(Error::new("conflict","编辑的原文件已变化，未覆盖"));}
@@ -649,6 +761,10 @@ impl Node {
             retain: false,
         })
     }
+}
+
+fn object_id(meta: &cap_std::fs::Metadata) -> (u64, u64) {
+    (meta.dev(), meta.ino())
 }
 
 pub(crate) fn metadata_revision(meta: &cap_std::fs::Metadata) -> String {
@@ -753,6 +869,31 @@ fn within(path: &Path, parent: &Path) -> bool {
     path.starts_with(parent)
 }
 impl Root {
+    fn recovery_destination<'a>(&self, relative: &'a Path) -> Result<(Dir, &'a Path)> {
+        let leaf = relative.file_name().map(Path::new).ok_or_else(|| Error::new("invalid_path", "恢复路径无效"))?;
+        let relative_parent = relative.parent().unwrap_or(Path::new(""));
+        if relative_parent == Path::new(".rhfiles-service-staging") {
+            return Ok((self.staging()?, leaf));
+        }
+        valid_name(leaf.to_str().unwrap_or_default())?;
+        if self.excluded.iter().any(|private| within(relative, private)) {
+            return Err(Error::new("forbidden", "恢复路径位于私有目录"));
+        }
+        let mut parent = self.dir.try_clone()?;
+        for part in relative_parent {
+            valid_name(part.to_str().unwrap_or_default())?;
+            parent = parent.open_dir_nofollow(part)?;
+            let metadata = parent.dir_metadata()?;
+            #[cfg(windows)]
+            if metadata.file_attributes() & 0x400 != 0 {
+                return Err(Error::new("forbidden", "恢复路径经过重解析点"));
+            }
+            if self.excluded_ids.contains(&object_id(&metadata)) {
+                return Err(Error::new("forbidden", "恢复路径位于私有目录"));
+            }
+        }
+        Ok((parent, leaf))
+    }
     pub fn staging(&self) -> Result<Dir> {
         let private = format!("{PRIVATE_PREFIX}staging");
         if let Ok(meta) = self.dir.symlink_metadata(&private) {
@@ -769,7 +910,12 @@ impl Root {
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(e) => return Err(e.into()),
         }
-        Ok(self.dir.open_dir(&private)?)
+        let dir = self.dir.open_dir_nofollow(&private)?;
+        #[cfg(windows)]
+        if dir.dir_metadata()?.file_attributes() & 0x400 != 0 {
+            return Err(Error::new("forbidden", "临时目录不能是重解析点"));
+        }
+        Ok(dir)
     }
 }
 #[derive(Debug)]
@@ -801,15 +947,24 @@ impl Staged {
             return Ok(());
         }
         self.file.sync_all()?;
+        let (parent, leaf) = self.node.location();
         rename_noreplace(
             &self.node.root.staging()?,
             Path::new(&self.name),
-            &self.node.root.dir,
-            &self.node.relative,
+            parent,
+            leaf,
         )?;
         self.committed = true;
         Ok(())
     }
+}
+
+fn unlink_entry(dir: &Dir, path: &Path, meta: &cap_std::fs::Metadata) -> std::io::Result<()> {
+    #[cfg(windows)]
+    let directory = meta.file_attributes() & 0x10 != 0;
+    #[cfg(not(windows))]
+    let directory = meta.is_dir();
+    if directory { dir.remove_dir(path) } else { dir.remove_file(path) }
 }
 impl Drop for Staged {
     fn drop(&mut self) {

@@ -160,6 +160,7 @@ pub enum FileRequest {
     UploadCreate {
         path: String,
         length: u64,
+        revision: Option<String>,
     },
     UploadStatus {
         id: String,
@@ -257,8 +258,11 @@ impl FileRequest {
                 }
                 Ok(())
             }
-            Self::UploadCreate { path, length } => {
+            Self::UploadCreate { path, length, revision } => {
                 validate_path(path)?;
+                if revision.as_ref().is_some_and(|value| value.is_empty() || value.len()>256 || !value.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'-')) {
+                    return Err("[invalid_request] 编辑版本无效".into());
+                }
                 if *length > 1_099_511_627_776 {
                     Err("[too_large] 上传超过 1 TiB".into())
                 } else {
@@ -351,6 +355,7 @@ impl FileRequest {
             .client
             .request(method, format!("{}/api/v1/{endpoint}", route.endpoint))
             .basic_auth(&route.username, Some(&route.password))
+            .header("X-RHFiles-Link-Operations", "1")
             .timeout(Duration::from_secs(
                 if matches!(self, Self::Content { .. } | Self::ContentChecked { .. }) {
                     3600
@@ -423,7 +428,7 @@ impl FileRequest {
                 validate_path(destination)?;
                 request = request.json(&json!({"path":path,"destination":destination}));
             }
-            Self::UploadCreate { path, length } => {
+            Self::UploadCreate { path, length, revision } => {
                 validate_path(path)?;
                 if *length > 1_099_511_627_776 {
                     return Err("[too_large] 上传超过 1 TiB".into());
@@ -433,6 +438,9 @@ impl FileRequest {
                     .header("Upload-Length", length.to_string())
                     .header("Upload-Metadata", format!("path {}", B64.encode(path)))
                     .body("");
+                if let Some(revision) = revision {
+                    request = request.header("If-Match", format!("\"{revision}\""));
+                }
             }
             Self::UploadStatus { .. } | Self::UploadCancel { .. } => {
                 request = request.header("Tus-Resumable", "1.0.0");

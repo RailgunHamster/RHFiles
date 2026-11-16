@@ -458,7 +458,11 @@ mod windows_bin {
                 .unwrap()
                 .take()
                 .ok_or_else(|| Error::new("recycle_unavailable", "Windows 未确认还原操作"))??;
-            if restored.path.canonicalize()? != destination.canonicalize()?
+            // Canonicalizing a recycled symlink would resolve its target, and
+            // a relative link can be dangling while it is in private staging.
+            let restored_path = restored.path.to_string_lossy();
+            let expected_path = destination.to_string_lossy();
+            if !restored_path.trim_start_matches("\\\\?\\").eq_ignore_ascii_case(expected_path.trim_start_matches("\\\\?\\"))
                 || operation
                     .GetAnyOperationsAborted()
                     .map_err(failure)?

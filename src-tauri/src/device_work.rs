@@ -165,6 +165,7 @@ pub(super) async fn execute(
                 original.clone()
             };
             hold(&original, progress)?;
+            progress.editing = alternate.is_none();
             transfer(
                 local.clone(),
                 target.clone(),

@@ -2,6 +2,60 @@ import test from 'node:test';import assert from 'node:assert/strict';import fs f
 import {launchApp,until} from '../testing/app-session.mjs';
 const api=(app,id,args={})=>app.evaluate('RHFilesAPI.invoke('+JSON.stringify(id)+','+JSON.stringify(args)+')');
 const native=(app,action,args)=>app.evaluate('call("device_transfer",'+JSON.stringify({action,args})+')');
+
+test('Windows client edits through device links and deletes a selected directory link without descending', async t => {
+  const host = await launchApp({desktopId:'symlink-host'});
+  t.after(() => host.close());
+  const client = await launchApp({desktopId:'symlink-client',emulateFocus:true});
+  t.after(() => client.close());
+  const root = path.join(host.directory,'owned-symlink-qa');
+  const folder = path.join(root,'target-folder');
+  fs.mkdirSync(root);
+  fs.mkdirSync(folder);
+  const model = path.join(folder,'models.json');
+  fs.writeFileSync(model,'original');
+  fs.symlinkSync(model,path.join(root,'file-link.json'),'file');
+  fs.symlinkSync(folder,path.join(root,'directory-link'),'dir');
+
+  const group = await api(host,'groups.create',{name:'Owned symlink QA',deviceName:'Link host',permissions:{write:true,delete:false}});
+  const request = await api(client,'groups.request',{deviceName:'Link client'});
+  const approval = await api(host,'groups.approve',{id:group,uri:request.uri,canInvite:false});
+  await api(client,'groups.join',{uri:approval.uri,confirmed:true});
+  await api(host,'server.start',{config:{port:0,shares:[{name:'Files',path:root}]}});
+  await api(client,'groups.join',{uri:(await api(host,'groups.export',{id:group})).uri,confirmed:true});
+  const device = (await api(client,'devices.refresh')).devices[0];
+  const endpoint = 'https://127.0.0.1:'+(await api(host,'server.state')).status.port;
+  await api(client,'groups.connect',{id:group,peer:device.peer,endpoint});
+  const base = device.path+'Files';
+  const linkedFile = base+'/file-link.json';
+  const linkedDirectory = base+'/directory-link';
+  const working = await api(client,'devices.checkout',{path:linkedFile});
+  fs.writeFileSync(working.localPath,'edited using write-only group access');
+  await api(client,'devices.workingCopies.save',{id:working.id});
+  assert.equal(fs.readFileSync(model,'utf8'),'edited using write-only group access');
+  assert(fs.lstatSync(path.join(root,'file-link.json')).isSymbolicLink());
+  assert.equal(await api(client,'devices.newFolder',{parent:linkedDirectory}),linkedDirectory+'/New%20Folder');
+  const paste = path.join(client.directory,'pasted.txt');
+  fs.writeFileSync(paste,'copied through directory symlink');
+  await api(client,'devices.transfer',{operation:'copy',src:paste,dest:linkedDirectory});
+  assert.equal(fs.readFileSync(path.join(folder,'pasted.txt'),'utf8'),'copied through directory symlink');
+  assert(fs.statSync(path.join(folder,'New Folder')).isDirectory());
+  await assert.rejects(api(client,'devices.delete',{paths:[linkedDirectory],permanent:true}),/forbidden|unauthorized/);
+
+  await api(host,'groups.configure',{id:group,enabled:true,permissions:{write:true,delete:true}});
+  await api(client,'groups.connect',{id:group,peer:device.peer,endpoint});
+  const renamed = base+'/renamed-directory-link';
+  const outcome = await api(client,'devices.rename',{path:linkedDirectory,newName:'renamed-directory-link'});
+  assert.equal(outcome.path,renamed);
+  const deleted = await api(client,'devices.delete',{paths:[renamed],permanent:true});
+  assert.deepEqual(deleted.errors,[]);
+  assert.deepEqual(deleted.deleted,[renamed]);
+  assert.equal(fs.existsSync(path.join(root,'renamed-directory-link')),false);
+  assert.equal(fs.readFileSync(model,'utf8'),'edited using write-only group access');
+  assert.equal(fs.readFileSync(path.join(folder,'pasted.txt'),'utf8'),'copied through directory symlink');
+  await api(host,'server.stop');
+});
+
 test('real group filesystem: normal UI rename, case-only rename, merge/conflict/ABA, mkdir/templates, batch cycles, delete, size, hashes and retained editor copies',async()=>{
   const a=await launchApp({desktopId:'device-ops-host'}),b=await launchApp({desktopId:'device-ops-client',emulateFocus:true});
   const root=path.join(a.directory,'owned-file-operations');fs.mkdirSync(root);

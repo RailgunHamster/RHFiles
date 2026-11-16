@@ -13,6 +13,7 @@ use subtle::ConstantTimeEq;
 
 #[derive(Debug, Clone)]
 pub struct Access {
+    pub(crate) device_read: bool,
     pub edit_revision:Option<String>,
     pub committed_entry:Arc<Mutex<Option<(String,String)>>>,
     pub id: String,
@@ -256,6 +257,7 @@ impl Auth {
         let id = random()?;
         let password = random()?;
         let access = Access {
+            device_read: false,
             edit_revision:None,committed_entry:Arc::new(Mutex::new(None)),
             // Session rotation must not change tus ownership / WebDAV locks.
             id: format!("group-{}", hash(&format!("{group}:{peer}"))),
@@ -320,7 +322,7 @@ impl Auth {
                 if !bool::from(hash(&secret).as_bytes().ct_eq(grant.secret_hash.as_bytes())) {return Err(Error::new("unauthorized","凭据错误"));}
                 if groups.compatibility_binding(&grant.group,&grant.peer)?!=grant.binding {return Err(Error::new("unauthorized","WebDAV 设备组授权已撤销，请重新生成兼容凭据"));}
                 let (permissions,session)=groups.session_access(&grant.group,&grant.peer,true,None)?;
-                return Ok(Access{edit_revision:None,committed_entry:Arc::new(Mutex::new(None)),id:format!("webdav-{id}"),permissions,live:self.compatibility_enabled.clone(),method:method.into(),compatibility_binding:Some(grant.binding),credential_live:Some(grant.live),group:Some((groups.clone(),grant.group,grant.peer,std::time::Instant::now()+std::time::Duration::from_secs(86400),session))});
+                return Ok(Access{device_read:false,edit_revision:None,committed_entry:Arc::new(Mutex::new(None)),id:format!("webdav-{id}"),permissions,live:self.compatibility_enabled.clone(),method:method.into(),compatibility_binding:Some(grant.binding),credential_live:Some(grant.live),group:Some((groups.clone(),grant.group,grant.peer,std::time::Instant::now()+std::time::Duration::from_secs(86400),session))});
             }
         }
         Err(Error::new("unauthorized", "需要设备组授权；独立配对已移除"))

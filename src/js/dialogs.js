@@ -60,7 +60,7 @@ async function executeBatchRename() {
     return [f.path, newName];
   });
   try {
-    const result=await call("batch_rename", { renames,revisions:Object.fromEntries(batchRenameSource.files.filter(f=>f.remote_revision).map(f=>[f.path,f.remote_revision])) });
+    const result=await call("batch_rename", { renames,revisions:Object.fromEntries(batchRenameSource.files.filter(f=>f.remote_revision).map(f=>[f.path,f.remote_mutation_revision||f.remote_revision])) });
     const completed = renames
       .filter(([oldPath, newName]) => pathLeaf(oldPath) !== newName)
       .map(([oldPath, newName]) => [oldPath, joinFolderPath(parentFolderPath(oldPath), newName)]);

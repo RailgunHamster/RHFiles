@@ -3,7 +3,7 @@
 use crate::{
     auth::Access,
     model::*,
-    storage::{Staged, Storage, valid_name},
+    storage::{Node, Staged, Storage, valid_name},
 };
 use axum::body::Body;
 use futures_util::StreamExt;
@@ -32,6 +32,22 @@ pub struct Upload {
     pub digest: Option<String>,
     #[serde(default)]
     pub revision: Option<String>,
+    #[serde(default)]
+    binding: Option<String>,
+    #[serde(default)]
+    edit_revision: Option<String>,
+}
+
+impl Upload {
+    pub(crate) fn destination(&self, storage: &Storage) -> Result<Node> {
+        let node = storage.mutation_node(&self.path, self.edit_revision.is_some(), self.binding.is_none())?;
+        if let Some(binding) = &self.binding {
+            if node.binding()? != *binding {
+                return Err(Error::new("conflict", "上传目标目录或链接已变化，未写入新位置"));
+            }
+        }
+        Ok(node)
+    }
 }
 pub struct Uploads {
     directory: PathBuf,
@@ -97,8 +113,8 @@ impl Uploads {
                     continue;
                 }
                 if !u.completed {
-                    if let Ok(node) = storage.node(&u.path) {
-                        if let Ok(staging) = node.root.staging() {
+                    if let Some(root) = upload_root(storage, &u.path) {
+                        if let Ok(staging) = root.staging() {
                             let _ = staging.remove_file(&u.staging);
                         }
                     }
@@ -114,6 +130,9 @@ impl Uploads {
         access: &Access,
         path: String,
         length: u64,
+        node: Node,
+        edit_revision: Option<String>,
+        legacy: bool,
     ) -> Result<Upload> {
         access.check(true, false)?;
         if length > MAX_UPLOAD {
@@ -123,9 +142,11 @@ impl Uploads {
         if self.items.lock().unwrap().len() >= 256 {
             return Err(Error::new("busy", "上传任务过多，请结束或清理旧任务"));
         }
-        let node = storage.node(&path)?;
-        let mut staged = node.stage()?;
-        staged.retain = true;
+        let binding = if legacy { None } else { Some(node.binding()?) };
+        let mut staged = match &edit_revision {
+            Some(revision) => node.stage_edit(revision)?,
+            None => node.stage()?,
+        };
         let mut upload = Upload {
             id: random()?,
             owner: access.id.clone(),
@@ -137,16 +158,19 @@ impl Uploads {
             completed: false,
             digest: None,
             revision: None,
+            binding,
+            edit_revision,
         };
         if length == 0 {
-            staged.commit()?;
+            access.check(true, false)?;
+            commit(storage, access, &upload, &mut staged)?;
             upload.completed = true;
             upload.revision=Some(crate::connection::file_revision(&staged.file).map_err(|_|Error::new("io_error","无法核对上传文件身份"))?);
         }
         if let Err(e) = self.save(&upload) {
-            staged.retain = false;
             return Err(e);
         }
+        staged.retain = true;
         self.items.lock().unwrap().insert(
             upload.id.clone(),
             Arc::new(tokio::sync::Mutex::new(upload.clone())),
@@ -175,7 +199,7 @@ impl Uploads {
         if u.completed {
             return Ok(u.length);
         }
-        match Staged::reopen(storage.node(&u.path)?, u.staging.clone()) {
+        match Staged::reopen(u.destination(storage)?, u.staging.clone()) {
             Ok(staged) => {
                 let offset = staged.file.metadata()?.len();
                 if offset < u.offset {
@@ -205,7 +229,7 @@ impl Uploads {
                 // crash after publish; never confuse an unrelated same-size
                 // destination with a completed upload.
                 if let Some(expected) = &u.digest {
-                    let mut file = storage.node(&u.path)?.open_read()?;
+                    let mut file = u.destination(storage)?.open_read()?;
                     if file.metadata()?.len() == u.length && digest(&mut file)? == *expected {
                         return Ok(u.length);
                     }
@@ -226,7 +250,7 @@ impl Uploads {
         if u.completed {
             return Err(Error::new("conflict", "上传已经完成"));
         }
-        let mut staged = Staged::reopen(storage.node(&u.path)?, u.staging.clone())?;
+        let mut staged = Staged::reopen(u.destination(storage)?, u.staging.clone())?;
         if staged.file.metadata()?.len() != offset {
             return Err(Error::new(
                 "offset_mismatch",
@@ -274,7 +298,7 @@ impl Uploads {
             }).await.map_err(|_| Error::new("internal", "上传摘要计算失败"))??);
             self.save(u)?;
             a.check(true, false)?;
-            staged.commit()?;
+            commit(storage, a, u, &mut staged)?;
             u.completed = true;
             u.revision=Some(crate::connection::file_revision(&staged.file).map_err(|_|Error::new("io_error","无法核对上传文件身份"))?);
             self.save(u)?;
@@ -287,8 +311,8 @@ impl Uploads {
             return Err(Error::new("not_found", "上传任务不存在"));
         }
         if !u.completed {
-            let node = storage.node(&u.path)?;
-            match node.root.staging()?.remove_file(&u.staging) {
+            let root = upload_root(storage, &u.path).ok_or_else(|| Error::new("not_found", "共享不存在"))?;
+            match root.staging()?.remove_file(&u.staging) {
                 Ok(()) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
                 Err(e) => return Err(e.into()),
@@ -297,6 +321,19 @@ impl Uploads {
         self.items.lock().unwrap().remove(&u.id);
         let _ = std::fs::remove_file(self.directory.join(format!("{}.json", u.id)));
         Ok(())
+    }
+}
+fn upload_root<'a>(storage: &'a Storage, path: &str) -> Option<&'a Arc<crate::storage::Root>> {
+    storage.roots.get(crate::storage::components(path).ok()?.first().copied()?)
+}
+
+fn commit(storage: &Storage, access: &Access, upload: &Upload, staged: &mut Staged) -> Result<()> {
+    if upload.binding.is_some() {
+        staged.node = upload.destination(storage)?;
+    }
+    match &upload.edit_revision {
+        Some(revision) => storage.commit_edit_authorized(staged, revision, || access.check(true, false)),
+        None => { access.check(true, false)?; staged.commit() },
     }
 }
 fn digest(file: &mut std::fs::File) -> Result<String> {
@@ -328,7 +365,8 @@ fn digest(file: &mut std::fs::File) -> Result<String> {
         let credentials = auth.group_session(groups.clone(), &group, &groups.device_id()).unwrap();
         let access = auth.authenticate(Some(&format!("Bearer {}:{}", credentials["username"].as_str().unwrap(), credentials["password"].as_str().unwrap())), "PATCH").unwrap();
         let uploads = Uploads::new(&data).unwrap();
-        let mut upload = uploads.create(&storage, &access, "/Files/new.bin".into(), 10).unwrap();
+        let node = storage.node("/Files/new.bin").unwrap();
+        let mut upload = uploads.create(&storage, &access, "/Files/new.bin".into(), 10, node, None, true).unwrap();
         let blocked = data.join("uploads").join(format!("{}.tmp", upload.id));
         std::fs::create_dir(&blocked).unwrap();
         assert!(uploads.append(&storage, &access, &mut upload, 0, Body::from("first")).await.is_err());

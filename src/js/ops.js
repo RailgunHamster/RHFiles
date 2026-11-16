@@ -136,7 +136,7 @@ async function deleteSelected(isRight) {
   });
   try {
     const outcome = await call('delete_files', {paths: deletedPaths, operationId: taskId,
-      ...(sel.some(f=>f.remote_revision)?{revisions:Object.fromEntries(sel.filter(f=>f.remote_revision).map(f=>[f.path,f.remote_revision]))}:{})});
+      ...(sel.some(f=>f.remote_revision)?{revisions:Object.fromEntries(sel.filter(f=>f.remote_revision).map(f=>[f.path,f.remote_mutation_revision||f.remote_revision]))}:{})});
     const actuallyDeleted = Array.isArray(outcome?.deleted) ? outcome.deleted : deletedPaths;
     const recyclable = actuallyDeleted.filter(path => !isFtpPath(path) && !String(path).startsWith('\\\\') && !(typeof isDevicePath==='function'&&isDevicePath(path)));
     if (recyclable.length || outcome?.historyId) trackDelete(recyclable, outcome?.historyId, actuallyDeleted.length);
@@ -202,7 +202,7 @@ async function deleteSelectedPermanently(isRight) {
     const outcome = await call('delete_files_permanently', {
       paths: deletedPaths,
       operationId: taskId,
-      ...(sel.some(f=>f.remote_revision)?{revisions:Object.fromEntries(sel.filter(f=>f.remote_revision).map(f=>[f.path,f.remote_revision]))}:{}),
+      ...(sel.some(f=>f.remote_revision)?{revisions:Object.fromEntries(sel.filter(f=>f.remote_revision).map(f=>[f.path,f.remote_mutation_revision||f.remote_revision]))}:{}),
     });
     await refresh();
     const actuallyDeleted = Array.isArray(outcome?.deleted) ? outcome.deleted : [];

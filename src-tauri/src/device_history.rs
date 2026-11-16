@@ -177,6 +177,7 @@ pub(super) async fn execute(
                                 .ok_or("[invalid_response] 缺少还原项目大小")?,
                             revision: field(&entry, "revision")?.into(),
                             read_revision: None,
+                            link_revision: entry["linkRevision"].as_str().map(str::to_owned),
                         });
                     } else {
                         let stamp = restored
@@ -186,7 +187,7 @@ pub(super) async fn execute(
                             path,
                             FileRequest::Recycle {
                                 path: path.path.clone(),
-                                revision: stamp.revision.clone(),
+                                revision: stamp.mutation_revision().into(),
                             },
                         )
                         .await?

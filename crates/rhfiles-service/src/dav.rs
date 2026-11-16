@@ -145,7 +145,9 @@ impl GuardedFileSystem<Access> for DavFs {
     fn metadata<'a>(&'a self, p: &'a DavPath, a: &'a Access) -> FsFuture<'a, Box<dyn DavMetaData>> {
         Box::pin(async move {
             a.check(false, false).map_err(fs_error)?;
-            Ok(Box::new(Meta(self.storage.stat(&path(p)?).map_err(fs_error)?)) as _)
+            let path = path(p)?;
+            let entry = if a.device_read { self.storage.device_stat(&path) } else { self.storage.stat(&path) };
+            Ok(Box::new(Meta(entry.map_err(fs_error)?)) as _)
         })
     }
     fn read_dir<'a>(
@@ -178,11 +180,11 @@ impl GuardedFileSystem<Access> for DavFs {
                 || options.create_new;
             a.check(write, false).map_err(fs_error)?;
             let path = path(p)?;
-            let node = self.storage.node(&path).map_err(fs_error)?;
             if write {
                 if options.append {
                     return Err(FsError::NotImplemented);
                 }
+                let node = self.storage.node(&path).map_err(fs_error)?;
                 let staged = if let Some(revision)=&a.edit_revision{node.stage_edit(revision).map_err(fs_error)?}else{node.stage().map_err(fs_error)?};
                 let file = staged.file.try_clone().map_err(|e| fs_error(e.into()))?;
                 let entry = Entry {
@@ -193,6 +195,8 @@ impl GuardedFileSystem<Access> for DavFs {
                     modified_ms: now_ms(),
                     created_ms:now_ms(),readonly:false,is_hidden:false,is_system:false,
                     revision: random().map_err(fs_error)?,
+                    link_revision: None,
+                    link_target_available: None,
                     total_bytes: None,
                     free_bytes: None,
                 };
@@ -204,8 +208,15 @@ impl GuardedFileSystem<Access> for DavFs {
                     storage:self.storage.clone(),
                 }) as _)
             } else {
-                let entry = node.stat().map_err(fs_error)?;
-                let file = node.open_read().map_err(fs_error)?;
+                let (entry, file) = if a.device_read {
+                    (self.storage.device_stat(&path).map_err(fs_error)?, self.storage.device_open_read(&path).map_err(fs_error)?)
+                } else {
+                    let node = self.storage.node(&path).map_err(fs_error)?;
+                    (node.stat().map_err(fs_error)?, node.open_read().map_err(fs_error)?)
+                };
+                if a.device_read && crate::connection::file_revision(&file).map_err(|_|FsError::GeneralFailure)? != entry.revision {
+                    return Err(FsError::GeneralFailure);
+                }
                 Ok(Box::new(File {
                     file,
                     staged: None,

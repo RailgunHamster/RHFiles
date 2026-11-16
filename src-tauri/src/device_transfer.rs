@@ -140,6 +140,15 @@ struct Snapshot {
     size: u64,
     revision: String,
     read_revision: Option<String>,
+    link_revision: Option<String>,
+}
+impl Snapshot {
+    fn mutation_revision(&self) -> &str {
+        self.link_revision.as_deref().unwrap_or(&self.revision)
+    }
+    fn descend_for_removal(&self) -> bool {
+        self.directory && self.link_revision.is_none()
+    }
 }
 fn same_identity(a: &str, b: &str) -> bool {
     let a = a.split('-').collect::<Vec<_>>();
@@ -202,6 +211,7 @@ async fn snapshot(path: &Location) -> Result<Snapshot, String> {
                 size: meta.len(),
                 revision: file_revision(&file)?,
                 read_revision: None,
+                link_revision: None,
             })
         }
         Location::Remote(p) => {
@@ -219,6 +229,7 @@ async fn snapshot(path: &Location) -> Result<Snapshot, String> {
                 size: raw["size"].as_u64().ok_or("Invalid remote size")?,
                 revision: field(&raw, "revision")?.into(),
                 read_revision: raw["readRevision"].as_str().map(str::to_owned),
+                link_revision: raw["linkRevision"].as_str().map(str::to_owned),
             })
         }
     }
@@ -325,6 +336,7 @@ struct Progress<'a> {
     shared_bytes: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,
     silent: bool,
     saving: bool,
+    editing: bool,
 }
 impl Progress<'_> {
     fn check(&self) -> Result<(), String> {
@@ -359,7 +371,7 @@ impl Progress<'_> {
         if let Some(shared) = &self.shared_bytes { shared.fetch_add(bytes, std::sync::atomic::Ordering::Relaxed); }
     }
     fn fork(&self, bytes: std::sync::Arc<std::sync::atomic::AtomicU64>) -> Self {
-        Self { saving:self.saving, app:self.app, cancel:self.cancel, leases:self.leases.clone(), id:self.id.clone(), operation:self.operation.clone(),
+        Self { saving:self.saving, editing:self.editing, app:self.app, cancel:self.cancel, leases:self.leases.clone(), id:self.id.clone(), operation:self.operation.clone(),
             src:self.src.clone(), dest:self.dest.clone(), total:self.total, bytes:0, items:self.items, done:0,
             started:self.started, last:self.last, history:self.history, exclusive_target:self.exclusive_target,
             history_sources:None, download_options:self.download_options, shared_bytes:Some(bytes), silent:true }
@@ -560,13 +572,18 @@ async fn copy_file(
                 size: count,
                 revision: file_revision(&output)?,
                 read_revision: None,
+                link_revision: None,
             });
         }
         Location::Remote(final_path) => {
-            if existing.is_some() {
+            let conditional = if existing.is_some_and(|old| progress.editing || old.link_revision.is_some()) {
+                let cap = request(final_path, FileRequest::Capabilities).await?.json(65536).await?;
+                cap["features"].as_array().is_some_and(|features| features.iter().any(|v|v=="conditional-uploads"))
+            } else { false };
+            if existing.is_some() && !conditional {
                 require_checked(final_path, true, true).await?;
             }
-            let actual = if existing.is_some() {
+            let actual = if existing.is_some() && !conditional {
                 match target
                     .parent()?
                     .child(&format!("RHFiles-transfer-{}.partial", random()?))?
@@ -582,6 +599,7 @@ async fn copy_file(
                 FileRequest::UploadCreate {
                     path: actual.path.clone(),
                     length: stamp.size,
+                    revision: existing.filter(|_|conditional).map(|old|old.revision.clone()),
                 },
             )
             .await?;
@@ -669,13 +687,14 @@ async fn copy_file(
                 }
                 verify_source(source, stamp).await?;
                 progress.check()?;
-                if let Some(previous) = existing {
+                if let Some(previous) = existing.filter(|_| !conditional) {
                     let written = if let Some(revision) = &revision {
                         Snapshot {
                             directory: false,
                             size: stamp.size,
                             revision: revision.clone(),
                             read_revision: None,
+                            link_revision: None,
                         }
                     } else {
                         snapshot(&Location::Remote(actual.clone())).await?
@@ -708,7 +727,7 @@ async fn copy_file(
                                 format!("{error}; 完整暂存副本可能保留于 {}: {e}", actual.uri());
                         }
                     }
-                } else if existing.is_some() {
+                } else if existing.is_some() && !conditional {
                     error = format!("{error}; 若有完整暂存副本，其路径为 {}", actual.uri());
                 }
                 return Err(match cleanup {
@@ -724,6 +743,7 @@ async fn copy_file(
                 size: stamp.size,
                 revision,
                 read_revision: None,
+                link_revision: None,
             });
         }
     }
@@ -736,7 +756,7 @@ async fn remove_source(
 ) -> Result<(), String> {
     progress.check()?;
     match path {
-        Location::Remote(p) => checked(p, None, &stamp.revision, None).await,
+        Location::Remote(p) => checked(p, None, stamp.mutation_revision(), None).await,
         Location::Local(p) => crate::file_ops::remove_local_transferred_file(
             progress.app,
             p,
@@ -785,7 +805,7 @@ async fn transfer(
                 let old = optional(&target).await?;
                 let same = old
                     .as_ref()
-                    .is_some_and(|v| same_identity(&v.revision, &stamp.revision));
+                    .is_some_and(|v| same_identity(v.mutation_revision(), stamp.mutation_revision()));
                 if old.is_none()
                     || same
                     || overwrite && !stamp.directory && old.as_ref().is_some_and(|v| !v.directory)
@@ -795,7 +815,7 @@ async fn transfer(
                     {
                         return Err("[conflict] 确认期间目标已变化，未覆盖".into());
                     }
-                    let replacing = old.as_ref().filter(|_| !same).map(|v| v.revision.as_str());
+                    let replacing = old.as_ref().filter(|_| !same).map(Snapshot::mutation_revision);
                     rename_checked(&source, &target, &stamp, replacing, progress).await?;
                     progress.total = stamp.size;
                     progress.bytes = stamp.size;
@@ -804,12 +824,12 @@ async fn transfer(
                     let current = snapshot(&target).await?;
                     let history = if progress.history
                         && replacing.is_none()
-                        && same_identity(&current.revision, &stamp.revision)
+                        && same_identity(current.mutation_revision(), stamp.mutation_revision())
                     {
                         history::record_move(
                             source.clone(),
                             target.clone(),
-                            current.revision.clone(),
+                            current.mutation_revision().into(),
                             progress,
                         )
                     } else {
@@ -839,6 +859,9 @@ async fn transfer(
             return Err("[too_large] 传输超过十万项或 256 层，未写入目标".into());
         }
         let stamp = snapshot(&src).await?;
+        if moving && stamp.link_revision.is_some() {
+            return Err("[unsupported] 链接只能在同一共享内移动".into());
+        }
         if let Some(expected) = &progress.history_sources {
             let revision = expected
                 .get(&src.text())
@@ -884,7 +907,9 @@ async fn transfer(
             }
             if !old.directory {
                 if let Location::Remote(path) = target {
-                    require_checked(path, true, true).await?;
+                    if !progress.editing && old.link_revision.is_none() {
+                        require_checked(path, true, true).await?;
+                    }
                 }
             }
         }
@@ -1068,7 +1093,7 @@ fn hold(path: &Location, progress: &mut Progress<'_>) -> Result<(), String> {
     progress.check()
 }
 fn expected(stamp: &Snapshot, revision: Option<&str>) -> Result<(), String> {
-    if revision.is_some_and(|r| r != stamp.revision) {
+    if revision.is_some_and(|r| r != stamp.revision && r != stamp.mutation_revision()) {
         Err("[conflict] 选中的文件已变化，未执行操作；请刷新后重新选择".into())
     } else {
         Ok(())
@@ -1108,13 +1133,20 @@ async fn rename_checked(
     if source.text() == target.text() {
         return verify_source(source, stamp).await;
     }
-    checked(from, Some(to), &stamp.revision, target_revision).await
+    checked(from, Some(to), stamp.mutation_revision(), target_revision).await
 }
 // Snapshot the complete operation before the first mutation. Bounded traversal
 // rejects overly large requests instead of silently deleting a partial tree.
 async fn scan(
     path: Location,
     progress: &mut Progress<'_>,
+) -> Result<Vec<(Location, Snapshot)>, String> {
+    scan_tree(path, progress, false).await
+}
+async fn scan_tree(
+    path: Location,
+    progress: &mut Progress<'_>,
+    removing: bool,
 ) -> Result<Vec<(Location, Snapshot)>, String> {
     let mut queue = std::collections::VecDeque::from([(path, 0usize)]);
     let mut plan = Vec::new();
@@ -1124,7 +1156,7 @@ async fn scan(
             return Err("[too_large] 超过十万项或 256 层；请缩小操作范围".into());
         }
         let stamp = snapshot(&path).await?;
-        if stamp.directory {
+        if stamp.directory && (!removing || stamp.descend_for_removal()) {
             for child in children(&path).await? {
                 queue.push_back((child, depth + 1));
             }
@@ -1171,10 +1203,10 @@ async fn mutations(
             hold(&path, progress)?;
             let (target, source, old) = rename_target(&path, field(args, "newName")?).await?;
             Ok(json!({"path":target.text(),"exists":old.is_some(),
-                "sameEntry":old.as_ref().is_some_and(|v|same_identity(&v.revision,&source.revision)),
-                "canMerge":source.directory&&old.as_ref().is_some_and(|v|v.directory),
-                "isDirectory":old.as_ref().is_some_and(|v|v.directory),
-                "sourceRevision":source.revision,"targetRevision":old.map(|v|v.revision)}))
+                "sameEntry":old.as_ref().is_some_and(|v|same_identity(v.mutation_revision(),source.mutation_revision())),
+                "canMerge":source.descend_for_removal()&&old.as_ref().is_some_and(Snapshot::descend_for_removal),
+                "isDirectory":old.as_ref().is_some_and(Snapshot::descend_for_removal),
+                "sourceRevision":source.mutation_revision(),"targetRevision":old.as_ref().map(Snapshot::mutation_revision)}))
         }
         "rename" => {
             let path = Location::parse(field(args, "path")?)?;
@@ -1183,12 +1215,12 @@ async fn mutations(
             expected(&source, args["expectedSourceRevision"].as_str())?;
             if old
                 .as_ref()
-                .is_some_and(|v| !same_identity(&v.revision, &source.revision))
+                .is_some_and(|v| !same_identity(v.mutation_revision(), source.mutation_revision()))
             {
                 return Err("[conflict] 目标已存在，未覆盖；请合并、保留两者或明确替换文件".into());
             }
             rename_checked(&path, &target, &source, None, progress).await?;
-            Ok(json!({"path":target.text(),"revision":snapshot(&target).await?.revision}))
+            Ok(json!({"path":target.text(),"revision":snapshot(&target).await?.mutation_revision()}))
         }
         "new_folder" | "create" | "ensure_folder" => {
             let parent = Location::parse(field(args, "parent")?)?;
@@ -1310,7 +1342,7 @@ async fn mutations(
                 hold(&path, progress)?;
                 let plan = if permanent {
                     require_checked(remote, false, true).await?;
-                    scan(path.clone(), progress).await?
+                    scan_tree(path.clone(), progress, true).await?
                 } else {
                     require_recycle(remote).await?;
                     vec![(path.clone(), snapshot(&path).await?)]
@@ -1328,14 +1360,14 @@ async fn mutations(
                         progress.check()?;
                         if !permanent {
                             let remote = remote_child(path)?;
-                            let result = request(remote, FileRequest::Recycle { path:remote.path.clone(), revision:stamp.revision.clone() }).await?.json(65536).await?;
+                            let result = request(remote, FileRequest::Recycle { path:remote.path.clone(), revision:stamp.mutation_revision().into() }).await?.json(65536).await?;
                             recycled.push((remote.clone(),field(&result,"receipt")?.to_string()));
                             progress.done += 1;
                             progress.emit("running", path, false);
                             continue;
                         }
                         let fresh;
-                        let stamp = if stamp.directory {
+                        let stamp = if stamp.descend_for_removal() {
                             fresh = snapshot(path).await?;
                             if !same_identity(&fresh.revision, &stamp.revision) {
                                 return Err("[conflict] 文件夹已被替换，未删除".into());
@@ -1665,6 +1697,7 @@ pub async fn device_transfer(
         shared_bytes: None,
         silent: false,
         saving: action=="save_copy",
+        editing: false,
     };
     match action.as_str() {
         "copy" | "move" | "copy_exact" | "move_exact" | "save_copy" => {

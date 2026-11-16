@@ -101,10 +101,11 @@ pub(crate) async fn response(
     }
     access.check(false, false)?;
     let expected = revision.clone();
-    let node = storage.node(&path)?;
     let initial_access = access.clone();
+    let initial_storage = storage.clone();
+    let initial_path = path.clone();
     let file = tokio::task::spawn_blocking(move || -> Result<std::fs::File> {
-        let file = node.open_read()?;
+        let file = initial_storage.device_open_read(&initial_path)?;
         if authorized_revision(&initial_access, &file)? != expected {
             return Err(Error::new(
                 "precondition_failed",
@@ -159,7 +160,7 @@ pub(crate) async fn response(
         let hash = tokio::task::spawn_blocking(move || -> Result<String> {
             checked.check(false, false)?;
             if authorized_revision(&checked, &file)? != expected
-                || authorized_revision(&checked, &storage.node(&path)?.open_read()?)? != expected
+                || authorized_revision(&checked, &storage.device_open_read(&path)?)? != expected
             {
                 return Err(Error::new("precondition_failed", "源文件版本已变化"));
             }
@@ -216,8 +217,7 @@ pub(crate) async fn response(
                                 let actual = authorized_revision(&checked, &proof)
                                     .map_err(std::io::Error::other)?;
                                 let current = storage
-                                    .node(&path)
-                                    .and_then(|node| node.open_read())
+                                    .device_open_read(&path)
                                     .and_then(|file| authorized_revision(&checked, &file))
                                     .map_err(std::io::Error::other)?;
                                 if actual != revision || current != revision {
