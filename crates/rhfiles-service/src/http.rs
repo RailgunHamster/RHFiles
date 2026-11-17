@@ -616,6 +616,12 @@ async fn handle_direct(s: Arc<State>, mut r: Request) -> Result<Response> {
                 else if header(&r,"If").is_some(){
                     a.edit_revision=edit_lock.as_ref().map(|(_,revision)|revision.clone());
                     if a.edit_revision.as_deref()!=Some(&entry.revision){return Err(Error::new("precondition_failed","文件锁创建后原文件已变化，未覆盖"));}
+                }else if header(&r,"If-Match").is_none() && a.compatibility_binding.is_some()
+                    && r.extensions().get::<crate::webdav_compat::TrustedGateway>().is_some() {
+                    // Windows WebClient can send a PUT without an ETag or a
+                    // lock. Capture the live revision now so the staged write
+                    // still fails if the file changes before commit.
+                    a.edit_revision=Some(entry.revision);
                 }else{return Err(Error::new(if header(&r,"If-Match").is_some(){"precondition_failed"}else{"precondition_required"},"修改已有文件需要匹配的强 ETag 或本成员的独占文件锁，未覆盖"));}
             }
             if header(&r, "Content-Length")

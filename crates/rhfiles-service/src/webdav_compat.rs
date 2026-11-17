@@ -13,6 +13,10 @@ use std::{
     sync::Arc,
 };
 
+/// Set by the trusted HTTPS adapter, never by an incoming request header.
+#[derive(Clone, Copy)]
+pub(crate) struct TrustedGateway;
+
 pub(crate) struct Gateway {
     domain: String,
     port: u16,
@@ -29,6 +33,7 @@ async fn dispatch(State(state): State<Arc<http::State>>, mut request: Request) -
     } else if path != "/dav" && !path.starts_with("/dav/") {
         return (StatusCode::NOT_FOUND, Body::empty()).into_response();
     }
+    request.extensions_mut().insert(TrustedGateway);
     http::dispatch(State(state), request).await
 }
 impl Gateway {

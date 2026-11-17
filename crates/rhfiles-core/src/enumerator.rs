@@ -1,4 +1,6 @@
 use std::path::Path;
+#[cfg(target_os = "windows")]
+use std::path::PathBuf;
 use std::process::Command;
 use std::time::SystemTime;
 
@@ -151,10 +153,59 @@ pub fn read_file_text(path: &Path, max_bytes: u64) -> Result<String, String> {
 }
 
 #[cfg(target_os = "windows")]
+pub fn webdav_launch_directory(path: &Path) -> Option<PathBuf> {
+    use std::path::{Component, Prefix};
+
+    let Some(Component::Prefix(prefix)) = path.components().next() else {
+        return None;
+    };
+    match prefix.kind() {
+        Prefix::UNC(server, share) | Prefix::VerbatimUNC(server, share)
+            if share.eq_ignore_ascii_case("DavWWWRoot")
+                && server.to_string_lossy().contains('@') => {}
+        _ => return None,
+    }
+
+    // Windows accepts the WebDAV redirector name, but Node cannot turn it into
+    // a file URL when it is used as the process's working directory.
+    let drive_directory = |path: &PathBuf| {
+        path.is_absolute()
+            && matches!(
+                path.components().next(),
+                Some(Component::Prefix(prefix))
+                    if matches!(prefix.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_))
+            )
+    };
+    std::env::var_os("SystemRoot")
+        .map(PathBuf::from)
+        .filter(drive_directory)
+        .or_else(|| {
+            std::env::current_exe()
+                .ok()
+                .and_then(|exe| exe.parent().map(Path::to_path_buf))
+                .filter(drive_directory)
+        })
+}
+
+#[cfg(target_os = "windows")]
 fn shell_execute_working_directory(path: &Path) -> Option<Vec<u16>> {
+    if path.extension().is_some_and(|extension| {
+        ["bat", "cmd", "com", "exe", "lnk"]
+            .iter()
+            .any(|candidate| extension.eq_ignore_ascii_case(candidate))
+    }) {
+        return encode_shell_directory(path.parent());
+    }
+
+    let local_directory = webdav_launch_directory(path);
+    encode_shell_directory(local_directory.as_deref().or_else(|| path.parent()))
+}
+
+#[cfg(target_os = "windows")]
+fn encode_shell_directory(directory: Option<&Path>) -> Option<Vec<u16>> {
     use std::os::windows::ffi::OsStrExt;
 
-    path.parent()
+    directory
         .filter(|parent| !parent.as_os_str().is_empty())
         .map(|parent| {
             parent
@@ -1035,6 +1086,39 @@ mod tests {
     }
 
     #[test]
+    fn webdav_files_use_a_drive_path_as_shell_working_directory() {
+        use std::path::{Component, Path, Prefix};
+
+        let path = Path::new(r"\\example.ts.net@SSL@39129\DavWWWRoot\dav\Files\中文.txt");
+        let wide = shell_execute_working_directory(path).expect("local working directory");
+        assert_eq!(wide.last(), Some(&0));
+        let directory = String::from_utf16(&wide[..wide.len() - 1]).unwrap();
+        assert!(matches!(
+            Path::new(&directory).components().next(),
+            Some(Component::Prefix(prefix))
+                if matches!(prefix.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_))
+        ));
+        assert_eq!(
+            Path::new(&directory),
+            super::webdav_launch_directory(path).unwrap()
+        );
+
+        let smb = Path::new(r"\\server\share\Files\中文.txt");
+        let wide = shell_execute_working_directory(smb).expect("SMB parent directory");
+        assert_eq!(
+            String::from_utf16(&wide[..wide.len() - 1]).unwrap(),
+            r"\\server\share\Files"
+        );
+
+        let script = path.with_file_name("run.cmd");
+        let wide = shell_execute_working_directory(&script).expect("script parent directory");
+        assert_eq!(
+            String::from_utf16(&wide[..wide.len() - 1]).unwrap(),
+            r"\\example.ts.net@SSL@39129\DavWWWRoot\dav\Files"
+        );
+    }
+
+    #[test]
     fn opening_a_batch_file_uses_its_directory_for_relative_files() {
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1264,7 +1348,7 @@ pub fn run_as_admin(path: &Path) -> Result<(), String> {
         } else {
             None
         };
-        let directory_wide = shell_execute_working_directory(path);
+        let directory_wide = encode_shell_directory(path.parent());
         let verb: Vec<u16> = "runas\0".encode_utf16().collect();
         unsafe {
             let mut info = SHELLEXECUTEINFOW::default();

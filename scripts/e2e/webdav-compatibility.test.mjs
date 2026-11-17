@@ -2,10 +2,20 @@ import test from 'node:test';import assert from 'node:assert/strict';import fs f
 import {launchApp,until} from '../testing/app-session.mjs';
 const api=(app,id,args={})=>app.evaluate('RHFilesAPI.invoke('+JSON.stringify(id)+','+JSON.stringify(args)+')');
 const freePort=()=>new Promise(resolve=>{const server=net.createServer();server.listen(0,'127.0.0.1',()=>{const port=server.address().port;server.close(()=>resolve(port));});});
-function request(gateway,method,resource,credentials,body=''){
-  return new Promise((resolve,reject)=>{const req=https.request({hostname:'127.0.0.1',servername:gateway.domain,port:gateway.port,path:resource,method,headers:{...(credentials?{Authorization:'Basic '+Buffer.from(credentials.username+':'+credentials.password).toString('base64')}:{ }),...(method==='PROPFIND'?{Depth:'1'}:{}),'Content-Length':Buffer.byteLength(body)}},res=>{let text='';res.setEncoding('utf8');res.on('data',part=>{text+=part});res.on('end',()=>resolve({status:res.statusCode,text}));});req.setTimeout(10000,()=>req.destroy(Error('DAV timeout')));req.on('error',reject);req.end(body);});
+function request(gateway,method,resource,credentials,body='',headers={}){
+  return new Promise((resolve,reject)=>{const req=https.request({hostname:'127.0.0.1',servername:gateway.domain,port:gateway.port,path:resource,method,headers:{...(credentials?{Authorization:'Basic '+Buffer.from(credentials.username+':'+credentials.password).toString('base64')}:{ }),...(method==='PROPFIND'?{Depth:'1'}:{}),...headers,'Content-Length':Buffer.byteLength(body)}},res=>{let text='';res.setEncoding('utf8');res.on('data',part=>{text+=part});res.on('end',()=>resolve({status:res.statusCode,headers:res.headers,text}));});req.setTimeout(10000,()=>req.destroy(Error('DAV timeout')));req.on('error',reject);req.end(body);});
 }
 async function actualWindowsRedirector(gateway,credentials){
+  // Replicate VS Code's Windows provider on an existing file, including its
+  // exact-host approval and the r+ / truncate / write / flush / close sequence.
+  const editorProbe=[
+    "require('node:url').pathToFileURL(process.cwd())",
+    "const fs=require('node:fs'), file=process.env.RHFILES_DAV_QA_FILE",
+    "process.uncHostAllowlist?.add(file.split(require('node:path').win32.sep)[2].toLowerCase())",
+    "console.log(fs.readFileSync(file,'utf8'))",
+    "const fd=fs.openSync(file,'r+')",
+    "try{fs.ftruncateSync(fd,0);fs.writeFileSync(fd,'edited over the Windows redirector');fs.fdatasyncSync(fd)}finally{fs.closeSync(fd)}"
+  ].join(';').replaceAll("'", "''");
   // Credentials travel over SSH stdin, not argv, a command log or a file.
   const script=`$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';$payload=[Console]::In.ReadToEnd()|ConvertFrom-Json
 Add-Type -TypeDefinition @'
@@ -19,10 +29,27 @@ public class RhFilesDavQa {
 $resource=New-Object RhFilesDavQa+Resource;$resource.type=1;$resource.remote=$payload.unc
 $code=[RhFilesDavQa]::WNetAddConnection2W([ref]$resource,$payload.password,$payload.username,0)
 if($code -ne 0){[pscustomobject]@{connected=$false;code=$code}|ConvertTo-Json -Compress;exit 1}
-try{$content=[IO.File]::ReadAllText(($payload.unc+'\\Files\\'+[char]0x4e2d+[char]0x6587+'.txt'));[pscustomobject]@{connected=$true;content=$content}|ConvertTo-Json -Compress}finally{[void][RhFilesDavQa]::WNetCancelConnection2W($payload.unc,0,$false)}`;
+try{
+  $file=$payload.unc+'\\Files\\'+[char]0x4e2d+[char]0x6587+'.txt'
+  $probe=New-Object Diagnostics.ProcessStartInfo
+  $probe.FileName=Join-Path $env:ProgramFiles 'Microsoft VS Code\\Code.exe'
+  $probe.WorkingDirectory=$env:SystemRoot
+  $probe.UseShellExecute=$false
+  $probe.CreateNoWindow=$true
+  $probe.RedirectStandardOutput=$true
+  $probe.RedirectStandardError=$true
+  $probe.EnvironmentVariables['ELECTRON_RUN_AS_NODE']='1'
+  $probe.EnvironmentVariables['RHFILES_DAV_QA_FILE']=$file
+  $probe.Arguments='-e "${editorProbe}"'
+  $editor=[Diagnostics.Process]::Start($probe)
+  if(!$editor.WaitForExit(15000)){$editor.Kill();throw 'VS Code runtime timed out'}
+  if($editor.ExitCode -ne 0){throw $editor.StandardError.ReadToEnd()}
+  $content=$editor.StandardOutput.ReadToEnd().Trim()
+  [pscustomobject]@{connected=$true;content=$content}|ConvertTo-Json -Compress
+}finally{[void][RhFilesDavQa]::WNetCancelConnection2W($payload.unc,0,$false)}`;
   const encoded=Buffer.from(script,'utf16le').toString('base64');
   const result=await new Promise((resolve,reject)=>{const child=spawn('ssh',['-o','BatchMode=yes','-o','ConnectTimeout=5','-l','40608','railgunhamster','powershell','-NoProfile','-EncodedCommand',encoded],{windowsHide:true});let out='',err='';child.stdout.on('data',p=>out+=p);child.stderr.on('data',p=>err+=p);child.on('error',reject);const timer=setTimeout(()=>{child.kill();reject(Error('Windows redirector QA timed out'));},45000);child.on('close',code=>{clearTimeout(timer);if(code!==0)reject(Error('Windows redirector failed: '+out+' '+err.slice(0,2048)));else resolve(JSON.parse(out.trim()));});child.stdin.end(JSON.stringify({unc:gateway.unc,username:credentials.username,password:credentials.password}));});
-  assert.equal(result.connected,true);assert.equal(result.content,'original');console.log('PASS: actual RAILGUNHAMSTER Windows WebClient/UNC file read with system CA validation; no registry/trust changes, temporary connection removed.');
+  assert.equal(result.connected,true);assert.equal(result.content,'original');
 }
 test('trusted HTTPS DAV supports Windows-style Basic auth, real file operations and group removal/restart revocation', {skip:process.env.RHFILES_TEST_REAL_TAILSCALE_TLS!=='1'},async()=>{
   const app=await launchApp({desktopId:'trusted-webdav-qa',emulateFocus:true});const files=path.join(app.directory,'owned-share');fs.mkdirSync(files);fs.writeFileSync(path.join(files,'中文.txt'),'original');
@@ -36,8 +63,20 @@ test('trusted HTTPS DAV supports Windows-style Basic auth, real file operations 
     const credentials=await api(app,'server.webdavCredentials',{group,peer});
     assert.equal((await request(gateway,'PROPFIND','/dav/',credentials)).status,207);
     assert.equal((await request(gateway,'GET','/api/v1/groups/state',credentials)).status,404);
-    assert.equal((await request(gateway,'GET','/dav/Files/'+encodeURIComponent('中文.txt'),credentials)).text,'original');
-    if(process.env.RHFILES_WEBDAV_REDIRECTOR_QA==='1')await actualWindowsRedirector(gateway,credentials);
+    const textPath='/dav/Files/'+encodeURIComponent('中文.txt');
+    assert.equal((await request(gateway,'GET',textPath,credentials)).text,'original');
+    assert.equal((await request(gateway,'PUT',textPath,credentials,'stale edit',{'If-Match':'"stale"'})).status,412);
+    const lockBody='<D:lockinfo xmlns:D="DAV:"><D:lockscope><D:exclusive/></D:lockscope><D:locktype><D:write/></D:locktype></D:lockinfo>';
+    const lock=await request(gateway,'LOCK',textPath,credentials,lockBody,{Depth:'0','Content-Type':'application/xml'});
+    assert.equal(lock.status,200);
+    assert.equal((await request(gateway,'PUT',textPath,credentials,'without lock token')).status,423);
+    assert.equal((await request(gateway,'UNLOCK',textPath,credentials,'',{'Lock-Token':lock.headers['lock-token']})).status,204);
+    if(process.env.RHFILES_WEBDAV_REDIRECTOR_QA==='1'){
+      await actualWindowsRedirector(gateway,credentials);
+      try{await until(()=>fs.readFileSync(path.join(files,'中文.txt'),'utf8')==='edited over the Windows redirector','server received the Windows editor save',10000);}
+      catch(error){throw Error(String(error)+' '+JSON.stringify((await api(app,'server.webdavCompatibility')).recentFailures));}
+      console.log('PASS: VS Code runtime on RAILGUNHAMSTER started with a local working directory, read the UNC file and saved directly to the server fixture.');
+    }
     assert([200,201,204].includes((await request(gateway,'PUT','/dav/Files/new.txt',credentials,'owned upload')).status));
     assert.equal(fs.readFileSync(path.join(files,'new.txt'),'utf8'),'owned upload');assert([200,204].includes((await request(gateway,'DELETE','/dav/Files/new.txt',credentials)).status));assert(!fs.existsSync(path.join(files,'new.txt')));
     await api(app,'server.stop');await api(app,'server.start',{config:{port:0,shares:[{name:'Files',path:files}]}});const restored=(await api(app,'server.state')).status.webdavCompatibility;

@@ -77,6 +77,7 @@ test('reference showApp starts its gallery read without awaiting it or blocking 
   const html=rhvideoReferenceDocument(reference);let original;
   for(const m of html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g))for(const n of parse(m[1],{ecmaVersion:'latest'}).body)if(n.type==='FunctionDeclaration'&&n.id.name==='showApp')original=m[1].slice(n.start,n.end);
   assert(original);const calls=[],scope=rhvideoReferenceContext({token:'fixture',localStorage:{getItem:()=>null},document:{getElementById:()=>({classList:{add(){},remove(){}},checked:false})},
+    queueMicrotask,openNovelFromAddress:()=>{},
     loadGrid:reset=>{calls.push(['gallery',reset]);return new Promise(()=>{});},loadVideos:()=>calls.push(['videos'])});
   for(const name of ['loadPageVolumePreference','loadRotationPref','loadMediaTagFilter','loadGridTagPrefs','renderGridTagTabs','renderNovelTagTabs','loadFolders','loadFavoriteIds','syncGlobalQueueVisibility','startQueuePolling','startProgressPolling','loadReplacementJobs'])scope[name]=()=>{};
   vm.runInContext(original,scope);assert.equal(scope.showApp(),undefined);assert.deepEqual(calls,[['gallery',false],['videos']]);

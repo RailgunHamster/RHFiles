@@ -1023,11 +1023,12 @@ pub fn open_with_program(path: String, program: String) -> Result<(), String> {
             })?;
             #[cfg(target_os = "windows")]
             {
-                std::process::Command::new(&exe)
-                    .arg(&path)
-                    .creation_flags(0)
-                    .spawn()
-                    .map_err(|e| e.to_string())?;
+                let mut command = std::process::Command::new(&exe);
+                command.arg(&path).creation_flags(0);
+                if let Some(directory) = enumerator::webdav_launch_directory(Path::new(&path)) {
+                    command.current_dir(directory);
+                }
+                command.spawn().map_err(|e| e.to_string())?;
             }
             #[cfg(not(target_os = "windows"))]
             {
