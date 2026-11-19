@@ -77,7 +77,7 @@ internal class RhFilesConnection(private var config:JSONObject) {
     if(!response.isSuccessful){val detail=try{JSONObject(String(response.body!!.byteStream().readBytesBounded(16384),Charsets.UTF_8)).optJSONObject("error")?.optString("message")}catch(_:Exception){null};response.close();throw HttpFailure(response.code,"RHFiles：HTTP ${response.code} · "+(detail?:when(response.code){401->"授权已失效，请重新配对";403->"电脑端未授予此权限";409,412->"目标已存在或目录已变化，未覆盖";423->"文件被其他客户端锁定";else->"请求失败"}))};return response
   }
   private fun objectReply(r:Response)=r.use{JSONObject(String(it.body!!.byteStream().readBytesBounded(8*1024*1024),Charsets.UTF_8))}
-  private fun entry(v:JSONObject,path:String)=NativeEntry(path,v.getString("name"),v.getBoolean("isDir"),v.getLong("size"),v.getLong("modifiedMs"),revision=v.optString("revision").takeIf{it.isNotEmpty()&&it!="null"})
+  private fun entry(v:JSONObject,path:String)=NativeEntry(path,v.getString("name"),v.getBoolean("isDir"),v.getLong("size"),v.getLong("modifiedMs"),revision=v.optString("revision").takeIf{it.isNotEmpty()&&it!="null"},linkRevision=v.optString("linkRevision").takeIf{it.isNotEmpty()&&it!="null"})
   fun list(relative:String,parent:String):List<NativeEntry> {
     val result=mutableListOf<NativeEntry>();var revision:String?=null
     do {
@@ -132,7 +132,7 @@ internal class RhFilesConnection(private var config:JSONObject) {
     val nonce=ByteArray(32).also{SecureRandom().nextBytes(it)}
     val id="${System.currentTimeMillis()}."+Base64.encodeToString(nonce,Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
     val header="X-RHFiles-Operation-Id"
-    val initial=try{request("POST",endpoint,body=bytes.toRequestBody(JSON),headers=mapOf(header to id))}catch(e:HttpFailure){throw e}catch(_:IOException){null}
+    val initial=try{request("POST",endpoint,body=bytes.toRequestBody(JSON),headers=mapOf(header to id,"X-RHFiles-Link-Operations" to "1"))}catch(e:HttpFailure){throw e}catch(_:IOException){null}
     fun result(response:Response):JSONObject?=response.use{
       lease()
       if(it.code==202){require(it.header(header)==id){"远端任务标识不匹配，未重复操作"};null}
@@ -158,7 +158,7 @@ internal class RhFilesConnection(private var config:JSONObject) {
     if((0 until features.length()).any{features.optString(it)=="batch-recycle"})return mutation("/api/v1/recycle-batch-checked",JSONObject().put("entries",org.json.JSONArray(entries.map{(path,revision)->JSONObject().put("path","/$path").put("revision",revision?:JSONObject.NULL)})))
     val recycled=org.json.JSONArray();val errors=org.json.JSONArray()
     for((path,selected)in entries){
-      try{val revision=selected?:objectReply(request("GET","/api/v1/stat","/$path")).getString("revision");val reply=mutation("/api/v1/recycle-checked",JSONObject().put("path","/$path").put("revision",revision));recycled.put(JSONObject().put("path","/$path").put("receipt",reply.getString("receipt")))}
+      try{val info=if(selected==null)objectReply(request("GET","/api/v1/stat","/$path"))else null;val revision=selected?:info!!.optString("linkRevision").takeIf{it.isNotEmpty()&&it!="null"}?:info!!.getString("revision");val reply=mutation("/api/v1/recycle-checked",JSONObject().put("path","/$path").put("revision",revision));recycled.put(JSONObject().put("path","/$path").put("receipt",reply.getString("receipt")))}
       catch(e:Exception){errors.put(JSONObject().put("path","/$path").put("message",e.message?:"移入回收站失败"));break}
     }
     return JSONObject().put("recycled",recycled).put("errors",errors)
@@ -169,7 +169,7 @@ internal class RhFilesConnection(private var config:JSONObject) {
   fun upload(relative:String,input:InputStream,length:Long,progress:(Int)->Unit) {
     require(length>=0){"来源长度未知，请先另存到本机后上传"}
     val lease=DeviceGroups.fileLease(config);lease()
-    val creation=request("POST","/api/v1/uploads",body=byteArrayOf().toRequestBody(),headers=mapOf("Tus-Resumable" to "1.0.0","Upload-Length" to length.toString(),"Upload-Metadata" to "path "+Base64.encodeToString("/$relative".toByteArray(Charsets.UTF_8),Base64.NO_WRAP)))
+    val creation=request("POST","/api/v1/uploads",body=byteArrayOf().toRequestBody(),headers=mapOf("Tus-Resumable" to "1.0.0","X-RHFiles-Link-Operations" to "1","Upload-Length" to length.toString(),"Upload-Metadata" to "path "+Base64.encodeToString("/$relative".toByteArray(Charsets.UTF_8),Base64.NO_WRAP)))
     val location=creation.use{it.header("Location")?:error("缺少上传任务地址")};require(location.matches(Regex("/api/v1/uploads/[A-Za-z0-9_-]{43}"))){"上传地址无效"}
     var offset=0L
     try {

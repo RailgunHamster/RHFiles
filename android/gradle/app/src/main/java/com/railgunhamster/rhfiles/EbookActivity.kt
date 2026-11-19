@@ -58,8 +58,10 @@ class EbookActivity:AppCompatActivity(){
     content=FrameLayout(this);root.addView(header,LinearLayout.LayoutParams(-1,dp(56)));root.addView(content,LinearLayout.LayoutParams(-1,0,1f));setContentView(root)
     ViewCompat.setOnApplyWindowInsetsListener(root){view,insets->val bars=insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout());view.setPadding(bars.left,bars.top,bars.right,bars.bottom);insets}
     setThemeColors(theme)
+    val bookName=intent.getStringExtra("name")
+    val bookKey=intent.getStringExtra("key")
     if(!settingsOnly)future=worker.submit<EbookSource>{
-      val book=EbookSource(applicationContext,path){closing.get()}
+      val book=EbookSource(applicationContext,path,bookName,bookKey){closing.get()}
       synchronized(closing){if(closing.get()){book.close();error("阅读已关闭")};source=book};book
     }
     val assets=WebViewAssetLoader.Builder().setDomain(DOMAIN).addPathHandler("/assets/",WebViewAssetLoader.AssetsPathHandler(this)).build()

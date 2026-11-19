@@ -3283,7 +3283,7 @@ dependencies = [
 
 [[package]]
 name = "rhfiles-android"
-version = "0.1.57"
+version = "0.1.58"
 dependencies = [
  "base64 0.22.1",
  "crossbeam-channel",

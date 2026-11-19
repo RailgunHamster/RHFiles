@@ -263,10 +263,16 @@ class MainActivity : TauriActivity() {
     "config.ack" -> {backup.acknowledge(args.getString("id"));true}
     "config.rollback" -> synchronized(settingsLock){updates.restoreSettings{backup.recover()};true}
     "ebook.open" -> {
-      val path=args.getString("path");require(!storage.isRemote(path)){"网络电子书请先下载到本机"}
-      if(storage.isDocument(path))storage.docUri(path)else require(storage.local(path).let{it.isFile&&it.canRead()}){"电子书不存在或无法读取"}
-      require(EbookSource.supported(args.getString("name"))){"不支持的电子书格式"}
-      onUi{startActivity(Intent(this,EbookActivity::class.java).putExtra("path",path).putExtra("name",args.getString("name")).putExtra("theme",args.optString("theme","light")));true}
+      val path=args.getString("path");val requestedName=args.getString("name")
+      require(EbookSource.supported(requestedName)){"不支持的电子书格式"}
+      val (openPath,openName,openKey)=if(storage.isRemote(path)){
+        val (cached,displayName,bookKey)=EbookSource.prepareRemote(this,storage,path,requestedName)
+        Triple(cached.path,displayName,bookKey)
+      }else{
+        if(storage.isDocument(path))storage.docUri(path)else require(storage.local(path).let{it.isFile&&it.canRead()}){"电子书不存在或无法读取"}
+        Triple(path,requestedName,null)
+      }
+      onUi{startActivity(Intent(this,EbookActivity::class.java).putExtra("path",openPath).putExtra("name",openName).apply{if(openKey!=null)putExtra("key",openKey)}.putExtra("theme",args.optString("theme","light")));true}
     }
     "pdf.open" -> pdfReads.open(args.getString("path"))
     "pdf.read" -> pdfReads.read(args.getString("id"),args.getLong("offset"),args.getInt("length"))

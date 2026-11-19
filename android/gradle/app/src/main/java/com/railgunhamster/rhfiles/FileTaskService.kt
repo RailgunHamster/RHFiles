@@ -212,17 +212,17 @@ object FileTasks {
     fun measure(path:String,depth:Int=0) {
       checkpoint(j);require(depth<128 && ++count<=100000) { "目录过深或文件过多" }
       val e=storage.stat(path);j.files++
-      if(e.isDir) {val children=storage.list(path);require(children.size<50000){"单目录超过安全上限，未开始操作"};children.forEach {measure(it.path,depth+1)}} else j.total+=e.size
+      if(e.isDir&&e.linkRevision==null) {val children=storage.list(path);require(children.size<50000){"单目录超过安全上限，未开始操作"};children.forEach {measure(it.path,depth+1)}} else j.total+=e.size
     }
     fun erase(path:String,depth:Int=0,report:Boolean=true) {
       checkpoint(j);require(depth<128) { "目录过深" }
       val e=storage.stat(path)
-      if(e.isDir) storage.list(path).forEach {erase(it.path,depth+1,report)}
+      if(e.isDir&&e.linkRevision==null) storage.list(path).forEach {erase(it.path,depth+1,report)}
       storage.delete(path);if(report) {j.done++;j.bytes+=e.size}
     }
     fun cleanup(path:String) {
       // Cleanup only the staging node created by this task, never any source.
-      fun remove(p:String,depth:Int) { require(depth<128); if(storage.stat(p).isDir) storage.list(p).forEach{remove(it.path,depth+1)};storage.delete(p) }
+      fun remove(p:String,depth:Int) { require(depth<128); val e=storage.stat(p); if(e.isDir&&e.linkRevision==null) storage.list(p).forEach{remove(it.path,depth+1)};storage.delete(p) }
       try {remove(path,0)} catch(_:Exception) {j.message="留下未完成临时文件：$path；可检查后删除"}
     }
     data class Captured(val entry:NativeEntry,val digest:String?)

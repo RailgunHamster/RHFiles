@@ -27,4 +27,21 @@ class EbookSourceTest {
   @Test fun chapterTextHasLowerBoundThanBinaryResources()=fixture{dir->val file=File(dir,"book.epub");zip(file,mapOf("large.xhtml" to ByteArray((EbookSource.MAX_TEXT_BYTES+1).toInt())));EbookSource(context,file.path).use{source->reject{source.resource("large.xhtml",true).close()};source.resource("large.xhtml",false).use{assertTrue(it.read()>=0)}}}
   @Test fun cancellationStopsStreamAndLeavesSourceUntouched()=fixture{dir->val file=File(dir,"book.mobi").apply{writeText("source")};var canceled=false;EbookSource(context,file.path){canceled}.use{source->source.raw().use{input->canceled=true;reject{input.read()}}};assertEquals("source",file.readText())}
   @Test fun unknownResourceDoesNotExposeSiblingFile()=fixture{dir->val file=File(dir,"book.cbz");zip(file,mapOf("1.png" to byteArrayOf(1)));File(dir,"secret").writeText("private");EbookSource(context,file.path).use{source->reject{source.resource("../secret",false)};reject{source.resource("secret",false)}}}
+  @Test fun remoteOverrideKeyAndDisplayNameArePreservedForCachedBooks()=fixture{dir->
+    val file=File(dir,"book-deadbeef.epub")
+    zip(file,mapOf("OPS/ch1.xhtml" to "远程电子书".toByteArray()))
+    val remoteKey=EbookSource.remoteKey("remote://conn/Files/小说.epub",1700000000000L,file.length())
+    EbookSource(context,file.path,"小说.epub",remoteKey).use{source->
+      val meta=source.metadata("dark")
+      assertEquals("小说.epub",meta.getString("name"))
+      assertEquals("epub",meta.getString("format"))
+      assertEquals(remoteKey,meta.getString("key"))
+      assertEquals("远程电子书",source.resource("OPS/ch1.xhtml",true).use{it.reader().readText()})
+    }
+    // Non-hex override key falls back to local file digest rather than trusting arbitrary key strings
+    EbookSource(context,file.path,"小说.epub","../bad-key").use{source->
+      assertNotEquals("../bad-key",source.key)
+      assertTrue(source.key.matches(Regex("[0-9a-f]{64}")))
+    }
+  }
 }

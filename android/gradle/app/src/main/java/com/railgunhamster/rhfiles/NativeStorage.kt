@@ -14,9 +14,9 @@ import org.json.JSONObject
 import java.io.*
 
 data class NativeEntry(val path: String, val name: String, val isDir: Boolean, val size: Long = 0,
-  val modified: Long = 0, val flags: Int = 0, val revision:String?=null) {
+  val modified: Long = 0, val flags: Int = 0, val revision:String?=null, val linkRevision:String?=null) {
   fun json() = JSONObject().put("path", path).put("name", name).put("isDir", isDir).put("size", size)
-    .put("modifiedMs", modified).put("kind", if (isDir) "folder" else kind(name)).put("hidden", name.startsWith('.')).put("flags", flags).put("revision",revision?:JSONObject.NULL)
+    .put("modifiedMs", modified).put("kind", if (isDir) "folder" else kind(name)).put("hidden", name.startsWith('.')).put("flags", flags).put("revision",linkRevision?:revision?:JSONObject.NULL)
   companion object {
     fun kind(name: String): String = when (name.substringAfterLast('.', "").lowercase()) {
       "jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "heif", "avif", "svg" -> "image"

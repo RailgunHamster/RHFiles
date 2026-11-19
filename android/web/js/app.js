@@ -539,7 +539,7 @@
     if (entry.isDir) return go(folderRoute(entry.path,favoriteLabel(entry),
       entry.parentPath || (state.route.screen==='folder' ? state.route.path : null)));
     if(api.featuresAvailable()&&entry.path.startsWith('remote://')){const nav=navigationId;if(!await androidFeatures.beforeRemoteNavigate(entry.path,()=>navigationId===nav)||navigationId!==nav)return;}
-    if(api.ebooksAvailable()&&/\.(epub|mobi|azw3?|prc|fb2|cbz)$/i.test(entry.name)&&!entry.path.startsWith('remote://'))return api.native('ebook.open',{path:entry.path,name:entry.name,theme:document.documentElement.dataset.theme});
+    if(api.ebooksAvailable()&&/\.(epub|mobi|azw3?|prc|fb2|cbz)$/i.test(entry.name)&&(!entry.path.startsWith('remote://')||rootFor(entry.path)?.protocol==='rhfiles')){if(entry.path.startsWith('remote://'))ui.toast('正在打开远程电子书…');return api.native('ebook.open',{path:entry.path,name:entry.name,theme:document.documentElement.dataset.theme});}
     if(api.playbackAvailable() && ['video','audio'].includes(entry.kind))return api.playMedia(entry,currentEntries());
     if(api.featuresAvailable()&&entry.kind==='image')return androidFeatures.media(entry,currentEntries());
     if(/\.pdf$/i.test(entry.name))return androidPdfReader.open(entry);
