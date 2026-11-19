@@ -1314,3 +1314,155 @@ async fn group_session_from(service:&Service,id:&str,groups:&rhfiles_service::gr
     let response=client.post(format!("{url}/api/v1/groups/session")).json(&json!({"groupId":id,"nonce":nonce,"packet":groups.packet(id).unwrap(),"proof":groups.proof(id,nonce,&service.status().fingerprint).unwrap()})).send().await.unwrap();
     assert_eq!(response.status(),200);response.json::<Value>().await.unwrap()["credential"].clone()
 }
+
+#[tokio::test]
+async fn folder_deletion_handles_normal_nested_and_readonly_directories() {
+    let f = Fixture::new(true, true).await;
+    let aware = |method, route| f.request(method, route).header("X-RHFiles-Link-Operations", "1");
+
+    // 1. delete-checked on normal empty folder
+    std::fs::create_dir(f.share.join("empty-checked")).unwrap();
+    let st: Value = aware("GET", "/api/v1/stat").query(&[("path", "/Files/empty-checked")]).send().await.unwrap().json().await.unwrap();
+    assert_eq!(
+        aware("POST", "/api/v1/delete-checked").json(&json!({"path": "/Files/empty-checked", "revision": st["revision"]})).send().await.unwrap().status(),
+        204
+    );
+    assert!(!f.share.join("empty-checked").exists());
+
+    // 2. delete on normal empty folder
+    std::fs::create_dir(f.share.join("empty-plain")).unwrap();
+    assert_eq!(
+        aware("POST", "/api/v1/delete").json(&json!({"path": "/Files/empty-plain"})).send().await.unwrap().status(),
+        204
+    );
+    assert!(!f.share.join("empty-plain").exists());
+
+    // 3. DAV DELETE on normal empty folder (with and without trailing slash) and nested folder
+    std::fs::create_dir(f.share.join("dav-empty")).unwrap();
+    assert_eq!(f.request("DELETE", "/dav/Files/dav-empty").send().await.unwrap().status(), 204);
+    assert!(!f.share.join("dav-empty").exists());
+
+    std::fs::create_dir(f.share.join("dav-empty-slash")).unwrap();
+    assert_eq!(f.request("DELETE", "/dav/Files/dav-empty-slash/").send().await.unwrap().status(), 204);
+    assert!(!f.share.join("dav-empty-slash").exists());
+
+    std::fs::create_dir_all(f.share.join("dav-nested/sub")).unwrap();
+    std::fs::write(f.share.join("dav-nested/sub/a.txt"), b"hi").unwrap();
+    assert_eq!(f.request("DELETE", "/dav/Files/dav-nested").send().await.unwrap().status(), 204);
+    assert!(!f.share.join("dav-nested").exists());
+
+    // 4. Read-only directories and files on Windows (e.g. folders with desktop.ini / custom icons)
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_READONLY, GetFileAttributesW, SetFileAttributesW};
+        let set_ro = |p: &std::path::Path| {
+            let w: Vec<u16> = p.as_os_str().encode_wide().chain(Some(0)).collect();
+            let a = unsafe { GetFileAttributesW(w.as_ptr()) };
+            assert_ne!(unsafe { SetFileAttributesW(w.as_ptr(), a | FILE_ATTRIBUTE_READONLY) }, 0);
+        };
+
+        let ro_dir = f.share.join("ro-dir-checked");
+        std::fs::create_dir(&ro_dir).unwrap();
+        set_ro(&ro_dir);
+        let st: Value = aware("GET", "/api/v1/stat").query(&[("path", "/Files/ro-dir-checked")]).send().await.unwrap().json().await.unwrap();
+        let r = aware("POST", "/api/v1/delete-checked").json(&json!({"path": "/Files/ro-dir-checked", "revision": st["revision"]})).send().await.unwrap();
+        assert_eq!(r.status(), 204, "{}", r.text().await.unwrap());
+        assert!(!ro_dir.exists());
+
+        let ro_plain = f.share.join("ro-dir-plain");
+        std::fs::create_dir(&ro_plain).unwrap();
+        set_ro(&ro_plain);
+        let r = aware("POST", "/api/v1/delete").json(&json!({"path": "/Files/ro-dir-plain"})).send().await.unwrap();
+        assert_eq!(r.status(), 204, "{}", r.text().await.unwrap());
+        assert!(!ro_plain.exists());
+
+        let ro_file = f.share.join("ro-file-checked.txt");
+        std::fs::write(&ro_file, b"ro").unwrap();
+        set_ro(&ro_file);
+        let st: Value = aware("GET", "/api/v1/stat").query(&[("path", "/Files/ro-file-checked.txt")]).send().await.unwrap().json().await.unwrap();
+        let r = aware("POST", "/api/v1/delete-checked").json(&json!({"path": "/Files/ro-file-checked.txt", "revision": st["revision"]})).send().await.unwrap();
+        assert_eq!(r.status(), 204, "{}", r.text().await.unwrap());
+        assert!(!ro_file.exists());
+
+        let ro_dav = f.share.join("ro-dav-dir");
+        std::fs::create_dir(&ro_dav).unwrap();
+        std::fs::write(ro_dav.join("ro.txt"), b"ro").unwrap();
+        set_ro(&ro_dav.join("ro.txt"));
+        set_ro(&ro_dav);
+        let r = f.request("DELETE", "/dav/Files/ro-dav-dir").send().await.unwrap();
+        assert_eq!(r.status(), 204, "{}", r.text().await.unwrap());
+        assert!(!ro_dav.exists());
+    }
+}
+
+#[tokio::test]
+async fn webdav_lock_put_supports_tagged_if_headers_and_repeated_saves() {
+    let f = Fixture::new(true, true).await;
+    std::fs::write(f.share.join("note.txt"), b"v1").unwrap();
+    let lock_body = r#"<?xml version="1.0" encoding="utf-8"?><D:lockinfo xmlns:D="DAV:"><D:lockscope><D:exclusive/></D:lockscope><D:locktype><D:write/></D:locktype></D:lockinfo>"#;
+    let locked = f
+        .request("LOCK", "/dav/Files/note.txt")
+        .header("Timeout", "Second-600")
+        .body(lock_body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(locked.status(), 200);
+    let token = locked
+        .headers()
+        .get("Lock-Token")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .trim_matches(|c| c == '<' || c == '>')
+        .to_string();
+
+    // Tagged If header (as sent by Windows WebClient / MiniRedir)
+    let tagged = format!("<{}/dav/Files/note.txt> (<{token}>)", f.base);
+    let r = f
+        .request("PUT", "/dav/Files/note.txt")
+        .header("If", &tagged)
+        .body("v2")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204, "{}", r.text().await.unwrap());
+    assert_eq!(std::fs::read_to_string(f.share.join("note.txt")).unwrap(), "v2");
+
+    // Repeated save under the same lock (with uppercase path alias and tagged If)
+    let tagged_upper = format!("<{}/dav/Files/NOTE.TXT> (<{token}>)", f.base);
+    let r = f
+        .request("PUT", "/dav/Files/NOTE.TXT")
+        .header("If", &tagged_upper)
+        .body("v3")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204, "{}", r.text().await.unwrap());
+    assert_eq!(std::fs::read_to_string(f.share.join("note.txt")).unwrap(), "v3");
+
+    // Negated or wrong-resource If header must still be rejected (412)
+    let wrong_tag = format!("<{}/dav/Files/other.txt> (<{token}>)", f.base);
+    assert_eq!(
+        f.request("PUT", "/dav/Files/note.txt")
+            .header("If", &wrong_tag)
+            .body("bad")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        412
+    );
+    assert_eq!(
+        f.request("PUT", "/dav/Files/note.txt")
+            .header("If", format!("(Not <{token}>)"))
+            .body("bad")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        412
+    );
+    assert_eq!(std::fs::read_to_string(f.share.join("note.txt")).unwrap(), "v3");
+}

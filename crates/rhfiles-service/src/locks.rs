@@ -58,13 +58,148 @@ impl Locks {
     }
     pub(crate) fn advance_version(&self,token:&str,previous:&str,next:&str){let mut versions=self.versions.lock().unwrap();if let Some(value)=versions.get_mut(token){if value==previous{*value=next.into();}}}
     pub(crate) async fn edit_version(&self,path:&DavPath,principal:&str,condition:&str)->Option<(String,String)>{
-        if condition.len()>4096{return None;}
-        let condition=condition.split_whitespace().collect::<String>();
+        let tokens = parse_if_lock_tokens(condition, path)?;
+        if tokens.is_empty() { return None; }
         for lock in self.discover(path).await {
-            if !lock.shared&&lock.principal.as_deref()==Some(principal)&&canonical(&lock.path).as_bytes()==canonical(path).as_bytes()&&condition==format!("(<{}>)",lock.token){return self.versions.lock().unwrap().get(&lock.token).cloned().map(|revision|(lock.token,revision));}
+            if !lock.shared
+                && lock.principal.as_deref() == Some(principal)
+                && canonical(&lock.path).as_bytes() == canonical(path).as_bytes()
+                && tokens.iter().any(|token| token == &lock.token)
+            {
+                return self
+                    .versions
+                    .lock()
+                    .unwrap()
+                    .get(&lock.token)
+                    .cloned()
+                    .map(|revision| (lock.token, revision));
+            }
         }
         None
     }
+}
+
+fn tag_matches_path(tag: &str, target: &DavPath) -> bool {
+    let raw_path = if let Ok(uri) = tag.parse::<axum::http::Uri>() {
+        uri.path().to_owned()
+    } else if tag.starts_with('/') {
+        tag.to_owned()
+    } else {
+        return false;
+    };
+    let stripped = raw_path
+        .strip_prefix("/dav")
+        .map(|rest| if rest.is_empty() { "/" } else { rest })
+        .unwrap_or(&raw_path);
+    let Ok(decoded_tag) = percent_encoding::percent_decode_str(stripped).decode_utf8() else {
+        return false;
+    };
+    let target_text = String::from_utf8_lossy(target.as_bytes());
+    resource_key(&decoded_tag) == resource_key(&target_text)
+}
+
+/// Extract positive lock tokens applying to `target` from an RFC 4918 `If` header.
+/// Supports both untagged `(<token>)` and tagged `<https://.../dav/path> (<token> ["etag"])`
+/// forms used by Windows WebClient, while rejecting negated (`Not`) or malformed lists.
+fn parse_if_lock_tokens(condition: &str, target: &DavPath) -> Option<Vec<String>> {
+    if condition.len() > 4096 {
+        return None;
+    }
+    let bytes = condition.as_bytes();
+    let mut i = 0;
+    let mut tokens = Vec::new();
+    let skip_ws = |idx: &mut usize| {
+        while *idx < bytes.len() && bytes[*idx].is_ascii_whitespace() {
+            *idx += 1;
+        }
+    };
+    skip_ws(&mut i);
+    while i < bytes.len() {
+        let mut applies = true;
+        if bytes[i] == b'<' {
+            let start = i + 1;
+            let end = condition[start..].find('>')? + start;
+            applies = tag_matches_path(condition[start..end].trim(), target);
+            i = end + 1;
+            skip_ws(&mut i);
+            if i >= bytes.len() || bytes[i] != b'(' {
+                return None;
+            }
+        }
+        if bytes[i] != b'(' {
+            return None;
+        }
+        while i < bytes.len() && bytes[i] == b'(' {
+            i += 1;
+            skip_ws(&mut i);
+            let mut list_tokens = Vec::new();
+            let mut list_negated = false;
+            while i < bytes.len() && bytes[i] != b')' {
+                if bytes[i] == b'<' {
+                    let start = i + 1;
+                    let end = condition[start..].find('>')? + start;
+                    let token = condition[start..end].trim();
+                    if token.is_empty() {
+                        return None;
+                    }
+                    list_tokens.push(token.to_owned());
+                    i = end + 1;
+                } else if bytes[i] == b'[' {
+                    i += 1;
+                    let mut in_quotes = false;
+                    let mut escaped = false;
+                    let mut closed = false;
+                    while i < bytes.len() {
+                        let b = bytes[i];
+                        i += 1;
+                        if escaped {
+                            escaped = false;
+                            continue;
+                        }
+                        if in_quotes {
+                            if b == b'\\' {
+                                escaped = true;
+                            } else if b == b'"' {
+                                in_quotes = false;
+                            }
+                        } else if b == b'"' {
+                            in_quotes = true;
+                        } else if b == b']' {
+                            closed = true;
+                            break;
+                        }
+                    }
+                    if !closed {
+                        return None;
+                    }
+                } else {
+                    let start = i;
+                    while i < bytes.len()
+                        && !bytes[i].is_ascii_whitespace()
+                        && !matches!(bytes[i], b'<' | b'[' | b')')
+                    {
+                        i += 1;
+                    }
+                    let word = &condition[start..i];
+                    if word.eq_ignore_ascii_case("Not") {
+                        list_negated = true;
+                    } else {
+                        return None;
+                    }
+                }
+                skip_ws(&mut i);
+            }
+            if i >= bytes.len() || bytes[i] != b')' {
+                return None;
+            }
+            i += 1;
+            if applies && !list_negated {
+                tokens.extend(list_tokens);
+            }
+            skip_ws(&mut i);
+        }
+    }
+    Some(tokens)
 }
 impl DavLockSystem for Locks {
     fn lock<'a>(

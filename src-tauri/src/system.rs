@@ -1066,11 +1066,12 @@ pub fn open_with_program(path: String, program: String) -> Result<(), String> {
             let exe = devenv.unwrap_or_else(|| std::path::PathBuf::from("devenv"));
             #[cfg(target_os = "windows")]
             {
-                std::process::Command::new(&exe)
-                    .arg(&path)
-                    .creation_flags(0)
-                    .spawn()
-                    .map_err(|e| e.to_string())?;
+                let mut command = std::process::Command::new(&exe);
+                command.arg(&path).creation_flags(0);
+                if let Some(directory) = enumerator::webdav_launch_directory(Path::new(&path)) {
+                    command.current_dir(directory);
+                }
+                command.spawn().map_err(|e| e.to_string())?;
             }
             #[cfg(not(target_os = "windows"))]
             {
@@ -1129,11 +1130,12 @@ pub fn open_with_program(path: String, program: String) -> Result<(), String> {
             };
             #[cfg(target_os = "windows")]
             {
-                std::process::Command::new(&exe)
-                    .arg(&path)
-                    .creation_flags(0x08000000)
-                    .spawn()
-                    .map_err(|e| e.to_string())?;
+                let mut command = std::process::Command::new(&exe);
+                command.arg(&path).creation_flags(0x08000000);
+                if let Some(directory) = enumerator::webdav_launch_directory(Path::new(&path)) {
+                    command.current_dir(directory);
+                }
+                command.spawn().map_err(|e| e.to_string())?;
             }
             #[cfg(not(target_os = "windows"))]
             {
@@ -1175,11 +1177,12 @@ pub fn open_with_program(path: String, program: String) -> Result<(), String> {
             let exe = if exe64.exists() { exe64 } else { exe32 };
             #[cfg(target_os = "windows")]
             {
-                std::process::Command::new(&exe)
-                    .arg(&path)
-                    .creation_flags(0x08000000)
-                    .spawn()
-                    .map_err(|e| e.to_string())?;
+                let mut command = std::process::Command::new(&exe);
+                command.arg(&path).creation_flags(0x08000000);
+                if let Some(directory) = enumerator::webdav_launch_directory(Path::new(&path)) {
+                    command.current_dir(directory);
+                }
+                command.spawn().map_err(|e| e.to_string())?;
             }
             #[cfg(not(target_os = "windows"))]
             {

@@ -611,18 +611,20 @@ async fn handle_direct(s: Arc<State>, mut r: Request) -> Result<Response> {
             if let Ok(entry)=s.storage.stat(&decoded){
                 if entry.is_dir{return Err(Error::new("conflict","不能用文件覆盖文件夹"));}
                 if let Some(condition)=header(&r,"If"){let target=DavPath::new(&encode_path(&decoded)).map_err(|_|bad("无效路径"))?;edit_lock=s.locks.edit_version(&target,&a.id,condition).await;}
-                let matched=header(&r,"If-Match").filter(|value|value.trim()==format!("\"{}\"",entry.revision));
+                let if_match=header(&r,"If-Match").map(str::trim);
+                let matched=if_match.filter(|value|*value==format!("\"{}\"",entry.revision));
                 if matched.is_some(){a.edit_revision=Some(entry.revision);}
                 else if header(&r,"If").is_some(){
                     a.edit_revision=edit_lock.as_ref().map(|(_,revision)|revision.clone());
                     if a.edit_revision.as_deref()!=Some(&entry.revision){return Err(Error::new("precondition_failed","文件锁创建后原文件已变化，未覆盖"));}
-                }else if header(&r,"If-Match").is_none() && a.compatibility_binding.is_some()
+                }else if matches!(if_match,None|Some("*")) && a.compatibility_binding.is_some()
                     && r.extensions().get::<crate::webdav_compat::TrustedGateway>().is_some() {
-                    // Windows WebClient can send a PUT without an ETag or a
-                    // lock. Capture the live revision now so the staged write
-                    // still fails if the file changes before commit.
+                    // Windows WebClient can send a PUT without an ETag (or with
+                    // If-Match: *) and without a lock. Capture the live revision
+                    // now so the staged write still fails if the file changes
+                    // before commit.
                     a.edit_revision=Some(entry.revision);
-                }else{return Err(Error::new(if header(&r,"If-Match").is_some(){"precondition_failed"}else{"precondition_required"},"修改已有文件需要匹配的强 ETag 或本成员的独占文件锁，未覆盖"));}
+                }else{return Err(Error::new(if if_match.is_some(){"precondition_failed"}else{"precondition_required"},"修改已有文件需要匹配的强 ETag 或本成员的独占文件锁，未覆盖"));}
             }
             if header(&r, "Content-Length")
                 .and_then(|v| v.parse::<u64>().ok())
@@ -637,10 +639,11 @@ async fn handle_direct(s: Arc<State>, mut r: Request) -> Result<Response> {
         let lock_revision=if method.as_str()=="LOCK"{s.storage.stat(&decoded).ok().map(|e|e.revision)}else{None};
         let committed=a.committed_entry.clone();
         let response = s.dav.handle_guarded(r, principal, a).await;
-        if method==Method::PUT&&response.status().is_success(){if let Some((token,previous))=edit_lock{if let Some((target,revision))=committed.lock().unwrap().as_ref(){if target==&decoded{s.locks.advance_version(&token,&previous,revision);}}}}
+        let decoded_key = crate::locks::resource_key(&decoded);
+        if method==Method::PUT&&response.status().is_success(){if let Some((token,previous))=edit_lock{if let Some((target,revision))=committed.lock().unwrap().as_ref(){if crate::locks::resource_key(target)==decoded_key{s.locks.advance_version(&token,&previous,revision);}}}}
         if method.as_str()=="LOCK"&&response.status().is_success(){
             if let Some(token)=response.headers().get("Lock-Token").and_then(|v|v.to_str().ok()).and_then(|v|v.strip_prefix('<')).and_then(|v|v.strip_suffix('>')){
-                if let Some(revision)=lock_revision.or_else(||committed.lock().unwrap().as_ref().filter(|(path,_)|path==&decoded).map(|(_,revision)|revision.clone())){s.locks.remember_version(token,&revision);}
+                if let Some(revision)=lock_revision.or_else(||committed.lock().unwrap().as_ref().filter(|(path,_)|crate::locks::resource_key(path)==decoded_key).map(|(_,revision)|revision.clone())){s.locks.remember_version(token,&revision);}
             }
         }
         return Ok(response.map(Body::new));

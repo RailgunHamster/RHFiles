@@ -347,11 +347,8 @@ impl Storage {
         let node = self.node(path)?;
         node.require_child()?;
         let _guard = self.mutation.lock().unwrap();
-        if directory {
-            node.root.dir.remove_dir(&node.relative)?;
-        } else {
-            node.root.dir.remove_file(&node.relative)?;
-        }
+        let (dir, leaf) = node.location();
+        remove_entry(dir, leaf, directory)?;
         Ok(())
     }
     pub(crate) fn remove_node(&self, node: Node) -> Result<()> {
@@ -959,12 +956,86 @@ impl Staged {
     }
 }
 
+#[cfg(windows)]
+fn clear_readonly_attr(dir: &Dir, path: &Path) -> std::io::Result<bool> {
+    use cap_std::fs::OpenOptionsExt;
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_READONLY, FILE_BASIC_INFO,
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES,
+        FILE_WRITE_ATTRIBUTES, FileBasicInfo, GetFileInformationByHandleEx,
+        SetFileInformationByHandle,
+    };
+    let mut options = OpenOptions::new();
+    options
+        .access_mode(FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .follow(FollowSymlinks::No);
+    let handle = dir.open_with(path, &options)?;
+    let mut info: FILE_BASIC_INFO = unsafe { std::mem::zeroed() };
+    let ok = unsafe {
+        GetFileInformationByHandleEx(
+            handle.as_raw_handle(),
+            FileBasicInfo,
+            (&mut info as *mut FILE_BASIC_INFO).cast(),
+            std::mem::size_of::<FILE_BASIC_INFO>() as u32,
+        )
+    };
+    if ok == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    if info.FileAttributes & FILE_ATTRIBUTE_READONLY == 0 {
+        return Ok(false);
+    }
+    let mut updated: FILE_BASIC_INFO = unsafe { std::mem::zeroed() };
+    let attrs = info.FileAttributes & !FILE_ATTRIBUTE_READONLY;
+    updated.FileAttributes = if attrs == 0 {
+        FILE_ATTRIBUTE_NORMAL
+    } else {
+        attrs
+    };
+    let ok = unsafe {
+        SetFileInformationByHandle(
+            handle.as_raw_handle(),
+            FileBasicInfo,
+            (&updated as *const FILE_BASIC_INFO).cast(),
+            std::mem::size_of::<FILE_BASIC_INFO>() as u32,
+        )
+    };
+    if ok == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(true)
+}
+
+fn remove_entry(dir: &Dir, path: &Path, directory: bool) -> std::io::Result<()> {
+    let attempt = || {
+        if directory {
+            dir.remove_dir(path)
+        } else {
+            dir.remove_file(path)
+        }
+    };
+    match attempt() {
+        Ok(()) => Ok(()),
+        #[cfg(windows)]
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            if clear_readonly_attr(dir, path).unwrap_or(false) {
+                attempt()
+            } else {
+                Err(error)
+            }
+        }
+        Err(error) => Err(error),
+    }
+}
+
 fn unlink_entry(dir: &Dir, path: &Path, meta: &cap_std::fs::Metadata) -> std::io::Result<()> {
     #[cfg(windows)]
     let directory = meta.file_attributes() & 0x10 != 0;
     #[cfg(not(windows))]
     let directory = meta.is_dir();
-    if directory { dir.remove_dir(path) } else { dir.remove_file(path) }
+    remove_entry(dir, path, directory)
 }
 impl Drop for Staged {
     fn drop(&mut self) {

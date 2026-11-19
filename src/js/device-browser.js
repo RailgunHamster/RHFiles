@@ -254,6 +254,25 @@ const deviceBrowser=(()=>{
   return {register,refresh,refreshForCopy,paint,display,name,address,copyAddress,resolve,suggest,source,cachedSource:path=>media.get(P.parse(path).uri)?.url||'',fs,setAlias,promptAlias,showPeerContextMenu};
 })();
 deviceBrowser.register(window.RHFilesAPI);
+if(typeof window!=='undefined'&&window.__TAURI__?.event?.listen&&!window._rhfilesWorkingCopySyncListening){
+  window._rhfilesWorkingCopySyncListening=true;
+  window.__TAURI__.event.listen('device-working-copy-sync',event=>{
+    const p=event?.payload||{};
+    const zh=typeof _lang==='string'&&_lang.startsWith('zh');
+    if(p.ok){
+      if(typeof showNotice==='function')showNotice(zh?`已自动保存回远端设备：${p.name||''}`:`Saved changes back to remote device: ${p.name||''}`);
+      if(p.source&&typeof RHFilesDevicePaths==='object'){
+        const parent=RHFilesDevicePaths.parent(p.source);
+        if(typeof refreshPathIfOpen==='function')refreshPathIfOpen(parent);
+        else if(typeof getTab==='function'&&typeof refresh==='function'){
+          const tab=getTab();if(tab?.path===parent)refresh();
+        }
+      }
+    }else if(p.error&&typeof showNotice==='function'){
+      showNotice(zh?`远端文件自动保存失败（可在“远端工作副本”中手动保存）：${p.name||''} · ${p.error}`:`Failed to auto-save remote file (open Working Copies to save manually): ${p.name||''} · ${p.error}`);
+    }
+  }).catch(()=>{});
+}
 async function routeDeviceCommand(cmd,args){
     if(cmd==='device_fs'||cmd==='device_transfer'||cmd==='file_viewer_request'||cmd==='pdf_viewer_request'||cmd.startsWith('native_drag_'))return null;
   // These values are text/state, not filesystem input. In particular, a
@@ -290,7 +309,7 @@ async function routeDeviceCommand(cmd,args){
       const id=showProgress(String(_lang).startsWith('zh')?'正在打开远端文件':'Opening remote file',{cancellable:true,currentPath:args.path});
       try{
         let live,bridgeError;
-        if(!IS_MAC)try{live=await call('device_transfer',{action:'windows_path',args:{path:args.path}});}catch(error){bridgeError=error;if(!/\[compatibility_unavailable\]|\[compatibility_permission_required\]|\[windows_component_missing\]/.test(String(error)))throw error;}
+        if(!IS_MAC)try{live=await call('device_transfer',{action:'windows_path',args:{path:args.path}});}catch(error){bridgeError=error;if(/\[forbidden\]|\[unauthorized\]|\[not_found\]|\[invalid_path\]|Cancelled/i.test(String(error)))throw error;}
         if(!live&&bridgeError&&(cmd==='open_with_program'&&['cmd','powershell','git_bash','wt','terminal','iterm','vlc_folder'].includes(args.program)||(await fs('stat',args.path)).is_dir))throw bridgeError;
         if(live)value=await call(cmd,{...args,path:live.path});else value=await call('device_transfer',{action:'open',args:{...args,command:cmd,operationId:id}});
         completeOperationTask(id);

@@ -768,7 +768,8 @@ async function quicklookSelected(isRight) {
 }
 
 function archiveFolderName(name) {
-  const folder = archiveNameInfo(name)?.folder || 'archive';
+  const raw = archiveNameInfo(name)?.folder || 'archive';
+  const folder = raw.replace(/[. ]+$/, '') || 'archive';
   return folder === '.' || folder === '..' ? 'archive' : folder;
 }
 
@@ -804,7 +805,12 @@ function selectedArchiveGroups(entries) {
   for (const entry of entries || []) {
     if (!isArchiveEntry(entry)) continue;
     const info = archiveNameInfo(entry.name || entry.path);
-    const key = windowsPathKey(parentFolderPath(entry.path || '') + '/' + info.family);
+    const parent = parentFolderPath(entry.path || '');
+    const parentKey = parent ? windowsPathKey(parent) : '';
+    const familyKey = IS_MAC
+      ? String(info.family || '').normalize('NFC')
+      : String(info.family || '').normalize('NFC').toLocaleLowerCase();
+    const key = parentKey + '\0' + familyKey;
     if (!groups.has(key)) groups.set(key, entry);
   }
   return [...groups.values()];
@@ -864,41 +870,97 @@ function isArchivePasswordError(error) {
   return /wrong password|password is incorrect|cannot open encrypted/i.test(String(error));
 }
 
-// Promise-based password prompt for encrypted archives. Resolves with the
-// entered password, or null when cancelled / left empty. `retry` marks a
-// follow-up attempt after a wrong password.
-function promptArchivePassword(label, retry) {
+// Promise-based password prompt for encrypted archives (non-modal floating).
+// Multiple prompts can stay open simultaneously without blocking or queueing.
+// When `batchAuth` has multiple archives, users can apply one password to all.
+let _archivePasswordZIndex = 10020;
+let _openArchivePasswordDialogs = 0;
+
+function promptArchivePassword(label, retry, batchAuth) {
+  if (batchAuth && !retry && batchAuth.sharedPassword !== null) {
+    return Promise.resolve(batchAuth.sharedPassword);
+  }
   return new Promise(resolve => {
+    const slot = _openArchivePasswordDialogs++;
+    const offset = (slot % 6) * 28 - 40;
     const dlg = document.createElement("dialog");
-    dlg.style.cssText = "border:1px solid var(--border);border-radius:8px;padding:16px;background:var(--bg-1);color:var(--text-1);min-width:380px;";
+    dlg.className = "archive-password-dialog";
+    dlg.style.cssText = `position:fixed;left:calc(50% + ${offset}px);top:calc(50% + ${offset}px);transform:translate(-50%,-50%);margin:0;z-index:${++_archivePasswordZIndex};border:1px solid var(--border);border-radius:8px;padding:16px;background:var(--bg-1);color:var(--text-1);min-width:380px;max-width:460px;box-shadow:0 12px 32px rgba(0,0,0,0.45);`;
+    const applyAllLabel = typeof t === 'function' ? t('archive.passwordApplyAll') : 'Use the same password for all';
+    const showApplyAll = !!(batchAuth && batchAuth.total > 1);
     dlg.innerHTML = `
-      <h3 style="margin:0 0 8px;font-size:14px">${t('archive.passwordTitle')}</h3>
+      <h3 data-drag-handle style="margin:0 0 8px;font-size:14px;cursor:move;user-select:none;">${t('archive.passwordTitle')}</h3>
       <div style="font-size:12px;color:var(--text-4);margin-bottom:10px;word-break:break-all;">${esc(String(label || ''))}</div>
       ${retry ? `<div style="font-size:12px;color:var(--git-deleted);margin-bottom:8px;">${t('archive.passwordRetry')}</div>` : ''}
       <input type="password" autocomplete="off" placeholder="${t('archive.passwordPrompt')}"
         style="width:100%;box-sizing:border-box;padding:6px 8px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:4px;">
+      ${showApplyAll ? `<label style="display:flex;align-items:center;gap:6px;margin-top:10px;font-size:12px;color:var(--text-2);cursor:pointer;user-select:none;"><input type="checkbox" data-act="apply-all"> <span>${esc(applyAllLabel)}</span></label>` : ''}
       <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end;">
         <button class="dialog-btn" data-act="cancel">${t('btn.cancel')}</button>
         <button class="dialog-btn primary" data-act="ok">${t('archive.passwordUnlock')}</button>
       </div>`;
-    const input = dlg.querySelector("input");
+    const input = dlg.querySelector('input[type="password"]');
+    const applyAllBox = dlg.querySelector('[data-act="apply-all"]');
+    const dragHandle = dlg.querySelector('[data-drag-handle]');
     let settled = false;
+    let sharedListener = null;
     const finish = value => {
       if (settled) return;
       settled = true;
-      dlg.close();
+      _openArchivePasswordDialogs = Math.max(0, _openArchivePasswordDialogs - 1);
+      if (sharedListener && batchAuth?.waiters) batchAuth.waiters.delete(sharedListener);
+      if (typeof dlg.close === 'function') dlg.close();
       dlg.remove();
       resolve(value);
     };
-    const submit = () => finish(input.value === "" ? null : input.value);
+    const submit = () => {
+      const value = input.value === "" ? null : input.value;
+      if (value !== null && applyAllBox?.checked && batchAuth?.applyShared) {
+        if (sharedListener && batchAuth.waiters) batchAuth.waiters.delete(sharedListener);
+        batchAuth.applyShared(value);
+      }
+      finish(value);
+    };
+    if (batchAuth && !retry && batchAuth.waiters) {
+      sharedListener = shared => finish(shared);
+      batchAuth.waiters.add(sharedListener);
+    }
+    RHFilesUI.listen(dlg,"mousedown", () => { dlg.style.zIndex = String(++_archivePasswordZIndex); },undefined,"src.js.ops.promptArchivePassword.focus");
+    if (dragHandle && typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      RHFilesUI.listen(dragHandle,"mousedown", event => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        const rect = dlg.getBoundingClientRect();
+        dlg.style.transform = "none";
+        dlg.style.left = rect.left + "px";
+        dlg.style.top = rect.top + "px";
+        const startX = event.clientX - rect.left;
+        const startY = event.clientY - rect.top;
+        const onMove = moveEvent => {
+          dlg.style.left = Math.max(0, Math.min(window.innerWidth - 80, moveEvent.clientX - startX)) + "px";
+          dlg.style.top = Math.max(0, Math.min(window.innerHeight - 40, moveEvent.clientY - startY)) + "px";
+        };
+        const onUp = () => {
+          RHFilesUI.remove(window,"mousemove", onMove);
+          RHFilesUI.remove(window,"mouseup", onUp);
+        };
+        RHFilesUI.listen(window,"mousemove", onMove,undefined,"src.js.ops.promptArchivePassword.dragMove");
+        RHFilesUI.listen(window,"mouseup", onUp,undefined,"src.js.ops.promptArchivePassword.dragUp");
+      },undefined,"src.js.ops.promptArchivePassword.dragStart");
+    }
     RHFilesUI.assign(dlg.querySelector('[data-act="cancel"]'),"click",() => finish(null),"src.js.ops.promptArchivePassword.2b1c51edc245");
     RHFilesUI.assign(dlg.querySelector('[data-act="ok"]'),"click",submit,"src.js.ops.promptArchivePassword.e20bc3882c91");
     RHFilesUI.listen(input,"keydown", event => {
       if (event.key === "Enter") { event.preventDefault(); submit(); }
+      else if (event.key === "Escape") { event.preventDefault(); finish(null); }
     },undefined,"src.js.ops.promptArchivePassword.b139a679e52e");
+    RHFilesUI.listen(dlg,"keydown", event => {
+      if (event.key === "Escape") { event.preventDefault(); finish(null); }
+    },undefined,"src.js.ops.promptArchivePassword.escape");
     dlg.addEventListener("cancel", event => { event.preventDefault(); finish(null); });
     document.body.appendChild(dlg);
-    dlg.showModal();
+    if (typeof dlg.show === 'function') dlg.show();
+    else if (typeof dlg.showModal === 'function') dlg.showModal();
     input.focus();
   });
 }
@@ -906,9 +968,9 @@ function promptArchivePassword(label, retry) {
 // Ask for a password until it verifies against the archive's smallest
 // encrypted entry, so a long extraction never starts with a wrong password.
 // Returns null when the user cancels.
-async function resolveArchivePassword(path, sample, label) {
+async function resolveArchivePassword(path, sample, label, batchAuth) {
   for (let retry = 0; ; retry++) {
-    const password = await promptArchivePassword(label, retry > 0);
+    const password = await promptArchivePassword(label, retry > 0, batchAuth);
     if (password === null) return null;
     let verified = false;
     try {
@@ -921,23 +983,30 @@ async function resolveArchivePassword(path, sample, label) {
   }
 }
 
+let _archiveConflictQueue = Promise.resolve();
+
 function chooseArchiveOverwrite(file, conflicts) {
-  const first = conflicts[0];
-  return new Promise(resolve => {
-    showConflictDialog(first.entryPath, pathLeaf(first.targetPath),
-      file.path + ' / ' + first.entryPath, first.targetPath, choice => resolve(choice),
-      {allowApplyAll:false, disableReplace:conflicts.some(conflict => conflict.protectedInput)});
-    const message = document.querySelector('#conflict-content .conflict-message');
-    if (message) {
-      message.innerHTML = esc(t('archive.actualConflicts', {count:conflicts.length}));
-      if (conflicts.some(conflict => conflict.protectedInput)) message.innerHTML += '<p>' + esc(t('archive.inputProtected')) + '</p>';
-      if (conflicts.length > 1) {
-        message.innerHTML += `<details style="margin-top:8px"><summary>${esc(t('archive.viewConflicts'))}</summary><div style="max-height:160px;overflow:auto;font-size:12px;word-break:break-all">` +
-          conflicts.slice(0,100).map(conflict => `<p>${esc(conflict.entryPath)} → ${esc(conflict.targetPath)}</p>`).join('') +
-          (conflicts.length > 100 ? esc(t('archive.moreConflicts', {count:conflicts.length-100})) : '') + '</div></details>';
+  const run = () => {
+    const first = conflicts[0];
+    return new Promise(resolve => {
+      showConflictDialog(first.entryPath, pathLeaf(first.targetPath),
+        file.path + ' / ' + first.entryPath, first.targetPath, choice => resolve(choice),
+        {allowApplyAll:false, disableReplace:conflicts.some(conflict => conflict.protectedInput)});
+      const message = document.querySelector('#conflict-content .conflict-message');
+      if (message) {
+        message.innerHTML = esc(t('archive.actualConflicts', {count:conflicts.length}));
+        if (conflicts.some(conflict => conflict.protectedInput)) message.innerHTML += '<p>' + esc(t('archive.inputProtected')) + '</p>';
+        if (conflicts.length > 1) {
+          message.innerHTML += `<details style="margin-top:8px"><summary>${esc(t('archive.viewConflicts'))}</summary><div style="max-height:160px;overflow:auto;font-size:12px;word-break:break-all">` +
+            conflicts.slice(0,100).map(conflict => `<p>${esc(conflict.entryPath)} → ${esc(conflict.targetPath)}</p>`).join('') +
+            (conflicts.length > 100 ? esc(t('archive.moreConflicts', {count:conflicts.length-100})) : '') + '</div></details>';
+        }
       }
-    }
-  });
+    });
+  };
+  const next = _archiveConflictQueue.then(run, run);
+  _archiveConflictQueue = next.catch(() => {});
+  return next;
 }
 
 function captureArchiveRefresh() {
@@ -980,12 +1049,12 @@ async function extractArchiveTo(file, destination, password, options) {
       break;
     } catch (error) {
       if (!isArchivePasswordError(error)) return report(error);
-      currentPassword = await promptArchivePassword(file.name, attempt > 0);
+      currentPassword = await promptArchivePassword(file.name, attempt > 0, opts.batchAuth);
       if (currentPassword === null) return null;
     }
   }
   if (!currentPassword && inspection.passwordEntry) {
-    currentPassword = await resolveArchivePassword(file.path, inspection.passwordEntry, file.name);
+    currentPassword = await resolveArchivePassword(file.path, inspection.passwordEntry, file.name, opts.batchAuth);
     if (currentPassword === null) return null;
     passwordVerified = true;
   }
@@ -1029,7 +1098,7 @@ async function extractArchiveTo(file, destination, password, options) {
       if (isArchivePasswordError(e)) {
         if (!passwordVerified && attempt < 2) {
           cancelOperationTask(taskId);
-          const next = await promptArchivePassword(file.name, attempt > 0);
+          const next = await promptArchivePassword(file.name, attempt > 0 || currentPassword !== null, opts.batchAuth);
           if (next !== null) {
             currentPassword = next;
             continue;
@@ -1046,17 +1115,33 @@ async function extractArchiveTo(file, destination, password, options) {
   }
 }
 
-// Extract several archives in turn. Each one keeps its own progress task and
-// password prompt, and a single failure must not abort the rest.
+// Extract several archives in parallel. Each one keeps its own progress task
+// and non-modal password prompt (with an option to reuse one password across
+// the batch), and a single failure must not abort the rest.
 async function extractArchives(archives, destinationFor) {
   const list = selectedArchiveGroups(archives);
   if (!list.length) return;
   const origin = captureArchiveRefresh();
-  const failures = [];
-  for (const file of list) {
-    const error = await extractArchiveTo(file, destinationFor(file), null, { silent: true, refreshAfter: false });
-    if (error) failures.push(file.name);
-  }
+  const batchAuth = list.length > 1 ? {
+    total: list.length,
+    sharedPassword: null,
+    waiters: new Set(),
+    applyShared(password) {
+      this.sharedPassword = password;
+      for (const notify of [...this.waiters]) notify(password);
+    },
+  } : null;
+  const results = await Promise.all(
+    list.map(async file => {
+      const error = await extractArchiveTo(file, destinationFor(file), null, {
+        silent: true,
+        refreshAfter: false,
+        batchAuth,
+      });
+      return error ? file.name : null;
+    })
+  );
+  const failures = results.filter(Boolean);
   await refreshArchiveOrigin(origin);
   if (failures.length) {
     alert(t('alert.extractSomeFailed', {

@@ -379,6 +379,7 @@
   "archive.passwordPrompt": "Enter password",
   "archive.passwordUnlock": "Extract",
   "archive.passwordRetry": "Wrong password — please try again.",
+  "archive.passwordApplyAll": "Use the same password for all",
   "notice.dataExported": "Data exported successfully (localStorage + SQLite)",
   "notice.dataImported": "Data imported successfully (localStorage + SQLite). Reloading...",
   "notice.dataImportedLsOnly": "Data imported successfully. Reloading...",
