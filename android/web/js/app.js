@@ -42,7 +42,7 @@
   const deviceRootEntries = new Map();
   const deviceRootPending = new Set();
   let homeSnapshot='';
-  const sameRoute = (a, b) => JSON.stringify([a.screen,a.path,a.category,a.folder,a.tool,a.boundary]) === JSON.stringify([b.screen,b.path,b.category,b.folder,b.tool,b.boundary]);
+  const sameRoute = (a, b) => androidNavStack.sameRoute(a, b);
   const normRoot = p => String(p || '').replace(/\/+$/, '');
   const isRootPath = (a, b) => !!a && !!b && normRoot(a).toLowerCase() === normRoot(b).toLowerCase();
   const rootFor = (path) => {
@@ -332,7 +332,8 @@
     if(route.screen!=='tool'||route.tool!=='nearby')androidNearby.leave();
     if(route.screen!=='tool'||route.tool!=='usage')androidUsage.leave();
     if (route.screen === 'home') state.stack = [];
-    else if (!options.replace && !sameRoute(route, state.route)) state.stack.push({ ...state.route, scroll: $('filelist').scrollTop });
+    else if (!options.replace) state.stack = androidNavStack.push(state.stack, { ...state.route, scroll: $('filelist').scrollTop }, route);
+    else state.stack = androidNavStack.clean(state.stack, route);
     if (route.screen === 'folder' && route.parentPath && route.path !== route.parentPath) folderParents.set(route.path,route.parentPath);
     const id = ++navigationId;
     ++searchId; clearTimeout(searchTimer);
@@ -361,6 +362,7 @@
         const listing = await api.listDir({ path: route.path });
         if (id !== navigationId) return;
         state.route.path = listing.path; state.listing = listing; state.entries = listing.entries || [];
+        state.stack = androidNavStack.clean(state.stack, state.route);
         const root = rootFor(listing.path); if (root && !api.isVirtual(root.path)) state.root = root.path;
         if (listing.path?.startsWith('remote://')) {
           const rId = mobileList.remoteId(listing.path);
@@ -1038,35 +1040,63 @@
     const page = await api.logs({limit:200});
     $('log-view').textContent = page.entries.map(e=>fmt.date(e.atMs)+' ['+e.level+'] '+e.scope+': '+e.message).join('\n') || '暂无日志';
   }
-  function libraryUp(home=true){const category=state.route.category;if(!state.route.folder&&home){go({screen:'home'},{replace:true});return true;}const index=state.stack.findLastIndex(r=>r.screen==='library'&&r.category===category&&!r.folder),route=index>=0?state.stack[index]:{screen:'library',category};if(index>=0)state.stack.length=index;go(route,{replace:true});return true;}
+  function libraryUp(home = true, { replace = false } = {}) {
+    const category = state.route.category;
+    if (!state.route.folder) {
+      if (!home) { go({ screen: 'library', category }, { replace: true }); return true; }
+      go({ screen: 'home' }, { replace: true });
+      return true;
+    }
+    const existing = state.stack.findLast(r => r.screen === 'library' && r.category === category && !r.folder);
+    const route = existing ? { ...existing } : { screen: 'library', category };
+    go(route, replace ? { replace: true } : {});
+    return true;
+  }
+  function parentRouteFor(route = state.route) {
+    if (route.screen === 'folder') {
+      const path = route.path, root = rootFor(path), boundary = route.boundary;
+      if (boundary && isRootPath(boundary, path)) return { screen: 'home' };
+      const parent = isRootPath(path, root?.path)
+        ? null
+        : api.isVirtual(path)
+          ? (folderParents.get(path) || (path.startsWith('remote://') ? fmt.parentOf(path) : null))
+          : fmt.parentOf(path);
+      if (parent && parent !== path && !isRootPath(parent, path)) {
+        const candidate = folderRoute(parent);
+        const existing = state.stack.findLast(r => sameRoute(r, candidate));
+        return existing ? { ...existing } : candidate;
+      }
+      return { screen: 'home' };
+    }
+    if (route.screen !== 'home') return { screen: 'home' };
+    return null;
+  }
+  function up({ replace = false } = {}) {
+    if (state.route.screen === 'library') return libraryUp(true, { replace });
+    const target = parentRouteFor(state.route);
+    if (!target) return false;
+    go(target, replace ? { replace: true } : {});
+    return true;
+  }
   function back() {
     if(androidNearby.back())return true;
     if(ui.isSheetOpen()) { ui.closeSheet(); return true; }
-    if(!$('drawer').hidden&&!document.body.classList.contains('wide-layout')) { closeDrawer(); return true; }
+    if(!$('drawer').hidden && $('drawer').getAttribute?.('aria-hidden')!=='true' && !document.body.classList.contains('wide-layout')) { closeDrawer(); return true; }
     if(state.selected.size) { clearSelection(); return true; }
     if(state.route.tool==='trash'&&androidTrash.back())return true;
     if(androidUsage.back())return true;
-    if(state.route.screen==='library'&&state.route.folder)return libraryUp();
-    if(state.route.screen==='folder') {
-      const path=state.route.path, root=rootFor(path), boundary=state.route.boundary;
-      if(boundary===path) {go({screen:'home'},{replace:true});return true;}
-      const parent = api.isVirtual(path) ? folderParents.get(path) : root?.path===path ? null : fmt.parentOf(path);
-      if(parent && parent!==path) {
-        const index=state.stack.findLastIndex(route=>route.screen==='folder' && route.path===parent && route.boundary===boundary);
-        const route=index>=0 ? state.stack[index] : folderRoute(parent);
-        if(index>=0)state.stack.length=index;
-        go(route,{replace:true});return true;
-      }
-      if(!api.isVirtual(path) || root?.path===path) {go({screen:'home'},{replace:true});return true;}
-    }
     if(state.route.screen==='home') {
       if(androidFeatures.cancelTransfersOnBack(blocked()))return true;
       if(cancelPaste())return true;
       return false;
     }
-    if(state.stack.length) { go(state.stack.pop(),{replace:true}); return true; }
-    if(state.route.screen!=='home') { go({screen:'home'},{replace:true}); return true; }
-    return false;
+    if(state.stack.length) {
+      const { entry, stack } = androidNavStack.pop(state.stack);
+      state.stack = stack;
+      go(entry, { replace: true });
+      return true;
+    }
+    return up({ replace: true });
   }
   async function bootStorage() {
     showPlaceholder('正在读取存储位置…');
@@ -1145,7 +1175,7 @@
     on('nav-scan',async()=>{closeDrawer();await api.native('qr.scan');await refreshLocations();});
     on('drawer-more',()=>ui.openSheet('更多选项',[action('扫码','scan',async()=>{closeDrawer();await api.native('qr.scan');await refreshLocations();})]));
     on('btn-home',()=>go({screen:'home'}));
-    on('btn-up',()=>state.route.screen==='library'?libraryUp():back());
+    on('btn-up',()=>up());
     on('btn-search',()=>go({screen:'search',path:currentDirectory()||state.root,global:!currentDirectory(),boundary:state.route.boundary,boundaryLabel:state.route.boundaryLabel}));
     on('btn-search-close',()=>back());
     if ($('btn-device-win-path-go') && $('device-win-path-input')) {
@@ -1201,8 +1231,9 @@
       await bootStorage();
       if(resume){
         if(state.roots.some(root=>root.path===resume.root))state.root=resume.root;
+        state.stack=androidNavStack.clean(resume.stack,resume.route);
         await go(resume.route,{replace:true});
-        state.stack=Array.isArray(resume.stack)?resume.stack:[];
+        state.stack=androidNavStack.clean(state.stack,state.route);
         state.clipboard=paneHost()?paneHost().currentClipboard(window):resume.clipboard;
         state.selected=new Set((resume.selected||[]).filter(path=>state.entries.some(entry=>entry.path===path)));
         if(isList()&&!$('filelist').hidden)renderList(resume.route.scroll||0);else renderShell();

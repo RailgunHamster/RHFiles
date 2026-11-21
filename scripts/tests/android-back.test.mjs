@@ -3,8 +3,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
+import {createRequire} from 'node:module';
 import {parse} from 'acorn';
 import {context,deferred,plain,sourceRoot} from '../testing/source.mjs';
+const require=createRequire(import.meta.url);
+const androidNavStack=require(path.join(sourceRoot,'android/web/js/nav-stack.js'));
 
 function functions(ctx,file,names){
   const source=fs.readFileSync(path.join(sourceRoot,'android/web/js',file),'utf8');
@@ -15,13 +18,15 @@ function functions(ctx,file,names){
 function appFixture({screen='home',clipboard=null,host=null,transfer=false}={}){
   const state={route:{screen},stack:[],selected:new Set(),clipboard,task:null},events=[];
   const drawer={hidden:true};const ui={isSheetOpen:()=>false,toast:text=>events.push(text),closeSheet:()=>events.push('close sheet')};
+  const normRoot=p=>String(p||'').replace(/\/+$/,'');
+  const isRootPath=(a,b)=>!!a&&!!b&&normRoot(a).toLowerCase()===normRoot(b).toLowerCase();
   const ctx=context({state,quitArmedAt:123,window:{},paneHost:()=>host,blocked:()=>!!state.task,
     renderList:()=>events.push('list'),renderShell:()=>events.push('shell'),ui,
     androidNearby:{back:()=>false},androidTrash:{back:()=>false},androidUsage:{back:()=>false},
-    androidFeatures:{cancelTransfersOnBack:()=>transfer},$:()=>drawer,document:{body:{classList:{contains:()=>false}}},
-    clearSelection:()=>state.selected.clear(),api:{isVirtual:()=>false},rootFor:()=>({path:'/root'}),
-    go:route=>{state.route=route;events.push('go '+route.screen);},folderRoute:path=>({screen:'folder',path}),fmt:{parentOf:()=>'/root'},folderParents:new Map(),libraryUp:()=>true});
-  functions(ctx,'app.js',['cancelPaste','back']);return {state,events,ctx,ui,back:()=>vm.runInContext('back()',ctx)};
+    androidFeatures:{cancelTransfersOnBack:()=>transfer},androidNavStack,$:()=>drawer,document:{body:{classList:{contains:()=>false}}},
+    clearSelection:()=>state.selected.clear(),api:{isVirtual:()=>false},rootFor:()=>({path:'/root'}),isRootPath,sameRoute:androidNavStack.sameRoute,
+    go:route=>{state.route=route;events.push('go '+route.screen);},folderRoute:path=>({screen:'folder',path}),fmt:{parentOf:p=>p.slice(0,p.lastIndexOf('/'))||'/'},folderParents:new Map()});
+  functions(ctx,'app.js',['cancelPaste','libraryUp','parentRouteFor','up','back']);return {state,events,ctx,ui,back:()=>vm.runInContext('back()',ctx),up:()=>vm.runInContext('up()',ctx)};
 }
 for(const mode of ['copy','cut'])test('Home Back cancels pending '+mode+' before allowing exit',()=>{
   const f=appFixture({clipboard:{mode,paths:['/root/a']}});f.state.stack.push({screen:'folder',path:'/root'});
@@ -50,6 +55,20 @@ test('Home cancellation is shared across panes and cannot erase a newer clipboar
 test('a running transfer gets a cancellation prompt before Home Back touches the pending clipboard',()=>{
   const pending={mode:'copy',paths:['/root/a']},f=appFixture({clipboard:pending,transfer:true});
   assert.equal(f.back(),true);assert.equal(f.state.clipboard,pending);
+});
+test('Back pops previous history route before falling back to physical parent folders',()=>{
+  const f=appFixture({screen:'folder'});f.state.route.path='/root/A/B';
+  f.state.stack.push({screen:'favorites'});
+  assert.equal(f.back(),true);assert.equal(f.state.route.screen,'favorites');assert.equal(f.state.stack.length,0);
+  f.state.route={screen:'folder',path:'/root/A/B'};
+  assert.equal(f.back(),true);assert.equal(f.state.route.path,'/root/A');assert.equal(f.state.stack.length,0);
+  assert.equal(f.back(),true);assert.equal(f.state.route.path,'/root');assert.equal(f.state.stack.length,0);
+  assert.equal(f.back(),true);assert.equal(f.state.route.screen,'home');assert.equal(f.back(),false);
+});
+test('Up navigates to physical parent directory even when history points elsewhere',()=>{
+  const f=appFixture({screen:'folder'});f.state.route.path='/root/A/B';
+  f.state.stack.push({screen:'favorites'});
+  assert.equal(f.up(),true);assert.equal(f.state.route.path,'/root/A');
 });
 const turn=()=>new Promise(resolve=>setImmediate(resolve));
 function transferFixture({confirm=async()=>true,fetchJobs,initial=[{id:'copy-a',op:'copy',state:'running'}]}={}){
