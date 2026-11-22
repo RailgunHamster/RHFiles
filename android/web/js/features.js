@@ -263,6 +263,11 @@ const androidFeatures = (() => {
   async function archive(entry) {
     ui.openSheet(entry.name,[app.action('关闭','close',()=>{}),app.action('解压到新文件夹','archive',()=>extract(entry))],'正在读取压缩包目录…');
     const identity=panel().firstChild;
+    const fsBtn=button('全屏',()=>ui.setPreviewFullscreen(!ui.isPreviewFullscreen()));
+    fsBtn.dataset.previewAction='fullscreen';
+    const paintFs=on=>{fsBtn.textContent=on?'退出全屏':'全屏';fsBtn.setAttribute('aria-pressed',String(!!on));};
+    ui.onPreviewFullscreen(paintFs);paintFs(false);
+    const fsRow=ui.el('div','button-row');fsRow.style.padding='0 20px';fsRow.append(fsBtn);panel().insertBefore(fsRow,panel().querySelector('.sheet-note'));
     try {const entries=await api.native('archive.list',{path:entry.path});if(panel().firstChild!==identity)return;
       panel().querySelector('.sheet-note').textContent=entries.length+' 项；内容只读';
       const list=ui.el('div','archive-entries');for(const e of entries)list.append(ui.el('p','',e.name+(e.isDir?'/':' · '+fmt.size(e.size))));panel().append(list);
@@ -292,7 +297,11 @@ const androidFeatures = (() => {
       await api.native('text.save',{path:entry.path,text:area.value,revision:data.revision});saved=area.value;
       ui.setCloseGuard(null);ui.closeSheet();ui.toast('文件已保存');await app.refresh();
     }catch(e){status.textContent='未保存：'+e.message;}finally{saving=false;save.disabled=false;}});
-    const toolbar=ui.el('div','button-row');toolbar.append(close,save);panel().append(toolbar,status,area);
+    const fsBtn=button('全屏',()=>ui.setPreviewFullscreen(!ui.isPreviewFullscreen()));
+    fsBtn.dataset.previewAction='fullscreen';
+    const paintFs=on=>{fsBtn.textContent=on?'退出全屏':'全屏';fsBtn.setAttribute('aria-pressed',String(!!on));};
+    ui.onPreviewFullscreen(paintFs);paintFs(false);
+    const toolbar=ui.el('div','button-row');toolbar.append(close,save,fsBtn);panel().append(toolbar,status,area);
     ui.setCloseGuard(()=>{
       if(saving)return false;
       if(area.value===saved)return true;
@@ -322,7 +331,12 @@ const androidFeatures = (() => {
     const transform=()=>{element.style.transform=`translate(${x}px,${y}px) scale(${zoom}) rotate(${rotation}deg)`;};
     const load=()=>{current=images[index];element.src=api.assetUrl(current.path);zoom=1;x=0;y=0;rotation=0;transform();info.textContent=imageViewer?(index+1)+' / '+images.length:current.name;if(imageViewer)$('viewer-filename').textContent=current.name;};
     const next=delta=>{index=(index+delta+images.length)%images.length;load();};
-    if(!imageViewer)toolbar.append(button('关闭',()=>ui.closeSheet()));
+    if(!imageViewer){
+      const fsBtn=button('全屏',()=>ui.setPreviewFullscreen(!ui.isPreviewFullscreen()));
+      const paintFs=on=>{fsBtn.textContent=on?'退出全屏':'全屏';fsBtn.setAttribute('aria-pressed',String(!!on));};
+      ui.onPreviewFullscreen(paintFs);paintFs(false);
+      toolbar.append(button('关闭',()=>ui.closeSheet()),fsBtn);
+    }
     if(entry.kind==='image') {
       toolbar.append(iconButton('上一张','previous',()=>next(-1)),iconButton('缩小','zoomOut',()=>{zoom=Math.max(.25,zoom/1.4);transform();}),iconButton('适应','fit',()=>{zoom=1;x=0;y=0;transform();}),
         iconButton('旋转','rotate',()=>{rotation=(rotation+90)%360;transform();}),iconButton('放大','zoomIn',()=>{zoom=Math.min(8,zoom*1.4);transform();}),iconButton('下一张','next',()=>next(1)));

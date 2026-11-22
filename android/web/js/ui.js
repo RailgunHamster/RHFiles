@@ -59,6 +59,8 @@ const ui = (() => {
     zoomIn:'<circle cx="10" cy="10" r="6.5"/><path d="m15 15 6 6M7 10h6M10 7v6"/>',
     zoomOut:'<circle cx="10" cy="10" r="6.5"/><path d="m15 15 6 6M7 10h6"/>',
     fit:'<path d="M8 3H3v5m13-5h5v5M3 16v5h5m8 0h5v-5"/><rect x="7" y="7" width="10" height="10" rx="1"/>',
+    fullscreen:'<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
+    exitFullscreen:'<path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/>',
     rotate:'<path d="M4 9a8 8 0 1 1 0 7M4 3v6h6"/>',
   };
 
@@ -95,16 +97,38 @@ const ui = (() => {
   let onDismiss = null;
   let closeGuard = null, cleanup = null;
   let previousFocus = null;
+  let previewFullscreen = false, onFullscreenChange = null;
+  function setPreviewFullscreen(enabled, { notify = true } = {}) {
+    const next = !!enabled && isSheetOpen();
+    if (previewFullscreen === next) return previewFullscreen;
+    previewFullscreen = next;
+    sheetPanel()?.classList.toggle('preview-fullscreen', next);
+    document.body.classList.toggle('preview-fullscreen-active', next);
+    const host = window.parent !== window ? window.parent.RHFilesWorkbench : null;
+    if (host?.fullscreen) {
+      try { host.fullscreen(window, next); } catch {}
+    } else if (typeof api !== 'undefined' && api.systemFullscreen) {
+      api.systemFullscreen(next).catch(() => {});
+    }
+    if (notify && onFullscreenChange) {
+      try { onFullscreenChange(next); } catch {}
+    }
+    return previewFullscreen;
+  }
+  function isPreviewFullscreen() { return previewFullscreen; }
+  function onPreviewFullscreen(fn) { onFullscreenChange = fn; }
   function closeSheet() {
     if (closeGuard && !closeGuard()) return false;
     const finish = cleanup; cleanup = null; closeGuard = null;
+    onFullscreenChange = null;
+    if (previewFullscreen) setPreviewFullscreen(false, { notify: false });
     if (finish) finish();
     const dismiss = onDismiss;
     onDismiss = null;
     sheet().hidden = true;
     scrim().hidden = true;
     sheetPanel().innerHTML = '';
-    sheetPanel().classList.remove('viewer','editor','image-viewer','chrome-hidden','continuous-viewer','text-preview','pdf-viewer-sheet');
+    sheetPanel().classList.remove('viewer','editor','image-viewer','chrome-hidden','continuous-viewer','text-preview','pdf-viewer-sheet','preview-fullscreen');
     if (dismiss) dismiss();
     if (previousFocus && previousFocus.isConnected) previousFocus.focus({ preventScroll: true });
     return true;
@@ -412,6 +436,6 @@ const ui = (() => {
     }
     return root.removable?'sd':'storage';
   }
-  return { icon, el, toast, openSheet, closeSheet, isSheetOpen, prompt, confirm, bindScrim, bindDrawerSwipe, bindFileGestures, serviceAction, storageSymbol, setDrawerOpen:opened=>setDrawerOpen(opened), copyText, ICONS,
+  return { icon, el, toast, openSheet, closeSheet, isSheetOpen, setPreviewFullscreen, isPreviewFullscreen, onPreviewFullscreen, prompt, confirm, bindScrim, bindDrawerSwipe, bindFileGestures, serviceAction, storageSymbol, setDrawerOpen:opened=>setDrawerOpen(opened), copyText, ICONS,
     setCloseGuard: fn => { closeGuard = fn; }, onClosed: fn => { cleanup = fn; } };
 })();

@@ -70,6 +70,16 @@ test('Up navigates to physical parent directory even when history points elsewhe
   f.state.stack.push({screen:'favorites'});
   assert.equal(f.up(),true);assert.equal(f.state.route.path,'/root/A');
 });
+test('Back exits preview fullscreen before closing the preview sheet',()=>{
+  const f=appFixture({screen:'folder'});f.state.route.path='/root';
+  let open=true,full=true;
+  f.ui.isSheetOpen=()=>open;
+  f.ui.closeSheet=()=>{open=false;full=false;};
+  f.ui.isPreviewFullscreen=()=>full;
+  f.ui.setPreviewFullscreen=v=>{full=!!v;};
+  assert.equal(f.back(),true);assert.equal(full,false);assert.equal(open,true);
+  assert.equal(f.back(),true);assert.equal(open,false);
+});
 const turn=()=>new Promise(resolve=>setImmediate(resolve));
 function transferFixture({confirm=async()=>true,fetchJobs,initial=[{id:'copy-a',op:'copy',state:'running'}]}={}){
   const calls=[],errors=[],ctx=context({lastJobs:plain(initial),backCancelPending:false,

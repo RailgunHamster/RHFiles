@@ -74,14 +74,17 @@ const androidGallery=(()=>{
     title.id='viewer-filename';viewport.append(track);panel.append(viewport,header,toolbar,info);let currentImage;
     const boundary=RHFilesImageStrip.boundaryLayer(viewport,{label:'末张 · 首张',first:'已回到第一张',last:'已回到最后一张'});
     function icon(label,name,fn){const button=app.button('',name,fn,'media-icon-btn');button.setAttribute('aria-label',label);button.title=label;button.querySelector('span')?.remove();return button;}
-    header.append(icon('返回文件列表','back',()=>ui.closeSheet()),title,modeSwitch(app,'paged'),icon('分享图片','share',()=>images[index].path.startsWith('remote://')?ui.toast('网络图片可先保存到本机，再使用系统分享'):api.shareFile(images[index].path)));
+    const fullscreenButton=icon('全屏','fullscreen',()=>controls.fullscreen());
+    function paintFullscreen(on){fullscreenButton.innerHTML=ui.icon(on?'exitFullscreen':'fullscreen');fullscreenButton.setAttribute('aria-label',on?'退出全屏':'全屏');fullscreenButton.title=on?'退出全屏':'全屏';fullscreenButton.setAttribute('aria-pressed',String(!!on));panel.classList.toggle('chrome-hidden',!!on);}
+    ui.onPreviewFullscreen(paintFullscreen);
+    header.append(icon('返回文件列表','back',()=>ui.closeSheet()),title,modeSwitch(app,'paged'),fullscreenButton,icon('分享图片','share',()=>images[index].path.startsWith('remote://')?ui.toast('网络图片可先保存到本机，再使用系统分享'):api.shareFile(images[index].path)));
     const previous=icon('上一张','previous',()=>animate(-1)),next=icon('下一张','next',()=>animate(1));
     const transform=()=>{if(currentImage)currentImage.style.transform=`translate(${x}px,${y}px) scale(${zoom}) rotate(${rotation}deg)`;};
-    const controls={previous:()=>animate(-1),next:()=>animate(1),zoomOut:()=>{zoom=Math.max(.25,zoom/1.4);transform();},fit:()=>{zoom=1;x=y=0;transform();},rotate:()=>{rotation=(rotation+90)%360;transform();},zoomIn:()=>{zoom=Math.min(8,zoom*1.4);transform();}};
+    const controls={previous:()=>animate(-1),next:()=>animate(1),zoomOut:()=>{zoom=Math.max(.25,zoom/1.4);transform();},fit:()=>{zoom=1;x=y=0;transform();},rotate:()=>{rotation=(rotation+90)%360;transform();},zoomIn:()=>{zoom=Math.min(8,zoom*1.4);transform();},fullscreen:()=>{ui.setPreviewFullscreen(!ui.isPreviewFullscreen());}};
     toolbar.append(previous,icon('缩小','zoomOut',controls.zoomOut),icon('适应','fit',controls.fit),icon('旋转','rotate',controls.rotate),icon('放大','zoomIn',controls.zoomIn),next);
     info.hidden=true;const progressBar=progress(panel,images,()=>index,at=>seekAt(at),()=>{},signal);
     header.insertBefore(icon('图片更多选项','more',()=>RHFilesAPI.invoke('gallery.more').catch(app.error)),header.children[2]);
-    const clearView=register({mode:'paged',signal,entry:()=>images[index],entries:images,app,controls,seek:seekAt,state:()=>({path:images[index].path,index,count:images.length,position:index,zoom,rotation,previewIndex:progressBar.preview(),loopBoundary:boundary.state()})});
+    const clearView=register({mode:'paged',signal,entry:()=>images[index],entries:images,app,controls,seek:seekAt,state:()=>({path:images[index].path,index,count:images.length,position:index,zoom,rotation,fullscreen:ui.isPreviewFullscreen(),previewIndex:progressBar.preview(),loopBoundary:boundary.state()})});
     function seekAt(at){clearTimeout(settleTimer);settling=sliding=false;points.clear();origin=null;index=at;render();}
     function source(item){const key=JSON.stringify([item.path,item.modifiedMs,item.size]);if(!cache.has(key)){if(cache.size>=5)cache.delete(cache.keys().next().value);cache.set(key,api.imageUrl(item));}return cache.get(key);}
     function render(){

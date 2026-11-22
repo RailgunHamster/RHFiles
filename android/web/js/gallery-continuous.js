@@ -47,15 +47,18 @@ const androidContinuousGallery=(()=>{
     }
     function put(value){position=images.length<2?0:value;render();}
     function jump(delta){stop();auto.pause();points.clear();origin=null;zoom=1;x=y=0;rotation=0;put(Math.round(position)+delta);transform();}
-    const controls={previous:()=>jump(-1),next:()=>jump(1),fit:()=>{stop();auto.pause();zoom=1;x=y=0;transform();},rotate:()=>{stop();auto.pause();rotation=(rotation+90)%360;render();},zoomOut:()=>{stop();auto.pause();zoom=Math.max(.25,zoom/1.4);transform();},zoomIn:()=>{stop();auto.pause();zoom=Math.min(8,zoom*1.4);transform();}};
-    header.append(icon('返回文件列表','back',()=>ui.closeSheet()),title,androidGallery.modeSwitch(app,'continuous'),icon('分享图片','share',()=>images[index].path.startsWith('remote://')?ui.toast('网络图片可先保存到本机，再使用系统分享'):api.shareFile(images[index].path)));
+    const controls={previous:()=>jump(-1),next:()=>jump(1),fit:()=>{stop();auto.pause();zoom=1;x=y=0;transform();},rotate:()=>{stop();auto.pause();rotation=(rotation+90)%360;render();},zoomOut:()=>{stop();auto.pause();zoom=Math.max(.25,zoom/1.4);transform();},zoomIn:()=>{stop();auto.pause();zoom=Math.min(8,zoom*1.4);transform();},fullscreen:()=>{ui.setPreviewFullscreen(!ui.isPreviewFullscreen());}};
+    const fullscreenButton=icon('全屏','fullscreen',controls.fullscreen);
+    function paintFullscreen(on){fullscreenButton.innerHTML=ui.icon(on?'exitFullscreen':'fullscreen');fullscreenButton.setAttribute('aria-label',on?'退出全屏':'全屏');fullscreenButton.title=on?'退出全屏':'全屏';fullscreenButton.setAttribute('aria-pressed',String(!!on));panel.classList.toggle('chrome-hidden',!!on);requestAnimationFrame(render);}
+    ui.onPreviewFullscreen(paintFullscreen);
+    header.append(icon('返回文件列表','back',()=>ui.closeSheet()),title,androidGallery.modeSwitch(app,'continuous'),fullscreenButton,icon('分享图片','share',()=>images[index].path.startsWith('remote://')?ui.toast('网络图片可先保存到本机，再使用系统分享'):api.shareFile(images[index].path)));
     header.insertBefore(icon('自动滚动','play',()=>{autoPanel.hidden=false;void RHFilesAPI.invoke('gallery.auto.toggle').catch(error=>ui.toast(error.message||String(error)));}),header.lastChild);
     const previous=icon('上一张','previous',controls.previous),next=icon('下一张','next',controls.next);
     toolbar.append(previous,icon('缩小','zoomOut',controls.zoomOut),icon('适应','fit',controls.fit),icon('旋转','rotate',controls.rotate),icon('放大','zoomIn',controls.zoomIn),next);
     info.hidden=true;const progressBar=androidGallery.progress(panel,images,()=>index,at=>seekAt(at),()=>{stop();auto.pause();},signal);
     function seekAt(at){stop();auto.pause();points.clear();origin=null;zoom=1;x=y=0;rotation=0;put(at);}
     header.insertBefore(icon('图片更多选项','more',()=>RHFilesAPI.invoke('gallery.more').catch(app.error)),header.children[2]);
-    const clearView=register({mode:'continuous',signal,entry:()=>images[index],entries:images,app,controls,auto,seek:seekAt,state:()=>({path:images[index].path,index,count:images.length,position:strip.normalize(position),zoom,rotation,caption:caption(),previewIndex:progressBar.preview(),loopBoundary:boundary.state(),autoScroll:auto.state()})});
+    const clearView=register({mode:'continuous',signal,entry:()=>images[index],entries:images,app,controls,auto,seek:seekAt,state:()=>({path:images[index].path,index,count:images.length,position:strip.normalize(position),zoom,rotation,fullscreen:ui.isPreviewFullscreen(),caption:caption(),previewIndex:progressBar.preview(),loopBoundary:boundary.state(),autoScroll:auto.state()})});
     function momentum(now){
       if(signal.aborted)return;const dt=Math.min(40,Math.max(0,now-lastTime));lastTime=now;
       const nextPosition=strip.move(position,velocity*dt);put(nextPosition);velocity*=Math.exp(-dt/130);

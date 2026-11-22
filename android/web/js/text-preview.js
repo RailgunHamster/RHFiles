@@ -1,30 +1,89 @@
 (function(root,factory){const value=factory();if(typeof module==='object'&&module.exports)module.exports=value;else root.androidTextPreview=value;})(globalThis,()=>{
-  const extensions=new Set('txt text md markdown mdown json jsonc jsonl ndjson log csv tsv xml yaml yml ini cfg conf config toml properties env gitignore editorconfig js mjs cjs ts tsx jsx py rb rs go kt kts java c h cpp cc cxx hpp cs css scss less html htm sh bash ps1 bat cmd sql lua swift vue svelte proto gradle'.split(' '));
+  const extensions=new Set('txt text md markdown mdown json jsonc jsonl ndjson log csv tsv xml yaml yml ini cfg conf config toml properties env gitignore editorconfig js mjs cjs ts tsx jsx py rb rs go kt kts java c h cpp cc cxx hpp cs css scss less html htm xhtml sh bash ps1 bat cmd sql lua swift vue svelte proto gradle'.split(' '));
   const supports=name=>extensions.has(String(name).split('.').pop().toLowerCase())||/^(readme|license|notice|dockerfile|makefile)$/i.test(name);
+  const isHtml=name=>/\.(html?|xhtml)$/i.test(String(name||''));
+  const HTML_CSP="default-src 'none'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src 'none'; script-src 'none'; connect-src 'none'; frame-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'";
+  const HTML_BASE_STYLE=':where(html){color-scheme:light;background:#fff;color:#1b2434;font-family:system-ui,-apple-system,sans-serif;line-height:1.6}:where(body){margin:14px;overflow-wrap:anywhere}:where(img,svg,video,canvas,table){max-width:100%}:where(img,svg){height:auto}:where(pre){overflow:auto}';
+  function buildHtmlDocument(rawHtml,{parser}={}){
+    const text=String(rawHtml??'');
+    const Parser=parser||(typeof DOMParser==='function'?DOMParser:null);
+    if(Parser){
+      const doc=new Parser().parseFromString(text,'text/html');
+      for(const node of doc.querySelectorAll('script,iframe,frame,frameset,object,embed,applet,base,link,meta[http-equiv]'))node.remove();
+      for(const el of doc.querySelectorAll('*')){
+        for(const attr of [...el.attributes]){
+          const name=attr.name.toLowerCase(),val=String(attr.value||'').trim();
+          if(name.startsWith('on')||name==='srcdoc'){el.removeAttribute(attr.name);continue;}
+          if(name==='href'||name==='xlink:href'){
+            if(!val.startsWith('#'))el.removeAttribute(attr.name);
+            continue;
+          }
+          if(name==='src'||name==='poster'||name==='data'){
+            if(!/^data:image\//i.test(val)&&!val.startsWith('#'))el.removeAttribute(attr.name);
+            continue;
+          }
+          if(name==='srcset'){
+            const safe=val.split(',').every(part=>/^data:image\//i.test(part.trim().split(/\s+/)[0]||''));
+            if(!safe)el.removeAttribute(attr.name);
+            continue;
+          }
+          if(name==='action'||name==='formaction'){el.removeAttribute(attr.name);continue;}
+          if(/^\s*(?:javascript|vbscript):/i.test(val))el.removeAttribute(attr.name);
+        }
+      }
+      const head=doc.head||doc.documentElement.insertBefore(doc.createElement('head'),doc.documentElement.firstChild);
+      const baseStyle=doc.createElement('style');baseStyle.dataset.rhfilesHtmlBase='1';baseStyle.textContent=HTML_BASE_STYLE;
+      const prepend=[baseStyle];
+      if(!doc.querySelector('meta[name="viewport" i]')){const vp=doc.createElement('meta');vp.name='viewport';vp.content='width=device-width, initial-scale=1.0';prepend.unshift(vp);}
+      const csp=doc.createElement('meta');csp.httpEquiv='Content-Security-Policy';csp.content=HTML_CSP;
+      const charset=doc.createElement('meta');charset.setAttribute('charset','utf-8');
+      prepend.unshift(charset,csp);
+      const first=head.firstChild;for(const node of prepend)head.insertBefore(node,first);
+      return '<!DOCTYPE html>\n'+doc.documentElement.outerHTML;
+    }
+    const stripped=text
+      .replace(/<(script|iframe|frame|frameset|object|embed|applet)\b[^>]*>[\s\S]*?<\/\1>/gi,'')
+      .replace(/<(script|iframe|frame|frameset|object|embed|applet|base|link)\b[^>]*\/?>/gi,'')
+      .replace(/<meta\b[^>]*http-equiv\s*=[^>]*>/gi,'')
+      .replace(/\s+on[a-z0-9_-]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi,'')
+      .replace(/\b(?:javascript|vbscript):/gi,'blocked:');
+    const inject=`<meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${HTML_CSP}"><meta name="viewport" content="width=device-width, initial-scale=1.0"><style data-rhfiles-html-base="1">${HTML_BASE_STYLE}</style>`;
+    if(/<head\b[^>]*>/i.test(stripped))return stripped.replace(/<head\b[^>]*>/i,m=>m+inject);
+    return `<!DOCTYPE html><html><head>${inject}</head><body>${stripped}</body></html>`;
+  }
   function parts(text){const result=[];let start=0,lines=0;for(let at=0;at<text.length;at++){if(text[at]==='\n')lines++;if(at-start>=32767||lines>=400){let end=at+1;if(text.charCodeAt(at)>=0xd800&&text.charCodeAt(at)<=0xdbff&&text.charCodeAt(at+1)>=0xdc00&&text.charCodeAt(at+1)<=0xdfff)end++;result.push([start,end]);start=end;at=end-1;lines=0;}}if(start<text.length||!result.length)result.push([start,text.length]);return result;}
   let current=null;
-  const state=()=>current?{open:true,path:current.path,name:current.name,loading:current.loading,error:current.error||'',mode:current.mode,treeError:current.treeError??null,truncated:!!current.data?.truncated,encoding:current.data?.encoding||'',part:current.part||0,partCount:current.partCount||0}:{open:false};
+  const state=()=>current?{open:true,path:current.path,name:current.name,loading:current.loading,error:current.error||'',mode:current.mode,treeError:current.treeError??null,truncated:!!current.data?.truncated,encoding:current.data?.encoding||'',part:current.part||0,partCount:current.partCount||0,fullscreen:!!(typeof ui!=='undefined'&&ui.isPreviewFullscreen?.())}:{open:false,fullscreen:false};
   async function control(command){if(!current?.controls?.[command])throw Error('文本预览未打开或操作无效');await current.controls[command]();return state();}
   async function open(entry,backend=api){
     if(!ui.openSheet('',[]))return {opened:false};
     const panel=document.getElementById('sheet-panel');panel.classList.add('text-preview');
-    const markdown=/\.(md|markdown|mdown)$/i.test(entry.name),json=/\.json$/i.test(entry.name);
-    const session={path:entry.path,name:entry.name,loading:false,mode:markdown?'reading':json?'formatted':'source'};current=session;
+    const markdown=/\.(md|markdown|mdown)$/i.test(entry.name),json=/\.json$/i.test(entry.name),html=isHtml(entry.name);
+    const session={path:entry.path,name:entry.name,loading:false,mode:markdown?'reading':json?'formatted':html?'preview':'source'};current=session;
     let closed=false,requestId,worker,workerTimer,renderEpoch=0,textView=null;
     const header=ui.el('div','text-preview-header'),title=ui.el('strong','',entry.name),tools=ui.el('div','text-preview-tools'),status=ui.el('p','muted','正在读取…'),content=ui.el('div','text-preview-content');
     panel.append(header,tools,status,content);
     function button(label,id,action){const b=ui.el('button','',label);b.type='button';b.dataset.previewAction=id;RHFilesUI.listen(b,'click',async()=>{try{await action();}catch(error){ui.toast('操作失败：'+(error.message||error));}},undefined,'android.preview.'+id);return b;}
     const close=button('返回','close',()=>ui.closeSheet()),toggle=button('源码','mode',()=>view(session.mode==='source'?'reading':'source'));
+    function setFullscreen(enabled){ui.setPreviewFullscreen?.(enabled);paintFullscreen();}
+    const fullscreenBtn=button('全屏','fullscreen',()=>setFullscreen(!ui.isPreviewFullscreen?.()));
+    const exitFullscreen=button('退出全屏','exitFullscreen',()=>setFullscreen(false));
+    exitFullscreen.className='preview-fullscreen-exit';
+    panel.append(exitFullscreen);
+    function paintFullscreen(){const on=!!ui.isPreviewFullscreen?.();fullscreenBtn.textContent=on?'退出全屏':'全屏';fullscreenBtn.setAttribute('aria-pressed',String(on));}
+    ui.onPreviewFullscreen?.(paintFullscreen);
+    paintFullscreen();
     const modes=new Map();
-    if(json){
-      const group=ui.el('div','text-preview-json-modes');group.setAttribute('role','group');group.setAttribute('aria-label','JSON 显示模式');
-      for(const [mode,label] of [['formatted','格式化'],['tree','树状'],['source','源码']]){
+    if(json||html){
+      const group=ui.el('div','text-preview-json-modes');group.setAttribute('role','group');group.setAttribute('aria-label',json?'JSON 显示模式':'HTML 显示模式');
+      const choices=json?[['formatted','格式化'],['tree','树状'],['source','源码']]:[['preview','预览'],['source','源码']];
+      for(const [mode,label] of choices){
         const choice=button(label,mode,()=>view(mode));modes.set(mode,choice);group.append(choice);
       }
       tools.append(group);
     }else if(markdown)tools.append(toggle);
     async function copyCurrent(){if(session.clipboard==null)throw Error('文本正在读取或排版，请稍后再复制');await ui.copyText(session.clipboard);ui.toast('已复制文本');}
-    const copy=button('复制文本','copy',copyCurrent);copy.disabled=true;header.append(close,title);tools.append(copy);
+    const copy=button('复制文本','copy',copyCurrent);copy.disabled=true;header.append(close,title,fullscreenBtn);tools.append(copy);
     function paintModes(){
       toggle.textContent=session.mode==='source'?'阅读':'源码';
       for(const [mode,choice] of modes)choice.setAttribute('aria-pressed',String(session.mode===mode));
@@ -33,16 +92,32 @@
     paintModes();
     function stopWorker(){clearTimeout(workerTimer);worker?.terminate();worker=null;}
     function showText(text){
+      content.classList.remove('is-html-preview');
       const ranges=parts(text),pre=ui.el('pre','text-preview-source'),bar=ui.el('div','text-preview-paging'),label=ui.el('span');
       const previous=button('上一段','previousPart',()=>textView.show(session.part-1)),next=button('下一段','nextPart',()=>textView.show(session.part+1));bar.append(previous,label,next);bar.hidden=ranges.length<=1;content.replaceChildren(bar,pre);
       textView={show(value){const at=Math.max(0,Math.min(ranges.length-1,value)),[start,end]=ranges[at];session.part=at;session.partCount=ranges.length;pre.textContent=text.slice(start,end);session.clipboard=pre.textContent;copy.textContent=ranges.length>1?'复制本段':'复制文本';copy.disabled=false;label.textContent=(at+1)+' / '+ranges.length;previous.disabled=at===0;next.disabled=at===ranges.length-1;content.scrollTop=0;}};textView.show(0);
     }
     function showSource(message=''){showText(session.data.text);if(message){session.mode='source';paintModes();status.textContent+=' · '+message;}}
     function render(){
-      const epoch=++renderEpoch;stopWorker();session.clipboard=null;session.treeError=null;session.part=0;session.partCount=0;textView=null;copy.disabled=true;if(closed||!session.data)return;
+      const epoch=++renderEpoch;stopWorker();session.clipboard=null;session.treeError=null;session.part=0;session.partCount=0;textView=null;copy.disabled=true;content.classList.remove('is-html-preview');if(closed||!session.data)return;
       const data=session.data;status.textContent=(data.encoding||'文本')+' · '+fmt.size(data.bytesRead||new TextEncoder().encode(data.text).length)+(data.truncated?' · 文件较大，仅预览前 '+fmt.size(data.maxBytes||256*1024):'');
       paintModes();
       if(session.mode==='source'){showSource();return;}
+      if(session.mode==='preview'){
+        const frame=document.createElement('iframe');
+        frame.className='text-preview-html-frame';
+        frame.setAttribute('sandbox','');
+        frame.setAttribute('referrerpolicy','no-referrer');
+        frame.title=entry.name+' 预览';
+        frame.srcdoc=buildHtmlDocument(data.text);
+        content.classList.add('is-html-preview');
+        content.replaceChildren(frame);
+        content.scrollTop=0;
+        session.clipboard=data.text;
+        copy.textContent='复制源码';
+        copy.disabled=false;
+        return;
+      }
       if(session.mode==='tree'){
         const result=RHFilesJsonTree.parse(data.text,data.truncated);
         session.treeError=result.error??null;
@@ -79,8 +154,8 @@
       catch(error){if(!closed){session.error=error.message||String(error);status.textContent='无法预览：'+session.error;}}
       finally{session.loading=false;more.disabled=false;}
     }
-    function view(mode){if(session.loading||!session.data)throw Error('文本尚未读取');if(mode==='reading'&&!markdown||['formatted','tree'].includes(mode)&&!json)throw Error('此文件不支持该显示模式');session.mode=mode;render();}
-    session.controls={source:()=>view('source'),reading:()=>view('reading'),formatted:()=>view('formatted'),tree:()=>view('tree'),more:()=>{if(!session.data?.truncated||session.data.maxBytes>=1024*1024)throw Error('已达到本次预览上限');return read(1024*1024);},previousPart:()=>{if(!textView)throw Error('当前不是分页文本');textView.show(session.part-1);},nextPart:()=>{if(!textView)throw Error('当前不是分页文本');textView.show(session.part+1);},copy:copyCurrent,close:()=>ui.closeSheet()};
+    function view(mode){if(session.loading||!session.data)throw Error('文本尚未读取');if(mode==='reading'&&!markdown||mode==='preview'&&!html||['formatted','tree'].includes(mode)&&!json)throw Error('此文件不支持该显示模式');session.mode=mode;render();}
+    session.controls={source:()=>view('source'),reading:()=>view('reading'),preview:()=>view('preview'),formatted:()=>view('formatted'),tree:()=>view('tree'),fullscreen:()=>setFullscreen(!ui.isPreviewFullscreen?.()),more:()=>{if(!session.data?.truncated||session.data.maxBytes>=1024*1024)throw Error('已达到本次预览上限');return read(1024*1024);},previousPart:()=>{if(!textView)throw Error('当前不是分页文本');textView.show(session.part-1);},nextPart:()=>{if(!textView)throw Error('当前不是分页文本');textView.show(session.part+1);},copy:copyCurrent,close:()=>ui.closeSheet()};
     ui.onClosed(()=>{closed=true;stopWorker();if(requestId)void backend.cancelTextPreview(requestId).catch(()=>{});if(current===session)current=null;});
     await read(256*1024);return state();
   }
@@ -96,5 +171,5 @@
     if(document.visibilityState==='visible')try{await api.native('cache.install',{jobId:result.jobId});}catch(error){panel.querySelector('.sheet-note').textContent=error.message||String(error);}
     return result;
   }
-  return {supports,parts,open,install,state,control};
+  return {supports,isHtml,buildHtmlDocument,parts,open,install,state,control};
 });

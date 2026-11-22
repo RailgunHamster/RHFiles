@@ -15,7 +15,7 @@ const androidAutomation=(()=>{
     register('updates.history.state',apiSchema(),()=>androidUpdates.historyState(),'read');
     register('history.list',apiSchema(),()=>({entries:androidHistory.list(),limit:androidHistoryModel.limit}),'read','Read device-local visited locations, including network and device-group folders');
     register('preview.text.state',apiSchema(),()=>androidTextPreview.state(),'read');
-    register('preview.text.control',apiSchema({command:{type:'string',enum:['source','reading','formatted','tree','more','copy','close','previousPart','nextPart']}},['command']),p=>androidTextPreview.control(p.command));
+    register('preview.text.control',apiSchema({command:{type:'string',enum:['source','reading','preview','formatted','tree','fullscreen','more','copy','close','previousPart','nextPart']}},['command']),p=>androidTextPreview.control(p.command));
     register('preview.text.read',apiSchema({path:string,maxBytes:{type:'integer',minimum:1,maximum:1048576}},['path']),p=>api.readTextPreview(p),'read','Bounded, content-probed local/network/device-group text read; creates no download task');
     register('preview.text.open',apiSchema({path:string,name:string},['path','name']),p=>androidTextPreview.open(p));
     register('gallery.state',apiSchema(),()=>androidGallery.state(),'read');
@@ -29,7 +29,7 @@ const androidAutomation=(()=>{
     register('gallery.auto.pause',apiSchema(),()=>androidGallery.auto('pause'));
     register('gallery.auto.toggle',apiSchema(),()=>androidGallery.auto('toggle'));
     register('gallery.auto.speed.set',apiSchema({speed:{type:'number',minimum:10,maximum:6000}},['speed']),p=>androidGallery.auto('speed',p.speed));
-    register('gallery.control',apiSchema({command:{type:'string',enum:['next','previous','zoomIn','zoomOut','fit','rotate']}},['command']),p=>androidGallery.control(p.command));
+    register('gallery.control',apiSchema({command:{type:'string',enum:['next','previous','zoomIn','zoomOut','fit','rotate','fullscreen']}},['command']),p=>androidGallery.control(p.command));
     register('files.cacheApk',apiSchema({path:string},['path']),async p=>({jobId:await api.native('job.start',{op:'cache-open',args:p})}),'write','Start a background cache job; inspect tasks.list and install the completed job explicitly');
     register('files.installCachedApk',apiSchema({jobId:string},['jobId']),p=>api.native('cache.install',p),'external','Open the Android system installer for one completed, validated APK cache job');
     register('history.open',apiSchema({id:{type:'string',minLength:1,maxLength:32768}},['id']),p=>androidHistory.open(p.id,app));

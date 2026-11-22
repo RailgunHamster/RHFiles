@@ -4,7 +4,7 @@ const workbench=(()=>{
   const id=new URLSearchParams(location.search).get('pane');
   const parentHost=()=>window.parent!==window?window.parent.RHFilesWorkbench:null;
   let frames=[],active=0,mode='single',preference='auto',clipboard=null,revision=0,lock=null,hinge=null,insets={},capabilities;
-  let host,divider,touch,touchEnabled;
+  let host,divider,touch,touchEnabled,fullscreenFrame=null;
   let screen='default',orientation='portrait',screenMemory,screenSettings=null;
   const child=()=>!!parentHost();
   const primary=()=>!child()||id==='first';
@@ -51,25 +51,41 @@ const workbench=(()=>{
     });
     ui.onClosed(()=>panel.classList.remove('pane-layout-sheet','keyboard-navigation'));
   }
+  function setFullscreen(frame,enabled){
+    const next=enabled&&frame?frame:null;
+    if(!enabled&&frame&&fullscreenFrame&&fullscreenFrame!==frame)return;
+    if(fullscreenFrame===next)return;
+    fullscreenFrame=next;
+    if(fullscreenFrame){const idx=frames.indexOf(fullscreenFrame);if(idx>=0)setActive(idx);}
+    api.systemFullscreen(!!fullscreenFrame).catch(()=>{});
+    if(host)layout();
+  }
   function layout(){
     const left=(insets.left||0)*innerWidth,right=(insets.right||0)*innerWidth,top=(insets.top||0)*innerHeight,bottom=(insets.bottom||0)*innerHeight;
     Object.assign(host.style,{left:left+'px',right:right+'px',top:top+'px',bottom:bottom+'px'});
     const resolved=paneLayout.resolve(innerWidth-left-right,innerHeight-top-bottom,preference);mode=resolved.mode;host.dataset.mode=mode;
-    frames.forEach((frame,index)=>{frame.hidden=mode==='single'&&index!==active;});divider.hidden=mode==='single';
+    const expanded=!!fullscreenFrame;
+    host.classList.toggle('pane-fullscreen',expanded);
+    frames.forEach((frame,index)=>{
+      frame.classList.toggle('fullscreen-pane',expanded&&frame===fullscreenFrame);
+      frame.hidden=expanded?frame!==fullscreenFrame:(mode==='single'&&index!==active);
+    });
+    divider.hidden=expanded||mode==='single';
     // Reuse the normal action sheet and keep it within Android's safe viewport.
     document.body.style.setProperty('--app-left',left+'px');
     document.body.style.setProperty('--app-top',top+'px');
     document.body.style.setProperty('--app-height',(innerHeight-top-bottom)+'px');
     document.body.style.setProperty('--app-right',right+'px');
-    if(mode!=='single'&&frames.length===1)addFrame('second');
+    if(!expanded&&mode!=='single'&&frames.length===1)addFrame('second');
     // A separating physical hinge becomes the divider, not covered content.
     host.style.removeProperty('--first-size');host.style.setProperty('--divider-size','8px');
-    if(hinge?.separating&&((mode==='columns'&&hinge.orientation==='vertical')||(mode==='rows'&&hinge.orientation==='horizontal'))){
+    if(!expanded&&hinge?.separating&&((mode==='columns'&&hinge.orientation==='vertical')||(mode==='rows'&&hinge.orientation==='horizontal'))){
       const vertical=mode==='columns',viewport=vertical?innerWidth:innerHeight,offset=vertical?left:top,length=viewport-offset-(vertical?right:bottom),b=hinge.bounds,start=(vertical?b.left:b.top)*viewport-offset,end=(vertical?b.right:b.bottom)*viewport-offset;
       if(start>= (vertical?480:420)&&length-end>=(vertical?480:420)){host.style.setProperty('--first-size',start+'px');host.style.setProperty('--divider-size',Math.max(8,end-start)+'px');}
     }
-    frames.forEach(frame=>frame.contentDocument?.body?.classList.toggle('concurrent-panes',mode!=='single'));touch?.reset();
-    if(capabilities.paneTouch&&touchEnabled!==(mode!=='single')){touchEnabled=mode!=='single';api.native('panes.touch',{enabled:touchEnabled}).catch(()=>{});}
+    frames.forEach(frame=>frame.contentDocument?.body?.classList.toggle('concurrent-panes',!expanded&&mode!=='single'));touch?.reset();
+    const wantTouch=!expanded&&mode!=='single';
+    if(capabilities.paneTouch&&touchEnabled!==wantTouch){touchEnabled=wantTouch;api.native('panes.touch',{enabled:touchEnabled}).catch(()=>{});}
     broadcast('rhfiles-panes-changed',{mode});requestAnimationFrame(()=>frames.forEach(frame=>{if(!frame.hidden&&frame.dataset.ready==='true')send(frame,'rhfiles-window-layout',detailFor(frame))}));
   }
   function addFrame(pane){
@@ -94,7 +110,7 @@ const workbench=(()=>{
     const initialWindow=await api.native('window.layout').catch(()=>({}));
     if(beforeWindowRead===windowEvents)windowLayout(initialWindow);
     host=document.createElement('main');host.id='workbench';document.body.append(host);
-    touch=paneTouch.bind({frames:()=>frames,native:!!capabilities.paneTouch,enabled:()=>mode!=='single'&&!ui.isSheetOpen(),onInteract:frame=>setActive(frames.indexOf(frame)),onScroll:()=>broadcast('rhfiles-pan-scroll')});
+    touch=paneTouch.bind({frames:()=>frames,native:!!capabilities.paneTouch,enabled:()=>!fullscreenFrame&&mode!=='single'&&!ui.isSheetOpen(),onInteract:frame=>setActive(frames.indexOf(frame)),onScroll:()=>broadcast('rhfiles-pan-scroll')});
     divider=document.createElement('div');divider.className='pane-divider';host.append(divider);
     const toggle=document.createElement('button');toggle.type='button';toggle.className='pane-layout-toggle';toggle.setAttribute('aria-label','分屏布局');toggle.setAttribute('aria-haspopup','dialog');toggle.title='分屏布局';divider.append(toggle);
     RHFilesUI.assign(toggle,"click",event=>openLayout(event.detail===0),"android.web.js.workbench.boot.e1c1dc1b0c50");ui.bindScrim();
@@ -122,6 +138,7 @@ const workbench=(()=>{
       release(source){trusted(source);if(lock?.source===source){lock=null;broadcast('rhfiles-pane-task',null);broadcast('rhfiles-files-changed');}},
       refreshOther(source){trusted(source);const other=peer(source);other?.refresh();},
       windowLayout(source){trusted(source);return detailFor(frames[indexOf(source)]);},
+      fullscreen(source,enabled){trusted(source);setFullscreen(frames[indexOf(source)],!!enabled);},
     };
     addFrame('first');if(active===1)addFrame('second');layout();setActive(active);
     androidAutomation.host({frames:()=>frames,active:()=>active,layout:()=>({mode,preference,screen,orientation}),setLayout:chooseLayout});

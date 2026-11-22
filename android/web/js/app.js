@@ -1080,6 +1080,7 @@
   }
   function back() {
     if(androidNearby.back())return true;
+    if(ui.isPreviewFullscreen?.()) { ui.setPreviewFullscreen(false); return true; }
     if(ui.isSheetOpen()) { ui.closeSheet(); return true; }
     if(!$('drawer').hidden && $('drawer').getAttribute?.('aria-hidden')!=='true' && !document.body.classList.contains('wide-layout')) { closeDrawer(); return true; }
     if(state.selected.size) { clearSelection(); return true; }

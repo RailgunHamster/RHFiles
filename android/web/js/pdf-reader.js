@@ -18,6 +18,7 @@ const RHFilesPdfReader=(()=>{
       'search.toggle':[object(),()=>requireView().toggleSearch()],
       'outline.toggle':[object(),()=>requireView().toggleOutline()],
       'outline.go':[object({index:{type:'integer',minimum:0}},['index']),p=>requireView().outline(p.index)],
+      'fullscreen.toggle':[object(),()=>requireView().toggleFullscreen()],
       'password.submit':[object({password:{type:'string',maxLength:1024}},['password']),p=>requireView().password(p.password)],
       saveAs:[object({destination:{type:'string',minLength:1,maxLength:108000},overwrite:{type:'boolean'},expectedTargetRevision:{type:'string',maxLength:256}}),p=>requireView().save(p),'write'],
       systemOpen:[object(),()=>requireView().systemOpen(),'external'],close:[object(),(_,run)=>requireView().close(run)]
@@ -28,7 +29,7 @@ const RHFilesPdfReader=(()=>{
     current?.destroy();
     const zh=!/^en/i.test(options.language||'zh'),t=(cn,en)=>zh?cn:en,api=options.api||RHFilesAPI;
     const controller=new AbortController(),signal=controller.signal;
-    let closed=false,loading=true,error='',documentPdf=null,task=null,viewer=null,links=null,bus=null,transport=null,query='',matches={current:0,total:0},passwordReply=null,passwordNeeded=false,outlineItems=[],outlineOpen=false,searchOpen=false,rotation=0;
+    let closed=false,loading=true,error='',documentPdf=null,task=null,viewer=null,links=null,bus=null,transport=null,query='',matches={current:0,total:0},passwordReply=null,passwordNeeded=false,outlineItems=[],outlineOpen=false,searchOpen=false,fullscreenOpen=false,rotation=0;
     const el=(tag,cls,text)=>{const n=document.createElement(tag);n.className=cls||'';if(text!==undefined)n.textContent=text;return n;};
     const shell=el('section','pdf-reader'),header=el('header','pdf-header'),title=el('strong','pdf-title',options.name),tools=el('div','pdf-tools'),body=el('div','pdf-body'),sidebar=el('aside','pdf-outline'),scroll=el('div','pdf-scroll'),pages=el('div','pdfViewer'),notice=el('div','pdf-notice',t('正在读取 PDF…','Loading PDF…'));
     scroll.tabIndex=0;scroll.append(pages);body.append(sidebar,scroll,notice);host.replaceChildren(shell);shell.append(header,tools,body);sidebar.hidden=true;
@@ -37,7 +38,9 @@ const RHFilesPdfReader=(()=>{
     function button(label,action,parent=tools,args={}){const b=el('button','',label);b.type='button';b.title=label;b.setAttribute('aria-label',label);listen(b,'click',()=>invoke(action,args),action);parent.append(b);return b;}
     button(t('返回','Back'),'close',header);header.append(el('span','pdf-badge','PDF'),title);
     const save=button(t('另存为','Save as'),'saveAs',header);save.hidden=!options.save;
+    const fullscreenButton=button(t('全屏','Fullscreen'),'fullscreen.toggle',header);fullscreenButton.hidden=!options.fullscreen;
     const system=button(t('系统应用','System app'),'systemOpen',header);system.hidden=!options.systemOpen;
+    const exitFullscreenButton=button(t('退出全屏','Exit fullscreen'),'fullscreen.toggle',shell);exitFullscreenButton.className='preview-fullscreen-exit';exitFullscreenButton.hidden=true;
     const outlineButton=button(t('目录','Contents'),'outline.toggle'),previous=button('‹','previous'),pageInput=el('input','pdf-page'),count=el('span','pdf-count','/ —'),next=button('›','next');
     previous.setAttribute('aria-label',t('上一页','Previous page'));next.setAttribute('aria-label',t('下一页','Next page'));
     pageInput.type='number';pageInput.min='1';pageInput.value='1';pageInput.setAttribute('aria-label',t('页码','Page number'));tools.insertBefore(pageInput,next);tools.insertBefore(count,next);
@@ -51,8 +54,10 @@ const RHFilesPdfReader=(()=>{
     const passwordPanel=el('form','pdf-password'),passwordLabel=el('label','',t('此 PDF 需要密码','This PDF requires a password')),passwordInput=el('input'),passwordStatus=el('p');passwordInput.type='password';passwordInput.autocomplete='off';passwordInput.maxLength=1024;passwordInput.setAttribute('aria-label',passwordLabel.textContent);const unlock=el('button','',t('打开文档','Open document'));unlock.type='submit';passwordPanel.append(passwordLabel,passwordInput,unlock,passwordStatus);body.append(passwordPanel);passwordPanel.hidden=true;
     function fail(reason){if(closed)return;error=String(reason?.message||reason);notice.textContent=t('无法阅读：','Cannot read: ')+error;notice.hidden=false;loading=false;return snapshot();}
     function ready(){if(!documentPdf||loading||passwordNeeded)throw Error(t('PDF 尚未读取完成','PDF is not ready'));}
-    function snapshot(){return {opened:!closed,path:options.path,name:options.name,loading,error,page:viewer?.currentPageNumber||1,pageCount:documentPdf?.numPages||0,scale:viewer?.currentScale||1,rotation,passwordRequired:passwordNeeded,query,matches:{...matches},outlineOpen,outline: outlineItems.map(({title,depth},index)=>({title,depth,index})),renderedPages:pages.querySelectorAll('canvas').length};}
-    function paint(){if(closed)return;const at=viewer?.currentPageNumber||1;pageInput.value=String(at);pageInput.max=String(documentPdf?.numPages||1);count.textContent='/ '+(documentPdf?.numPages||'—');scale.textContent=Math.round((viewer?.currentScale||1)*100)+'%';previous.disabled=!documentPdf||at<=1;next.disabled=!documentPdf||at>=documentPdf.numPages;pageInput.disabled=!documentPdf;outlineButton.setAttribute('aria-pressed',String(outlineOpen));searchCount.textContent=matches.total?matches.current+' / '+matches.total:query?t('未找到','No matches'):'';}
+    function snapshot(){return {opened:!closed,path:options.path,name:options.name,loading,error,page:viewer?.currentPageNumber||1,pageCount:documentPdf?.numPages||0,scale:viewer?.currentScale||1,rotation,passwordRequired:passwordNeeded,query,matches:{...matches},outlineOpen,fullscreen:fullscreenOpen,outline: outlineItems.map(({title,depth},index)=>({title,depth,index})),renderedPages:pages.querySelectorAll('canvas').length};}
+    function applyFullscreen(next){fullscreenOpen=!!next;shell.classList.toggle('pdf-fullscreen',fullscreenOpen);fullscreenButton.textContent=fullscreenOpen?t('退出全屏','Exit fullscreen'):t('全屏','Fullscreen');fullscreenButton.setAttribute('aria-pressed',String(fullscreenOpen));exitFullscreenButton.hidden=!fullscreenOpen;}
+    options.onFullscreen?.(next=>{if(!closed)applyFullscreen(next);});
+    function paint(){if(closed)return;const at=viewer?.currentPageNumber||1;pageInput.value=String(at);pageInput.max=String(documentPdf?.numPages||1);count.textContent='/ '+(documentPdf?.numPages||'—');scale.textContent=Math.round((viewer?.currentScale||1)*100)+'%';previous.disabled=!documentPdf||at<=1;next.disabled=!documentPdf||at>=documentPdf.numPages;pageInput.disabled=!documentPdf;outlineButton.setAttribute('aria-pressed',String(outlineOpen));fullscreenButton.setAttribute('aria-pressed',String(fullscreenOpen));searchCount.textContent=matches.total?matches.current+' / '+matches.total:query?t('未找到','No matches'):'';}
     const view={state:snapshot,
       page(value){ready();if(!Number.isSafeInteger(value)||value<1||value>documentPdf.numPages)throw Error(t('页码超出范围','Page out of range'));viewer.currentPageNumber=value;paint();return snapshot();},
       step(delta){ready();return this.page(Math.max(1,Math.min(documentPdf.numPages,viewer.currentPageNumber+delta)));},
@@ -62,6 +67,7 @@ const RHFilesPdfReader=(()=>{
       find(backwards,type='again'){ready();bus.dispatch('find',{source:shell,type,query,phraseSearch:true,caseSensitive:false,entireWord:false,highlightAll:true,findPrevious:backwards,matchDiacritics:false});paint();return snapshot();},
       toggleSearch(){searchOpen=!searchOpen;searchRow.hidden=!searchOpen;if(searchOpen)searchInput.focus();return snapshot();},
       toggleOutline(){outlineOpen=!outlineOpen;sidebar.hidden=!outlineOpen;paint();return snapshot();},
+      toggleFullscreen(){if(!options.fullscreen)throw Error(t('此平台暂不支持全屏','Fullscreen is unavailable'));const next=!fullscreenOpen;applyFullscreen(next);options.fullscreen(next);return snapshot();},
       async outline(index){ready();const item=outlineItems[index];if(!item?.dest)throw Error(t('目录项没有页码','No page for this outline item'));await links.goToDestination(item.dest);paint();return snapshot();},
       password(value){if(!passwordReply)throw Error(t('当前不需要密码','No password requested'));const reply=passwordReply;passwordReply=null;passwordNeeded=false;passwordInput.value='';passwordStatus.textContent=t('正在打开…','Opening…');reply(value);return snapshot();},
       save:params=>options.save?options.save(params):Promise.reject(Error(t('此平台暂不支持另存为','Save As is unavailable'))),
@@ -70,7 +76,7 @@ const RHFilesPdfReader=(()=>{
     };
     current=view;paint();
     listen(pageInput,'change',()=>invoke('page.set',{page:Number(pageInput.value)}),'page');listen(searchInput,'input',()=>invoke('search',{query:searchInput.value}),'search.input');listen(searchInput,'keydown',e=>{if(e.key==='Enter'){e.preventDefault();invoke(e.shiftKey?'search.previous':'search.next');}},'search.key');listen(passwordPanel,'submit',e=>{e.preventDefault();invoke('password.submit',{password:passwordInput.value});},'password');
-    listen(shell,'keydown',e=>{if(e.isComposing)return;if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='f'){e.preventDefault();if(!searchOpen)view.toggleSearch();searchInput.focus();return;}if(e.key==='Escape'){e.preventDefault();if(searchOpen)view.toggleSearch();else invoke('close');return;}if(/INPUT|TEXTAREA|SELECT/.test(e.target.tagName))return;const name={PageDown:'next',PageUp:'previous',ArrowRight:'next',ArrowLeft:'previous'}[e.key];if(name){e.preventDefault();invoke(name);}},'keyboard');
+    listen(shell,'keydown',e=>{if(e.isComposing)return;if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='f'){e.preventDefault();if(!searchOpen)view.toggleSearch();searchInput.focus();return;}if(e.key==='Escape'){e.preventDefault();if(searchOpen)view.toggleSearch();else if(fullscreenOpen)invoke('fullscreen.toggle');else invoke('close');return;}if(/INPUT|TEXTAREA|SELECT/.test(e.target.tagName))return;const name={PageDown:'next',PageUp:'previous',ArrowRight:'next',ArrowLeft:'previous'}[e.key];if(name){e.preventDefault();invoke(name);}},'keyboard');
     try{
       modules ||= import('../vendor/pdfjs/pdf.mjs').then(async lib=>({lib,ui:await import('../vendor/pdfjs/pdf_viewer.mjs')}));
       const {lib,ui}=await modules;if(closed)return view;

@@ -22,6 +22,8 @@ import android.webkit.WebView
 import androidx.activity.OnBackPressedCallback
 import androidx.core.content.FileProvider
 import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.core.view.ViewCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
@@ -107,6 +109,7 @@ class MainActivity : TauriActivity() {
   override fun onNewIntent(intent:Intent) {super.onNewIntent(intent);setIntent(intent);receive(intent);mainHandler.post(changed);if(intent.action=="com.railgunhamster.rhfiles.FILE_SERVER")appWebView?.post{appWebView?.evaluateJavascript("window.dispatchEvent(new Event('rhfiles-file-server-open'))",null)}}
   override fun onResume() {
     super.onResume()
+    if(systemFullscreen) setSystemFullscreen(true)
     if(pendingUpdateInstall && (Build.VERSION.SDK_INT<26 || packageManager.canRequestPackageInstalls())) {
       pendingUpdateInstall=false
       mainHandler.post {if(!io.isShutdown)io.execute {try{installUpdate()}catch(e:Exception){runOnUiThread{android.widget.Toast.makeText(this,e.message ?: "安装更新失败",android.widget.Toast.LENGTH_LONG).show()}}}}
@@ -141,6 +144,15 @@ class MainActivity : TauriActivity() {
     if(intent?.action==Intent.ACTION_VIEW) intent.data?.let{uris.add(it)}
     shared=JSONArray(uris.distinct().filter{it.scheme=="content"}.take(1000).map{it.toString()})
   }
+  private var systemFullscreen=false
+  private fun setSystemFullscreen(enabled:Boolean) {
+    systemFullscreen=enabled
+    WindowCompat.getInsetsController(window,window.decorView).apply {
+      systemBarsBehavior=WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+      if(enabled) hide(WindowInsetsCompat.Type.systemBars()) else show(WindowInsetsCompat.Type.systemBars())
+    }
+    appWebView?.post{adaptiveWindow.publish()}
+  }
   @Suppress("DEPRECATION") private fun setSystemTheme(dark:Boolean) {
     val color=if(dark) Color.rgb(23,29,41) else Color.rgb(244,247,252)
     window.statusBarColor=color;window.navigationBarColor=color
@@ -168,7 +180,7 @@ class MainActivity : TauriActivity() {
             if(error!=null) response.put("error",error) else response.put("result",value ?: JSONObject.NULL)
             try{reply.postMessage(response.toString())}catch(_:Exception){}
           }}
-          val uiCommands=setOf("theme","settings","tree.pick","document.pick","usage.settings","shares","shares.clear","panes.touch","config.export.pick","config.import.pick","groups.scan","qr.scan","rhvideo.open","automation.status","automation.enable","automation.ui.list","automation.ui.invoke","automation.ui.set","automation.ui.scroll","automation.back","automation.media.state","automation.media.control","automation.grid.state","automation.grid.control")
+          val uiCommands=setOf("theme","window.fullscreen","settings","tree.pick","document.pick","usage.settings","shares","shares.clear","panes.touch","config.export.pick","config.import.pick","groups.scan","qr.scan","rhvideo.open","automation.status","automation.enable","automation.ui.list","automation.ui.invoke","automation.ui.set","automation.ui.scroll","automation.back","automation.media.state","automation.media.control","automation.grid.state","automation.grid.control")
           val work={try{if(command=="groups.scan"||command=="qr.scan"){require(scanResult==null){"扫码窗口已打开"};scanResult=respond;try{startActivityForResult(Intent(this@MainActivity,QrScanActivity::class.java),103)}catch(e:Exception){scanResult=null;throw e}}else if(command in listOf("config.export.pick","config.import.pick")){require(picker==null){"已有系统选择器打开"};backupUi.begin(command=="config.export.pick",args.optJSONObject("web")?:JSONObject(),respond)}else if(command=="tree.pick" || command=="document.pick")pick(command=="tree.pick",respond) else respond(dispatch(command,args),null)}catch(e:Exception){respond(null,e.message ?: "系统操作失败")}}
           if(command in uiCommands||BuildConfig.RHVIDEO_QA_LOCAL_CLOCK&&command=="automation.qa.localClock") work() else if(command in setOf("groups.cancel","groups.diagnostics","text.preview.cancel","pdf.close"))connectionControl.execute(work) else if(command in setOf("media.thumbnail","media.image","app.icon"))mediaIo.execute(work) else io.execute(work)
         }
@@ -240,7 +252,7 @@ class MainActivity : TauriActivity() {
       }else stopService(intent)
       true
     }}
-    "capabilities" -> JSONObject().put("version",3).put("automation",true).put("nativeBack",true).put("appUpdates",true).put("nativePlayback",true).put("nativeThumbnails",true).put("adaptiveLayout",true).put("restoreNavigation",restoreNavigation).put("nativeEbooks",true).put("dualPane",true).put("nearby",true).put("paneTouch",true).put("configBackup",true).put("configSync",true).put("storageAnalysis",true).put("deviceTransfers",true)
+    "capabilities" -> JSONObject().put("version",3).put("automation",true).put("nativeBack",true).put("appUpdates",true).put("nativePlayback",true).put("nativeThumbnails",true).put("adaptiveLayout",true).put("restoreNavigation",restoreNavigation).put("nativeEbooks",true).put("dualPane",true).put("nearby",true).put("paneTouch",true).put("configBackup",true).put("configSync",true).put("storageAnalysis",true).put("deviceTransfers",true).put("windowFullscreen",true)
     "analysis.start" -> synchronized(settingsLock){require(!sharedConfig.isApplying()){"正在应用同步配置，请稍后再分析"};UsageAnalysis.get(this).start(args.getString("root"),args.optString("owner","first"))}
     "analysis.latest" -> UsageAnalysis.get(this).latest(args.optString("owner","first"),args.getString("root"))
     "analysis.status" -> UsageAnalysis.get(this).status(args.getString("id"))
@@ -284,6 +296,7 @@ class MainActivity : TauriActivity() {
       onUi{try{startActivity(ImageWallpaper.intent(this,uri))}catch(_:android.content.ActivityNotFoundException){error("当前系统没有可用的壁纸设置界面，请用系统图库设置")};true}
     }
     "window.layout" -> onUi{adaptiveWindow.current()}
+    "window.fullscreen" -> {setSystemFullscreen(args.optBoolean("enabled"));true}
     "media.play" -> {
       val path=args.getString("path")
       if(storage.isRemote(path))require(!storage.remote.stat(path).isDir){"不是媒体文件"}

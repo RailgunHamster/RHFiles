@@ -246,6 +246,19 @@ summary.json-tree-row:active{background:var(--surface)}
 .text-preview-markdown code{font-family:ui-monospace,monospace;background:var(--surface)}
 .text-preview-markdown table{display:block;max-width:100%;overflow:auto;border-collapse:collapse}
 .text-preview-markdown td,.text-preview-markdown th{border:1px solid var(--line);padding:6px 10px}
+.text-preview-content.is-html-preview{overflow:hidden;padding:0;border:1px solid var(--line);border-radius:12px;background:#fff}
+.text-preview-html-frame{display:block;width:100%;height:100%;border:0;background:#fff}
+.sheet-panel.preview-fullscreen{position:fixed;inset:0;width:100%!important;height:100%!important;max-width:none!important;max-height:none!important;margin:0!important;border:0!important;border-radius:0!important;z-index:25}
+.sheet-panel.preview-fullscreen::before{display:none}
+.sheet-panel.text-preview.preview-fullscreen{padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+.sheet-panel.text-preview.preview-fullscreen .text-preview-header,.sheet-panel.text-preview.preview-fullscreen .text-preview-tools,.sheet-panel.text-preview.preview-fullscreen>.muted{display:none}
+.sheet-panel.text-preview.preview-fullscreen .text-preview-content:not(.is-html-preview){padding:14px 16px 24px}
+.sheet-panel.text-preview.preview-fullscreen .text-preview-content.is-html-preview{border:0;border-radius:0}
+.sheet-panel.editor.preview-fullscreen .sheet-title,.sheet-panel.editor.preview-fullscreen>p.muted{display:none}
+.preview-fullscreen-exit{display:none;position:fixed;top:calc(10px + env(safe-area-inset-top));right:calc(10px + env(safe-area-inset-right));z-index:30;min-height:36px;padding:6px 12px;border:1px solid #ffffff38!important;border-radius:999px!important;background:#18202ecc!important;color:#f4f7fc!important;font-size:12px;backdrop-filter:blur(10px);box-shadow:0 4px 16px #0004}
+.sheet-panel.preview-fullscreen>.preview-fullscreen-exit,.pdf-reader.pdf-fullscreen>.preview-fullscreen-exit{display:inline-flex;align-items:center;gap:5px}
+#workbench.pane-fullscreen{grid-template-columns:minmax(0,1fr)!important;grid-template-rows:minmax(0,1fr)!important}
+#workbench.pane-fullscreen .file-pane.fullscreen-pane{grid-column:1!important;grid-row:1!important}
 .apk-cache-progress{display:grid;gap:10px;padding:12px 20px}
 .apk-cache-progress progress{width:100%;accent-color:var(--accent)}
 .history-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; padding-bottom:12px; }
