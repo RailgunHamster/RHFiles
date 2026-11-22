@@ -360,6 +360,8 @@ pub fn read_file_preview(path: String) -> Result<FilePreview, String> {
             | "yml"
             | "xml"
             | "html"
+            | "htm"
+            | "xhtml"
             | "css"
             | "scss"
             | "py"
@@ -404,11 +406,17 @@ pub fn read_file_preview(path: String) -> Result<FilePreview, String> {
         // smaller rendering limit before syntax highlighting, so unusually
         // large/minified files cannot monopolize the WebView thread.
         const TEXT_LIMIT: u64 = 65_536;
-        let text = enumerator::read_file_text(&p, TEXT_LIMIT)?;
+        const HTML_LIMIT: u64 = 512 * 1024;
+        let read_limit = if matches!(ext.as_str(), "html" | "htm" | "xhtml") {
+            HTML_LIMIT
+        } else {
+            TEXT_LIMIT
+        };
+        let text = enumerator::read_file_text(&p, read_limit)?;
         Ok(FilePreview {
             preview_type: "text".to_string(),
             text_content: Some(text),
-            truncated: metadata.len() > TEXT_LIMIT,
+            truncated: metadata.len() > read_limit,
             image_data: None,
             size: metadata.len(),
         })
@@ -458,6 +466,41 @@ mod preview_detection_tests {
         assert!(is_probably_text_content(
             b"line one\n\x1b[31mred text\x1b[0m\n"
         ));
+    }
+
+    #[test]
+    fn html_preview_uses_extended_text_limit() {
+        let root = std::env::temp_dir().join(format!(
+            "rhfiles-html-preview-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).expect("create HTML preview test folder");
+        let body = format!("<!doctype html><html><body>{}</body></html>", "a".repeat(120_000));
+        for ext in ["html", "htm", "xhtml"] {
+            let file = root.join(format!("sample.{ext}"));
+            std::fs::write(&file, body.as_bytes()).expect("write HTML fixture");
+            let preview = super::read_file_preview(file.to_string_lossy().to_string())
+                .expect("read HTML preview");
+            assert_eq!(preview.preview_type, "text");
+            assert!(!preview.truncated);
+            assert_eq!(preview.text_content.as_deref(), Some(body.as_str()));
+        }
+        let oversized_html = root.join("huge.html");
+        std::fs::write(&oversized_html, format!("<p>{}</p>", "x".repeat(600_000)))
+            .expect("write oversized HTML fixture");
+        let oversized = super::read_file_preview(oversized_html.to_string_lossy().to_string())
+            .expect("read oversized HTML preview");
+        assert_eq!(oversized.preview_type, "text");
+        assert!(oversized.truncated);
+        assert!(oversized.text_content.as_deref().unwrap_or_default().len() <= 512 * 1024);
+
+        let txt = root.join("sample.txt");
+        std::fs::write(&txt, "b".repeat(120_000)).expect("write text fixture");
+        let txt_preview = super::read_file_preview(txt.to_string_lossy().to_string())
+            .expect("read text preview");
+        assert_eq!(txt_preview.preview_type, "text");
+        assert!(txt_preview.truncated);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
 

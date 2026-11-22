@@ -17,6 +17,7 @@ function convertFileSrc(filePath) {
 let _previewRequestToken = 0;
 let _previewedFile = null;
 let _jsonPreview = null;
+let _htmlPreview = null;
 const TEXT_PREVIEW_MAX_CHARS = 40000;
 const TEXT_PREVIEW_MAX_LINES = 1200;
 const IMAGE_PREVIEW_MODES = new Set(['contain', 'cover', 'width', 'actual']);
@@ -421,6 +422,7 @@ function previewRequestIsCurrent(token, path, isRight) {
 async function updatePreviewForSelection() {
   if (!G.previewOn || G.inspectorTab !== 'preview') return;
   _jsonPreview = null;
+  _htmlPreview = null;
   dispose3DPreview();
   const isRight = G.lastActivePane === 'right';
   const sel = getSelectedPaths(isRight);
@@ -596,6 +598,7 @@ async function updatePreviewForSelection() {
       renderPreviewMetaCard(file, { lineEndings, lineCount });
       content.innerHTML = renderTextPreview(preview.text_content, extL, file.name);
       if (extL === 'json') mountJsonPreview(content, preview, file, requestToken, isRight);
+      else if (isHtmlPreviewExt(extL)) mountHtmlPreview(content, preview, file, requestToken, isRight);
     } else {
       content.innerHTML = `<div class="preview-empty">
         <div style="font-size:48px;">${bigFileIcon(file)}</div>
@@ -890,7 +893,7 @@ const PREVIEW_LANGUAGES = Object.freeze({
   sh: ['shell', 'Shell', 'code'], bash: ['shell', 'Bash', 'code'], zsh: ['shell', 'Zsh', 'code'], ps1: ['powershell', 'PowerShell', 'code'], bat: ['batch', 'Batch', 'code'], cmd: ['batch', 'Batch', 'code'],
   sql: ['sql', 'SQL', 'code'], dockerfile: ['dockerfile', 'Dockerfile', 'code'], makefile: ['makefile', 'Makefile', 'code'],
   json: ['json', 'JSON', 'json'], jsonc: ['jsonc', 'JSON with Comments', 'json'],
-  html: ['markup', 'HTML', 'markup'], htm: ['markup', 'HTML', 'markup'], xml: ['markup', 'XML', 'markup'], svg: ['markup', 'SVG', 'markup'], xaml: ['markup', 'XAML', 'markup'], vue: ['markup', 'Vue', 'markup'], svelte: ['markup', 'Svelte', 'markup'],
+  html: ['markup', 'HTML', 'markup'], htm: ['markup', 'HTML', 'markup'], xhtml: ['markup', 'HTML', 'markup'], xml: ['markup', 'XML', 'markup'], svg: ['markup', 'SVG', 'markup'], xaml: ['markup', 'XAML', 'markup'], vue: ['markup', 'Vue', 'markup'], svelte: ['markup', 'Svelte', 'markup'],
   css: ['css', 'CSS', 'css'], scss: ['css', 'SCSS', 'css'], sass: ['css', 'Sass', 'css'], less: ['css', 'Less', 'css'],
   yaml: ['config', 'YAML', 'config'], yml: ['config', 'YAML', 'config'], toml: ['config', 'TOML', 'config'], ini: ['config', 'INI', 'config'], cfg: ['config', 'Config', 'config'], conf: ['config', 'Config', 'config'], env: ['config', 'Environment', 'config'], properties: ['config', 'Properties', 'config'], lock: ['config', 'Lock File', 'config'], gitignore: ['config', 'Git Ignore', 'config'], editorconfig: ['config', 'EditorConfig', 'config'],
   log: ['log', 'Log', 'log'], md: ['markdown', 'Markdown', 'markdown'], markdown: ['markdown', 'Markdown', 'markdown'],
@@ -1008,6 +1011,125 @@ function mountJsonPreview(content, preview, file, token, isRight) {
     text: preview.text_content, truncated: preview.truncated === true, source, tree, buttons, mode: 'source',
     current: () => previewRequestIsCurrent(token, file.path, isRight),
   };
+}
+
+const HTML_PREVIEW_EXTENSIONS = new Set(['html', 'htm', 'xhtml']);
+const HTML_PREVIEW_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src 'none'; script-src 'none'; connect-src 'none'; frame-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'";
+const HTML_PREVIEW_BASE_STYLE = ':where(html){color-scheme:light;background:#fff;color:#1b2434;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;line-height:1.6}:where(body){margin:14px;overflow-wrap:anywhere}:where(img,svg,video,canvas,table){max-width:100%}:where(img,svg){height:auto}:where(pre){overflow:auto}';
+
+function isHtmlPreviewExt(ext) {
+  return HTML_PREVIEW_EXTENSIONS.has(String(ext || '').toLowerCase().replace(/^\./, ''));
+}
+
+function buildHtmlPreviewDocument(rawHtml, parser) {
+  const text = String(rawHtml ?? '');
+  const Parser = parser || (typeof DOMParser === 'function' ? DOMParser : null);
+  if (Parser) {
+    const doc = new Parser().parseFromString(text, 'text/html');
+    for (const node of doc.querySelectorAll('script,iframe,frame,frameset,object,embed,applet,base,link,meta[http-equiv]')) node.remove();
+    for (const el of doc.querySelectorAll('*')) {
+      for (const attr of [...el.attributes]) {
+        const name = attr.name.toLowerCase(), val = String(attr.value || '').trim();
+        if (name.startsWith('on') || name === 'srcdoc') { el.removeAttribute(attr.name); continue; }
+        if (name === 'href' || name === 'xlink:href') {
+          if (!val.startsWith('#')) el.removeAttribute(attr.name);
+          continue;
+        }
+        if (name === 'src' || name === 'poster' || name === 'data') {
+          if (!/^data:image\//i.test(val) && !val.startsWith('#')) el.removeAttribute(attr.name);
+          continue;
+        }
+        if (name === 'srcset') {
+          const safe = val.split(',').every(part => /^data:image\//i.test(part.trim().split(/\s+/)[0] || ''));
+          if (!safe) el.removeAttribute(attr.name);
+          continue;
+        }
+        if (name === 'action' || name === 'formaction') { el.removeAttribute(attr.name); continue; }
+        if (/^\s*(?:javascript|vbscript):/i.test(val)) el.removeAttribute(attr.name);
+      }
+    }
+    const head = doc.head || doc.documentElement.insertBefore(doc.createElement('head'), doc.documentElement.firstChild);
+    const baseStyle = doc.createElement('style');
+    baseStyle.dataset.rhfilesHtmlBase = '1';
+    baseStyle.textContent = HTML_PREVIEW_BASE_STYLE;
+    const prepend = [baseStyle];
+    if (!doc.querySelector('meta[name="viewport" i]')) {
+      const vp = doc.createElement('meta');
+      vp.name = 'viewport';
+      vp.content = 'width=device-width, initial-scale=1.0';
+      prepend.unshift(vp);
+    }
+    const csp = doc.createElement('meta');
+    csp.httpEquiv = 'Content-Security-Policy';
+    csp.content = HTML_PREVIEW_CSP;
+    const charset = doc.createElement('meta');
+    charset.setAttribute('charset', 'utf-8');
+    prepend.unshift(charset, csp);
+    const first = head.firstChild;
+    for (const node of prepend) head.insertBefore(node, first);
+    return '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
+  }
+  const stripped = text
+    .replace(/<(script|iframe|frame|frameset|object|embed|applet)\b[^>]*>[\s\S]*?<\/\1>/gi, '')
+    .replace(/<(script|iframe|frame|frameset|object|embed|applet|base|link)\b[^>]*\/?>/gi, '')
+    .replace(/<meta\b[^>]*http-equiv\s*=[^>]*>/gi, '')
+    .replace(/\s+on[a-z0-9_-]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    .replace(/\b(?:javascript|vbscript):/gi, 'blocked:');
+  const inject = `<meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${HTML_PREVIEW_CSP}"><meta name="viewport" content="width=device-width, initial-scale=1.0"><style data-rhfiles-html-base="1">${HTML_PREVIEW_BASE_STYLE}</style>`;
+  if (/<head\b[^>]*>/i.test(stripped)) return stripped.replace(/<head\b[^>]*>/i, m => m + inject);
+  return `<!DOCTYPE html><html><head>${inject}</head><body>${stripped}</body></html>`;
+}
+
+function htmlPreviewState() {
+  const preview = _htmlPreview;
+  return preview?.current() ? { open: true, mode: preview.mode, truncated: preview.truncated } : { open: false };
+}
+
+function setHtmlPreviewMode(mode) {
+  const preview = _htmlPreview;
+  if (!preview?.current() || !['preview', 'source'].includes(mode)) throw Error(t('preview.html.unavailable'));
+  if (mode === 'preview' && !preview.mounted) {
+    preview.frame.srcdoc = buildHtmlPreviewDocument(preview.text);
+    preview.mounted = true;
+  }
+  preview.mode = mode;
+  preview.source.hidden = mode !== 'source';
+  preview.frame.hidden = mode !== 'preview';
+  preview.shell.classList.toggle('preview-html-active', mode === 'preview');
+  for (const [value, button] of preview.buttons) button.setAttribute('aria-pressed', String(value === mode));
+  return htmlPreviewState();
+}
+
+function mountHtmlPreview(content, preview, file, token, isRight) {
+  const shell = content.querySelector('.preview-code-shell');
+  const source = shell.querySelector('.preview-text');
+  const frame = document.createElement('iframe');
+  frame.className = 'preview-html-frame';
+  frame.setAttribute('sandbox', '');
+  frame.setAttribute('referrerpolicy', 'no-referrer');
+  frame.title = file.name;
+  shell.append(frame);
+  const group = document.createElement('div');
+  group.className = 'preview-json-modes preview-html-modes';
+  group.setAttribute('role', 'group');
+  group.setAttribute('aria-label', t('preview.html.mode'));
+  const buttons = new Map();
+  for (const mode of ['preview', 'source']) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.dataset.htmlMode = mode;
+    button.textContent = t('preview.html.' + mode);
+    button.setAttribute('aria-pressed', String(mode === 'preview'));
+    RHFilesUI.listen(button, 'click', () => setHtmlPreviewMode(mode), undefined, 'desktop.preview.html.' + mode);
+    group.append(button);
+    buttons.set(mode, button);
+  }
+  shell.querySelector('.preview-code-toolbar').append(group);
+  _htmlPreview = {
+    text: preview.text_content, truncated: preview.truncated === true, shell, source, frame, buttons, mode: 'preview', mounted: false,
+    current: () => previewRequestIsCurrent(token, file.path, isRight),
+  };
+  setHtmlPreviewMode('preview');
 }
 
 function _token(kind, value) {

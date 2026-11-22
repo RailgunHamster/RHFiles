@@ -44,6 +44,8 @@
   register('navigation.state',object({pane}),p=>state(p.pane),'read');
   register('preview.json.state',object(),()=>jsonPreviewState(),'read');
   register('preview.json.mode.set',object({mode:{type:'string',enum:['source','tree']}},['mode']),p=>setJsonPreviewMode(p.mode));
+  register('preview.html.state',object(),()=>htmlPreviewState(),'read');
+  register('preview.html.mode.set',object({mode:{type:'string',enum:['preview','source']}},['mode']),p=>setHtmlPreviewMode(p.mode));
   register('files.list',object({pane,offset:integer,limit:{type:'integer',minimum:1,maximum:2000}}),p=>{const {state}=target(p.pane),entries=state.entries||[],offset=p.offset??0;return {path:state.path,total:entries.length,offset,entries:entries.slice(offset,offset+(p.limit??500)).map(e=>({name:e.name,path:e.path,isDirectory:!!e.is_dir,size:e.size??0,modified:e.modified??null}))};},'read');
   register('selection.set',object({paths,pane,mode:{type:'string',enum:['replace','add','remove']}},['paths']),p=>selection(p.paths,p.pane,p.mode));
   register('selection.clear',object({pane}),p=>selection([],p.pane));

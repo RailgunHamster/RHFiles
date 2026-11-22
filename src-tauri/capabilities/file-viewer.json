@@ -1,6 +1,6 @@
 {
   "identifier": "file-viewer-window",
-  "description": "Fullscreen controls for the built-in filesystem media viewer",
-  "windows": ["window-file-viewer"],
+  "description": "Fullscreen controls for the built-in filesystem media and PDF viewers",
+  "windows": ["window-file-viewer", "window-pdf-reader"],
   "permissions": ["core:window:allow-set-fullscreen"]
 }

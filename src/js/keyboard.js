@@ -550,6 +550,7 @@ RHFilesUI.listen(document,"keydown", async e => {
   }
 
   if (e.key === "Escape") {
+    if (document.body.classList.contains('preview-fullscreen-active')) { togglePreviewFullscreen(false); return; }
     if (G._typeSearch.str || G._typeSearch.lastQuery) resetTypeSearch();
     return;
   }
