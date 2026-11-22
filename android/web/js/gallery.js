@@ -61,8 +61,18 @@ const androidGallery=(()=>{
   }
   async function more(){
     const view=active;if(!view||view.deleting)return;view.auto?.pause();const entry=view.entry();
-    const selected=await dialog(entry.name,[{id:'delete',label:'删除',danger:true},{id:'close-menu',label:'关闭'}],view);
-    if(selected==='delete'&&active===view&&view.entry().path===entry.path)return remove(entry.path);
+    const items=[];
+    if(typeof androidFeatures!=='undefined'&&androidFeatures.isDownloadableRemote?.(entry.path)){
+      const dir=view.app.defaultDownloadDir?.();
+      items.push({id:'download-default',label:'下载到默认文件夹（'+(dir?.shortName||'Download')+'）'});
+      items.push({id:'download-device',label:'下载到本机'});
+    }
+    items.push({id:'delete',label:'删除',danger:true},{id:'close-menu',label:'关闭'});
+    const selected=await dialog(entry.name,items,view);
+    if(active!==view||view.entry().path!==entry.path)return;
+    if(selected==='download-default')return androidFeatures.downloadToDefault([entry.path]);
+    if(selected==='download-device'){ui.closeSheet();return androidFeatures.download([entry.path]);}
+    if(selected==='delete')return remove(entry.path);
   }
   function open(entry,entries,app){
     if(mode()==='continuous')return androidContinuousGallery.open(entry,entries,app,register);

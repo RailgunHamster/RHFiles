@@ -42,6 +42,8 @@ const androidAutomation=(()=>{
     register('fileServer.state',apiSchema(),()=>api.serverStatus(),'read','Read the explicitly started phone group HTTPS/WebDAV service');
     register('transfer.settings',apiSchema(),()=>api.native('transfer.settings'),'read','Read local bounded download policy');
     register('transfer.configure',apiSchema({parallelism:{type:'integer',minimum:1,maximum:4},rateMiB:{type:'number',minimum:0,maximum:1000}},['parallelism','rateMiB']),p=>api.native('transfer.configure',p),'settings','Set parallel streams and per-file MiB/s limit for new transfers');
+    register('download.folder.get',apiSchema(),()=>app.defaultDownloadDir(),'read','Read the configured default download folder on this device');
+    register('download.folder.set',apiSchema({path:{anyOf:[string,{type:'null'}]}}),p=>app.setDefaultDownloadDir(p.path ?? null),'settings','Set or reset the default download folder for network downloads');
     register('fileServer.start',apiSchema({roots:{type:'array',minItems:1,maxItems:8,items:share},port:{type:'integer',minimum:1024,maximum:65535}}),p=>app.startServer(p),'external','Confirm selected local roots and start the device-group file service');
     register('fileServer.stop',apiSchema(),()=>app.stopServer(),'external','Stop phone sharing and invalidate all active service sessions');
     register('fileServer.roots',apiSchema({path:string,edit:bool}),p=>app.chooseServerRoots(p),'ui','Choose a shared folder or edit a saved share');
@@ -81,6 +83,8 @@ const androidAutomation=(()=>{
     register('files.open',apiSchema({path:string},['path']),async p=>{available();await app.activate(entry(p.path));return {accepted:true};},'external');
     register('files.copy',apiSchema({paths},[]),p=>{const chosen=p.paths??[...state.selected];chosen.forEach(entry);if(!chosen.length)reject('INVALID_SELECTION','No files selected');app.setClipboard('copy',chosen);return {count:chosen.length};});
     register('files.cut',apiSchema({paths},[]),p=>{const chosen=p.paths??[...state.selected];chosen.forEach(entry);if(!chosen.length)reject('INVALID_SELECTION','No files selected');app.setClipboard('cut',chosen);return {count:chosen.length};});
+    register('files.downloadToDefault',apiSchema({paths},[]),async p=>{fresh();const chosen=p.paths??[...state.selected];chosen.forEach(entry);if(!chosen.length||!chosen.every(androidFeatures.isDownloadableRemote))reject('INVALID_SELECTION','Select remote files or folders to download');await androidFeatures.downloadToDefault(chosen);return {count:chosen.length,destination:app.defaultDownloadDir().path};},'write');
+    register('files.downloadToDevice',apiSchema({paths},[]),async p=>{available();const chosen=p.paths??[...state.selected];chosen.forEach(entry);if(!chosen.length||!chosen.every(androidFeatures.isDownloadableRemote))reject('INVALID_SELECTION','Select remote files or folders to download');await androidFeatures.download(chosen);return snapshot();},'ui');
     register('files.paste',apiSchema(),()=>{fresh();return app.paste();},'write');
     register('files.delete',apiSchema({paths}),p=>{fresh();const chosen=p.paths??[...state.selected];chosen.forEach(entry);if(!chosen.length)reject('INVALID_SELECTION','No files selected');return app.remove(chosen);},'destructive','Open the normal deletion confirmation. No confirmation bypass.');
     register('files.rename',apiSchema({path:string},['path']),p=>{fresh();return app.rename(entry(p.path));},'write','Open the existing rename form; fill it through ui.set');

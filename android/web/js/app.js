@@ -97,6 +97,92 @@
     if (root && isRootPath(path, root.path)) return rootLabel(root);
     return fmt.baseName(fmt.displayPath(path));
   };
+  function internalStorageRoot() {
+    return state.roots.find(r => !r.removable && !r.network && !r.provider && !api.isVirtual(r.path))?.path
+      || state.roots.find(r => !r.network && !r.provider && !api.isVirtual(r.path))?.path
+      || (!api.isVirtual(state.root) ? state.root : '/storage/emulated/0');
+  }
+  function builtinDefaultDownloadDir() {
+    return internalStorageRoot().replace(/\/+$/, '') + '/Download';
+  }
+  function canUseDownloadDir(path) {
+    if (typeof path !== 'string') return false;
+    const trimmed = path.trim();
+    if (!trimmed || trimmed.length > 4096 || trimmed.includes('\0') || trimmed.startsWith('remote://')) return false;
+    if (trimmed.startsWith('content://')) return true;
+    return trimmed.startsWith('/') && !trimmed.split('/').includes('..');
+  }
+  function defaultDownloadDir() {
+    const raw = String(saved('rhfiles.downloadDir', '') || '').trim();
+    if (canUseDownloadDir(raw)) {
+      return { path: raw, custom: true, label: pathLabel(raw), shortName: folderDisplayName(raw) || raw };
+    }
+    const fallback = builtinDefaultDownloadDir();
+    return { path: fallback, custom: false, label: pathLabel(fallback), shortName: 'Download' };
+  }
+  function paintDefaultDownloadDir() {
+    const dir = defaultDownloadDir();
+    if ($('default-download-path')) $('default-download-path').textContent = '当前位置：' + dir.label + (dir.custom ? '' : '（默认）');
+    if ($('btn-download-dir-reset')) $('btn-download-dir-reset').disabled = !dir.custom;
+    if ($('btn-transfer-download-dir')) $('btn-transfer-download-dir').textContent = '默认下载文件夹：' + dir.label;
+  }
+  function setDefaultDownloadDir(path) {
+    if (path == null || String(path).trim() === '') {
+      try { localStorage.removeItem('rhfiles.downloadDir'); } catch {}
+      paintDefaultDownloadDir();
+      return defaultDownloadDir();
+    }
+    const trimmed = String(path).trim();
+    const clean = trimmed.startsWith('content://') ? trimmed : (trimmed.replace(/\/+$/, '') || '/');
+    if (!canUseDownloadDir(clean)) throw Error('默认下载文件夹路径无效，请选择本机或已授权目录');
+    cache('rhfiles.downloadDir', clean);
+    paintDefaultDownloadDir();
+    return defaultDownloadDir();
+  }
+  async function chooseDownloadFolder() {
+    const roots = state.roots.filter(root => !root.network && !String(root.path || '').startsWith('remote://'));
+    if (!roots.length) {
+      ui.openSheet('选择默认下载文件夹', [action('关闭', 'close', () => {})], '请先在「存储权限」中授权手机存储。');
+      return;
+    }
+    const pickRoot = () => {
+      ui.openSheet('选择存储位置', roots.map(root => action(rootLabel(root), 'folder', () => browse(root.path, root.path, [root.path]))), '选择默认下载文件夹所在的存储位置');
+    };
+    async function browse(path, boundary, trail = [boundary], offset = 0) {
+      const loading = ui.el('p', 'sheet-note', '正在读取文件夹…');
+      if (!ui.openSheet('选择默认下载文件夹', [])) return;
+      $('sheet-panel').append(loading);
+      try {
+        const result = await api.listDir({ path, showHidden: state.hidden });
+        if (!loading.isConnected) return;
+        const directories = (result.entries || []).filter(entry => entry.isDir)
+          .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'zh-CN', { numeric: true, sensitivity: 'base' }));
+        const actions = [
+          action('使用此文件夹', 'check', () => {
+            const next = setDefaultDownloadDir(path);
+            ui.toast('默认下载文件夹已设为：' + next.label);
+          }),
+          action('新建文件夹', 'new', async () => {
+            const name = await ui.prompt('新建文件夹', 'Downloads', '创建');
+            if (!name) return browse(path, boundary, trail, offset);
+            const created = await api.createDirectory({ parent: path, name });
+            return browse(created, boundary, [...trail, created], 0);
+          }),
+        ];
+        if (offset > 0) actions.push(action('上一页', 'up', () => browse(path, boundary, trail, Math.max(0, offset - 100))));
+        if (trail.length > 1) actions.push(action('上一级', 'up', () => browse(trail[trail.length - 2], boundary, trail.slice(0, -1), 0)));
+        else if (roots.length > 1) actions.push(action('切换存储位置', 'external', pickRoot));
+        actions.push(...directories.slice(offset, offset + 100).map(entry => action(entry.name, 'folder', () => browse(entry.path, boundary, [...trail, entry.path], 0))));
+        if (directories.length > offset + 100) actions.push(action('下一页', 'other', () => browse(path, boundary, trail, offset + 100)));
+        ui.openSheet('选择默认下载文件夹', actions, '当前位置：' + pathLabel(path));
+      } catch (err) {
+        if (loading.isConnected) loading.textContent = '无法读取文件夹：' + (err?.message || err);
+      }
+    }
+    const primaryPath = internalStorageRoot();
+    const startRoot = roots.find(r => r.path === primaryPath) || roots[0];
+    return browse(startRoot.path, startRoot.path, [startRoot.path], 0);
+  }
   const isList = () => ['folder', 'library', 'favorites', 'search'].includes(state.route.screen);
   const currentDirectory=(route=state.route)=>mobileList.directoryFor(route);
   async function categoryPage(route){if(!route.folder)return api.browseLibrary({category:route.category,root:state.root,showHidden:state.hidden,limit:2000,albums:route.category!=='recent'});try{const listing=await api.listDir({path:route.folder});return {...listing,entries:mobileList.categoryFiles(listing.entries||[],route.category)};}catch(err){if(!state.permissions?.manageExternalStorage&&api.featuresAvailable()&&['image','video','audio'].includes(route.category))return api.browseLibrary({category:route.category,root:state.root,folder:route.folder,showHidden:state.hidden,limit:2000});throw err;}}
@@ -549,6 +635,11 @@
     if(api.featuresAvailable()&&entry.path.startsWith('remote://')&&/\.apk$/i.test(entry.name))return androidTextPreview.install(entry,{button});
     if (api.featuresAvailable() && api.isVirtual(entry.path)) {
       if (entry.path.startsWith('content://')) return api.systemOpen(entry.path);
+      const downloadOptions = androidFeatures.remoteDownloadActions([entry.path]);
+      if (downloadOptions.length) {
+        ui.openSheet(entry.name, [...downloadOptions, action('取消', 'close', () => {})], '此文件暂不支持在线预览，可直接下载到本机');
+        return;
+      }
       return androidFeatures.download(entry);
     }
     if (api.featuresAvailable() && entry.kind === 'archive' && /\.(zip|tar|gz|xz|tgz|txz)$/i.test(entry.name)) return androidFeatures.archive(entry);
@@ -583,12 +674,14 @@
   }
   function entryActions(entry){
     if(entry.libraryAlbum)return [action('查看此分类','folder',()=>activate(entry)),action('打开实际文件夹','open',()=>go({screen:'folder',path:entry.path})),action('复制路径','copy',async()=>{await ui.copyText(copyablePath(entry.path));ui.toast('路径已复制');})];
+    const remoteDownloads = api.featuresAvailable() ? androidFeatures.remoteDownloadActions([entry.path]) : [];
     return [
       action(entry.isDir ? '打开文件夹' : '打开 / 预览', 'open', () => activate(entry)),
       ...(!entry.isDir&&entry.kind==='document'&&!androidTextPreview.supports(entry.name)?[action('以文本预览','document',()=>androidTextPreview.open(entry))]:[]),
       ...(entry.isDir?[action('分析空间','chart',()=>go({screen:'tool',tool:'usage',path:entry.path}))]:[]),
       ...(entry.isDir&&canShareFolder(entry.path)?[action('添加为共享目录','server',()=>chooseServerRoots({path:entry.path}))]:[]),
       action(state.selected.has(entry.path)?'取消选择':'选择','check',()=>toggleSelection(entry.path)),
+      ...remoteDownloads,
       ...(!entry.isDir && api.nativeAvailable() ? [action('打开方式', 'open', () => api.systemOpen(entry.path)), action('分享', 'share', () => api.shareFile(entry.path))] : []),
       action('复制', 'copy', () => setClipboard('copy',[entry.path])),
       action('移动', 'cut', () => setClipboard('cut',[entry.path])),
@@ -610,7 +703,9 @@
     // come from exactly the same source as that file's overflow menu.
     if(paths.length===1&&entries.length===1)return ui.openSheet('已选 1 项',entryActions(entries[0]).filter(item=>!['复制','移动','重命名','删除','选择','取消选择'].includes(item.label)));
     const removeFavorites=entries.every(e=>state.favorites.some(f=>f.path===e.path));
+    const remoteDownloads=api.featuresAvailable()&&paths.every(androidFeatures.isDownloadableRemote)?androidFeatures.remoteDownloadActions(paths):[];
     ui.openSheet('已选 '+paths.length+' 项',[
+      ...remoteDownloads,
       ...(dual()?[action('复制到另一窗格','copy',()=>transferToPane('copy',paths)),action('移动到另一窗格','cut',()=>transferToPane('cut',paths))]:[]),
       action('复制路径','copy',async()=>{await ui.copyText(paths.map(copyablePath).join('\n'));ui.toast('路径已复制');}),
       ...(api.featuresAvailable()?androidFeatures.selectionActions(paths):[]),
@@ -831,6 +926,7 @@
   function moreMenu() {
     const options = [action('扫码','scan',()=>api.native('qr.scan')),action('设置','settings',()=>go({screen:'tool',tool:'settings'}))];
     const sharePath=currentDirectory();
+    if(canUseDownloadDir(sharePath))options.unshift(action('设为默认下载文件夹','download',()=>{const next=setDefaultDownloadDir(sharePath);ui.toast('默认下载文件夹已设为：'+next.label);}));
     if(canShareFolder(sharePath))options.unshift(action('共享当前文件夹','server',()=>chooseServerRoots({path:sharePath})));
     if(currentDirectory()&&!blocked()&&!state.busy&&!state.staleError)options.unshift(action('新建','folder',newMenu));
     if(paneHost())options.unshift({...action('分屏布局','layoutColumns',()=>paneHost().openLayout(window)),id:'pane-layout'});
@@ -868,6 +964,7 @@
     $('version').textContent = 'RHFiles Android ' + info.version;
     $('btn-theme').textContent = '主题：' + (document.documentElement.dataset.theme === 'dark' ? '深色' : '明亮');
     $('btn-hidden').textContent = '显示隐藏文件：' + (state.hidden ? '开' : '关');
+    if (typeof paintDefaultDownloadDir === 'function') paintDefaultDownloadDir();
     paintServerAutoStart();
     document.querySelectorAll('[data-gallery-setting]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.gallerySetting===androidGallery.mode())));
     if(api.updatesAvailable())androidUpdates.onSettings().catch(error);
@@ -1110,7 +1207,7 @@
     }
     state.roots=await api.storageRoots();
     await clearRetiredFavorites();
-    if(state.roots.length) state.root=state.roots.find(r=>!r.removable)?.path || state.roots[0].path;
+    if(state.roots.length) state.root=internalStorageRoot();
     try { state.index=await api.indexStatus(); } catch {}
     await go({screen:'home'},{replace:true});
     if (api.featuresAvailable()) {
@@ -1125,12 +1222,12 @@
     if(await workbench.boot())return;
     configBackup.init(error);
     configSync.init({error,go});
-    androidFeatures.init({state,go,task,setClipboard,refresh:refreshCurrent,refreshLocations,removeFavoritePrefix,button,action,error,favorite,promptDeviceWindowsPath});
+    androidFeatures.init({state,go,task,setClipboard,paintSelection,refresh:refreshCurrent,refreshLocations,removeFavoritePrefix,button,action,error,favorite,promptDeviceWindowsPath,internalRoot:internalStorageRoot,defaultDownloadDir,setDefaultDownloadDir,chooseDownloadFolder,pathLabel,failures,paneHost});
     androidUsage.init({state,go,button,action,error,pathLabel,copyablePath});
     androidUpdates.init({go,error});
     window.rhfilesHandleBack = () => state.permissions ? back() : true;
     window.rhfilesPane={snapshot:()=>({route:{...state.route},busy:state.busy,ready:bootReady}),refresh:()=>refreshCurrent().catch(error)};
-    androidAutomation.install({state,go,back,ready:()=>bootReady,refresh:refreshCurrent,refreshLocations,refreshGroupDevices,paintSelection,activate,setClipboard,paste,remove,rename,currentDirectory,createEntry,search:runSearch,setSort,refreshServer,startServer,stopServer,chooseServerRoots,serverRoots,serverAutoStart,setServerAutoStart,saveServerShare,removeServerShare,jumpToDeviceWindowsPath});
+    androidAutomation.install({state,go,back,ready:()=>bootReady,refresh:refreshCurrent,refreshLocations,refreshGroupDevices,paintSelection,activate,setClipboard,paste,remove,rename,currentDirectory,createEntry,search:runSearch,setSort,refreshServer,startServer,stopServer,chooseServerRoots,serverRoots,serverAutoStart,setServerAutoStart,saveServerShare,removeServerShare,jumpToDeviceWindowsPath,defaultDownloadDir,setDefaultDownloadDir});
     window.addEventListener('rhfiles-panes-changed',renderShell);
     window.addEventListener('rhfiles-clipboard',event=>{state.clipboard=event.detail;renderList();renderShell();});
     window.addEventListener('rhfiles-pane-task',event=>{peerTask=event.detail;renderShell();});
@@ -1140,6 +1237,7 @@
       if(event.key==='rhfiles.favorites'){try{state.favorites=JSON.parse(event.newValue||'[]');renderDrawer();if(state.route.screen==='home')renderHome();if(state.route.screen==='favorites')go(state.route,{replace:true}).catch(error);}catch{}}
       if(event.key==='rhfiles.hidden'){state.hidden=event.newValue==='1';if(isList())renderList();}
       if(event.key==='rhfiles.phoneFileShareAutoStart')paintServerAutoStart();
+      if(event.key==='rhfiles.downloadDir')paintDefaultDownloadDir();
     });
     for(const node of document.querySelectorAll('[data-icon]')) node.innerHTML=ui.icon(node.dataset.icon);
     document.documentElement.dataset.theme=saved('rhfiles.theme','light')==='dark'?'dark':'light';
@@ -1204,6 +1302,9 @@
     on('btn-paste',paste); on('btn-cancel-paste',cancelPaste);
     on('btn-reindex',rebuildIndex); on('btn-clear-index',async()=>{await api.indexClear();await refreshSettings();});
     on('btn-permission',()=>api.openAppSettings());
+    if($('btn-download-dir-pick'))on('btn-download-dir-pick',()=>chooseDownloadFolder());
+    if($('btn-download-dir-reset'))on('btn-download-dir-reset',()=>{const dir=setDefaultDownloadDir(null);ui.toast('已恢复默认下载文件夹：'+dir.label);});
+    if($('btn-transfer-download-dir'))on('btn-transfer-download-dir',()=>chooseDownloadFolder());
     on('btn-theme',async()=>{document.documentElement.dataset.theme=document.documentElement.dataset.theme==='dark'?'light':'dark';cache('rhfiles.theme',document.documentElement.dataset.theme);await api.systemTheme(document.documentElement.dataset.theme==='dark');return refreshSettings();});
     on('btn-hidden',()=>{state.hidden=!state.hidden;cache('rhfiles.hidden',state.hidden?'1':'0');return refreshSettings();});
     on('btn-refresh-logs',refreshLogs); on('btn-copy-logs',async()=>{await refreshLogs();await ui.copyText($('log-view').textContent);ui.toast('日志已复制');});
@@ -1231,7 +1332,7 @@
     try {
       await bootStorage();
       if(resume){
-        if(state.roots.some(root=>root.path===resume.root))state.root=resume.root;
+        if(state.roots.some(root=>root.path===resume.root&&!api.isVirtual(root.path)))state.root=resume.root;
         state.stack=androidNavStack.clean(resume.stack,resume.route);
         await go(resume.route,{replace:true});
         state.stack=androidNavStack.clean(state.stack,state.route);

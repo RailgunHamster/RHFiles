@@ -146,7 +146,7 @@ const androidFeatures = (() => {
       node.replaceChildren(ui.el('h2','','系统存储与网盘'));
       notice(node,'在系统选择器中选择 SD 卡、USB 或网盘。网盘需要安装已登录的系统文件提供者；部分网盘只允许选择文件，不能授权整个目录。');
       node.append(button('授权文件夹 / 外置存储',async()=>{const paths=await api.native('tree.pick');app.state.roots=await api.storageRoots();if(paths?.length)await app.go({screen:'folder',path:paths[0],label:'授权文件夹'});}),
-        button('从系统网盘导入文件',async()=>{const paths=await api.native('document.pick');if(paths?.length){app.setClipboard('copy',paths);await app.go({screen:'folder',path:app.state.root});}}));
+        button('从系统网盘导入文件',async()=>{const paths=await api.native('document.pick');if(paths?.length){app.setClipboard('copy',paths);await app.go({screen:'folder',path:app.internalRoot?app.internalRoot():app.state.root,label:'内部存储'});}}));
       for(const root of roots.filter(r=>r.provider&&!r.network)) {
         node.append(button(root.label,()=>app.go({screen:'folder',path:root.path,label:root.label})),button('撤销授权：'+root.label,async()=>{
           if(await ui.confirm('撤销此存储授权？','不会删除其中的文件。','撤销')){await api.native('tree.forget',{path:root.path});app.state.roots=await api.storageRoots();await renderTool(tool);}
@@ -358,6 +358,22 @@ const androidFeatures = (() => {
     element.addEventListener('error',()=>{info.textContent='设备不支持此格式或无法读取。可返回文件菜单选择“打开方式”。';});
     ui.onClosed(()=>{controller.abort();if(entry.kind!=='image'){element.pause();element.removeAttribute('src');element.load();}else element.removeAttribute('src');mediaController=null;});load();
   }
+  function isDownloadableRemote(path) {
+    if (!path || !String(path).startsWith('remote://')) return false;
+    const rest = String(path).slice('remote://'.length);
+    const slash = rest.indexOf('/');
+    return slash > 0 && rest.slice(slash + 1).replace(/\/+$/, '').length > 0;
+  }
+  function remoteDownloadActions(paths) {
+    const list = (Array.isArray(paths) ? paths : [paths]).filter(isDownloadableRemote);
+    if (!list.length) return [];
+    const dir = app?.defaultDownloadDir?.();
+    const shortName = dir?.shortName || 'Download';
+    return [
+      app.action('下载到默认文件夹（' + shortName + '）', 'download', () => downloadToDefault(list)),
+      app.action('下载到本机', 'download', () => download(list)),
+    ];
+  }
   function entryActions(entry) {
     const options=[];
     if(!entry.isDir&&entry.kind==='image')options.push(app.action('设为壁纸','image',async()=>{
@@ -370,7 +386,6 @@ const androidFeatures = (() => {
       if(!entry.isDir&&/\.(zip|tar|gz|xz|tgz|txz)$/i.test(entry.name))options.push(app.action('解压到新文件夹','archive',()=>extract(entry)));
       if(!entry.isDir&&textFile(entry.name))options.push(app.action('编辑文本','rename',()=>edit(entry)));
     }
-    if(entry.path.startsWith('remote://')&&!entry.isDir)options.push(app.action('下载到本机','download',()=>download(entry)));
     return options;
   }
   function selectionActions(paths) {
@@ -380,12 +395,53 @@ const androidFeatures = (() => {
     if(paths.every(p=>!p.startsWith('remote://')&&!app.state.entries.find(e=>e.path===p)?.isDir))options.push(app.action('系统分享','share',()=>api.native('share',{paths})));
     return options;
   }
-  async function download(entry) {app.setClipboard('copy',[entry.path]);await app.go({screen:'folder',path:app.state.root});ui.toast('请选择本机目标文件夹，然后粘贴');}
+  async function download(target) {
+    const paths = [...new Set((Array.isArray(target) ? target : [target?.path]).filter(Boolean))];
+    if (!paths.length) return;
+    app.setClipboard('copy', paths);
+    const root = app.internalRoot ? app.internalRoot() : app.state.root;
+    await app.go({ screen: 'folder', path: root, label: '内部存储' });
+    ui.toast('已进入内部存储，请打开目标文件夹后点击粘贴');
+  }
+  async function downloadToDefault(target) {
+    const paths = [...new Set((Array.isArray(target) ? target : [target?.path]).filter(Boolean))];
+    if (!paths.length) return;
+    const dir = app.defaultDownloadDir();
+    if (!dir?.path || dir.path.startsWith('remote://')) {
+      ui.toast('默认下载文件夹无效，请在设置中重新选择', 4000);
+      return;
+    }
+    if (!api.isVirtual(dir.path)) {
+      let exists = false;
+      try { exists = !!(await api.entryExists({ path: dir.path })); } catch {}
+      if (!exists) {
+        if (!dir.custom) {
+          try { await api.createDirectory({ parent: app.internalRoot(), name: 'Download' }); }
+          catch (err) {
+            const stillThere = await api.entryExists({ path: dir.path }).catch(() => false);
+            if (!stillThere) throw Error('无法创建默认下载文件夹 ' + dir.label + '：' + (err?.message || err));
+          }
+        } else {
+          throw Error('默认下载文件夹不存在或不可访问（' + dir.label + '），请在设置中重新选择');
+        }
+      }
+    }
+    await app.task('正在下载到 ' + dir.label, async () => {
+      const report = await api.copyEntries({ sources: paths, destination: dir.path });
+      const failed = new Set((report.failures || []).map(item => item.path));
+      app.state.selected = new Set(paths.filter(path => failed.has(path)));
+      app.paintSelection?.();
+      const count = report.moved?.length || 0;
+      ui.toast('已下载 ' + count + ' 项到 ' + dir.label + (failed.size ? '，失败 ' + failed.size + ' 项' : ''));
+      app.paneHost?.()?.refreshOther?.(window);
+      app.failures?.('部分文件未下载', report);
+    });
+  }
   async function receiveShares() {
     if(!workbench.primary())return;
     if(!api.featuresAvailable())return;
     const paths=await api.native('shares');const key=JSON.stringify(paths);if(!paths.length||key===lastShare)return;lastShare=key;
-    if(await ui.confirm('接收 '+paths.length+' 个分享文件？','选择目标文件夹后点击粘贴；不会删除来源。','选择目标')){app.setClipboard('copy',paths);await app.go({screen:'folder',path:app.state.root});}
+    if(await ui.confirm('接收 '+paths.length+' 个分享文件？','选择目标文件夹后点击粘贴；不会删除来源。','选择目标')){app.setClipboard('copy',paths);await app.go({screen:'folder',path:app.internalRoot?app.internalRoot():app.state.root,label:'内部存储'});}
     await api.native('shares.clear');lastShare='';
   }
   async function onResume({checkPermissions=true} = {}) {
@@ -427,5 +483,5 @@ const androidFeatures = (() => {
     window.addEventListener('rhfiles-storage-changed',()=>{if(!document.hidden&&api.featuresAvailable())onResume({checkPermissions:false}).catch(app.error);});
     RHFilesUI.listen($('btn-ftp-toggle'),'click',()=>toggleFtp().catch(app.error),undefined,"android.web.js.features.init.56ed6d2140c2");
   }
-  return {init,form,beforeRemoteNavigate,cancelTransfersOnBack,get destinations(){return [...destinations,...(api.nearbyAvailable()?[['nearby','附近互传','nearby','Windows / Android 同网互传']]:[])]},renderTool,entryActions,selectionActions,archive,media,download,receiveShares,onResume,refreshFtp};
+  return {init,form,beforeRemoteNavigate,cancelTransfersOnBack,get destinations(){return [...destinations,...(api.nearbyAvailable()?[['nearby','附近互传','nearby','Windows / Android 同网互传']]:[])]},renderTool,entryActions,selectionActions,isDownloadableRemote,remoteDownloadActions,archive,media,download,downloadToDefault,receiveShares,onResume,refreshFtp};
 })();
