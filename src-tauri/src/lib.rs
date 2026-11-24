@@ -63,6 +63,8 @@ mod update_package;
 #[cfg(target_os = "macos")]
 mod macos;
 mod vcs;
+#[cfg(windows)]
+mod tortoise;
 mod window;
 #[cfg(test)]
 mod test_support;
@@ -292,6 +294,10 @@ pub fn run() {
             vcs::git_create_branch, vcs::git_init, vcs::git_clone,
             vcs::git_pull, vcs::git_push, vcs::git_commit, vcs::git_revert, vcs::git_log,
             vcs::vcs_workspace_info, vcs::open_in_verso,
+            #[cfg(windows)]
+            tortoise::tortoise_actions,
+            #[cfg(windows)]
+            tortoise::tortoise_open,
             vcs::svn_status, vcs::svn_info, vcs::svn_update, vcs::svn_commit,
             vcs::svn_revert, vcs::svn_add, vcs::svn_log, vcs::svn_checkout,
             vcs::svn_cleanup, vcs::svn_resolve,

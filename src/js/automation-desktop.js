@@ -85,6 +85,10 @@
   register('updates.history.page.set',object({page:{type:'integer',minimum:1,maximum:100000}},['page']),p=>setReleaseHistoryPage(p.page));
   register('updates.autoInstall.set',object({enabled:boolean},['enabled']),p=>{setAutoInstallUpdates(p.enabled);return {enabled:G.settings.autoInstallUpdates===true};},'write');
   register('vcs.info',object({pane}),p=>{const {state}=target(p.pane);return call('vcs_workspace_info',{path:state.path});},'read');
+  if (/Win/i.test(globalThis.navigator?.platform || '')) {
+    register('vcs.tortoise.actions',object({paths},['paths']),p=>call('tortoise_actions',p),'read','List installed Tortoise clients and available actions for the selected working-copy paths.');
+    register('vcs.tortoise.open',object({client:{type:'string',enum:['git','svn']},action:string,paths},['client','action','paths']),p=>call('tortoise_open',p),'external','Launch the selected native Tortoise action and return its process ID.');
+  }
   register('vcs.openInVerso',object({path:string,page:{type:'string',enum:['files','changes','history','reservations','updates']},pane}),async p=>{const {state}=target(p.pane);await call('open_in_verso',{path:p.path||state.path,page:p.page||'files'});return {opened:true};},'external');
   register('vcs.gitPull',object({pane}),async p=>{const {state}=target(p.pane);const output=await call('git_pull',{path:state.path});await refresh();return {output};},'external');
   register('vcs.gitPush',object({pane}),async p=>{const {state}=target(p.pane);const output=await call('git_push',{path:state.path});return {output};},'external');

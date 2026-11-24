@@ -1473,6 +1473,7 @@ let contextMenu = null;
 // definitions only refer to a semantic name, so translated labels and future
 // user-configured menu entries never need to embed (or trust) arbitrary HTML.
 const CONTEXT_MENU_ICON_PATHS = Object.freeze({
+  vcs: '<circle cx="4" cy="3" r="1.5"/><circle cx="4" cy="13" r="1.5"/><circle cx="12" cy="4" r="1.5"/><path d="M4 4.5v7M12 5.5C12 9 8 9 4 9"/>',
   open: '<path d="M2.5 4.5h4l1.4 1.5h5.6v6.8h-11z"/><path d="m7 9 2-2 2 2M9 7v4.5"/>',
   preview: '<path d="M1.5 8s2.2-3.6 6.5-3.6S14.5 8 14.5 8s-2.2 3.6-6.5 3.6S1.5 8 1.5 8Z"/><circle cx="8" cy="8" r="1.7"/>',
   tab: '<rect x="2" y="3" width="9" height="10" rx="1.5"/><path d="M5 6h8.5v7.5M9 9v4M7 11h4"/>',
@@ -1742,6 +1743,25 @@ function buildProgramOpenMenu(targetPath, options) {
   return items;
 }
 
+async function addTortoiseMenus(menu, paths, x, y) {
+  if (!/Win/i.test(globalThis.navigator?.platform || '') || !paths.length ||
+      !paths.every(path => /^(?:[a-z]:[\\/]|\\\\)/i.test(path))) return;
+  const clients = await call('tortoise_actions', {paths}).catch(() => []);
+  if (contextMenu !== menu || !clients?.length) return;
+  const items = clients.map(({client, actions}) => {
+    const label = client === 'git' ? 'TortoiseGit' : 'TortoiseSVN';
+    return {label, icon:'vcs', submenu:actions.map(action => ({
+      label:t('tortoise.' + action),
+      action:() => call('tortoise_open', {client, action, paths})
+        .catch(error => alert(t('alert.openProgramFailed', {name:label, error}))),
+    }))};
+  });
+  const group = document.createDocumentFragment();
+  renderMenuItems(group, items, x, y);
+  menu.insertBefore(group, menu.querySelector(':scope > .ctx-sep'));
+  clampMenuPosition(menu, x, y);
+}
+
 function showContextMenu(x, y, isRight) {
   isRight=resolveRightPane(isRight);
   if(typeof isRecyclePath==='function'&&isRecyclePath((isRight?G.rp:getTab()).path))return recycleShowMenu(x,y,isRight?G.rp:getTab());
@@ -1868,6 +1888,9 @@ function showContextMenu(x, y, isRight) {
   _ctxShow(menu);
 
   let ctxMeta = { x, y, isRight, singleSelection, sel, singleFile, isDir, items };
+  if (!(isRight ? G.rp : getTab()).archivePath && !sel.some(entry => entry.archive_entry)) {
+    addTortoiseMenus(menu, sel.map(entry => entry.path), x, y);
+  }
 
   RHFilesUI.listen(menu,"keydown", e => {
     if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); removeContextMenu(); return; }
@@ -2042,14 +2065,15 @@ function showPathContextMenu(x, y, path, isDir, isRight) {
     { label: '-' },
     { label: t('ctx.properties'), icon: 'properties', action: () => showPropertiesDialog(path) },
   ];
-  showMenuAt(x, y, items, 'path-context-menu');
+  const menu = showMenuAt(x, y, items, 'path-context-menu');
+  addTortoiseMenus(menu, [path], x, y);
 }
 
 function showBlankListContextMenu(x, y, isRight) {
   G.lastActivePane = isRight ? 'right' : 'left';
   if (typeof updatePaneFocusUI === 'function') updatePaneFocusUI();
   const path = isRight ? G.rp.path : getTab().path;
-  showMenuAt(x, y, [
+  const menu = showMenuAt(x, y, [
     { label: t('ctx.newFolder'), icon: 'folderPlus', shortcut: 'F7', action: () => newFolder(isRight) },
     { label: t('ctx.newFile'), icon: 'filePlus', shortcut: 'Ctrl+Shift+N', action: () => showNewFileDialog(isRight) },
     { label: '-' },
@@ -2068,6 +2092,7 @@ function showBlankListContextMenu(x, y, isRight) {
     { label: isFavoriteFolder(path) ? t('favorites.removeCurrent') : t('favorites.addCurrent'), icon: 'star', action: () => toggleFavoriteFolder(path, favoriteDisplayName(path)) },
     { label: t('ctx.properties'), icon: 'properties', action: () => showPropertiesDialog(path) },
   ]);
+  if (!(isRight ? G.rp : getTab()).archivePath) addTortoiseMenus(menu, [path], x, y);
 }
 
 function showApplicationContextMenu(event) {
