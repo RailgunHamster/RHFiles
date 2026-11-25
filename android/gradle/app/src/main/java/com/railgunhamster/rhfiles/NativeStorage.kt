@@ -107,9 +107,9 @@ class NativeStorage(val context: Context,private val remoteProvider:()->RemoteSt
       else local(path).outputStream()
     output.use { SafeFiles.pump(input,it,progress) }
   }
-  fun rename(path: String, name: String): String {
+  fun rename(path: String, name: String, revision:String?=null): String {
     SafeFiles.name(name)
-    if (isRemote(path)) return remote.rename(path,name)
+    if (isRemote(path)) return remote.rename(path,name,revision)
     if (isDocument(path)) return (Docs.renameDocument(context.contentResolver,document(path),name) ?: error("提供者拒绝重命名")).toString()
     val file = local(path); val target = File(file.parentFile,name)
     SafeFiles.publish(file,target); return target.path

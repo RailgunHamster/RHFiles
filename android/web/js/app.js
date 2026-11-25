@@ -221,7 +221,9 @@
     $('selection-head').hidden = count === 0;
     $('sel-count').textContent = '已选择 ' + count + ' 项';
     $('selection-bar').hidden = count === 0;
-    $('selection-bar').querySelector('[data-action="rename"]').disabled = count !== 1 || blocked();
+    $('selection-rename-label').textContent = count > 1 ? '批量重命名' : '重命名';
+    $('selection-bar').querySelector('[data-action="rename"]').disabled = !count || blocked() || !!state.staleError ||
+      (count > 1 && (!api.featuresAvailable() || state.route.screen === 'library' && state.entries.some(e=>e.libraryAlbum)));
     for (const node of $('selection-bar').querySelectorAll('button')) if (node.dataset.action !== 'rename') node.disabled = blocked();
     $('pane-transfer-actions').hidden=!count||!dual();
     $('copy-to-pane').disabled=$('move-to-pane').disabled=blocked();
@@ -832,6 +834,22 @@
       failures('部分文件未删除', report);
     });
   }
+  function batchRenamePlan(paths) {
+    if (state.busy || state.staleError || blocked()) throw Error('请等待当前操作结束并刷新列表');
+    return mobileBatchRename.selection(paths, state.entries);
+  }
+  async function startBatchRename(plan) {
+    if (blocked() || state.busy || state.staleError) throw Error('请先刷新当前列表');
+    if (plan.error || !plan.changes.length) throw Error(plan.error || '没有需要修改的名称');
+    const route = state.route;
+    const id = await api.native('job.start',{op:'batch-rename',args:{changes:plan.changes}});
+    if (route === state.route) {
+      for (const change of plan.changes) state.selected.delete(change.path);
+      paintSelection();
+    }
+    ui.toast('批量重命名已加入文件任务');
+    return {jobId:id, count:plan.changes.length};
+  }
   async function rename(entry) {
     if (blocked()) return;
     const name = await ui.prompt('重命名', entry.name, '保存');
@@ -1227,7 +1245,7 @@
     androidUpdates.init({go,error});
     window.rhfilesHandleBack = () => state.permissions ? back() : true;
     window.rhfilesPane={snapshot:()=>({route:{...state.route},busy:state.busy,ready:bootReady}),refresh:()=>refreshCurrent().catch(error)};
-    androidAutomation.install({state,go,back,ready:()=>bootReady,refresh:refreshCurrent,refreshLocations,refreshGroupDevices,paintSelection,activate,setClipboard,paste,remove,rename,currentDirectory,createEntry,search:runSearch,setSort,refreshServer,startServer,stopServer,chooseServerRoots,serverRoots,serverAutoStart,setServerAutoStart,saveServerShare,removeServerShare,jumpToDeviceWindowsPath,defaultDownloadDir,setDefaultDownloadDir});
+    androidAutomation.install({state,go,back,ready:()=>bootReady,refresh:refreshCurrent,refreshLocations,refreshGroupDevices,paintSelection,activate,setClipboard,paste,remove,rename,batchRenamePlan,startBatchRename,currentDirectory,createEntry,search:runSearch,setSort,refreshServer,startServer,stopServer,chooseServerRoots,serverRoots,serverAutoStart,setServerAutoStart,saveServerShare,removeServerShare,jumpToDeviceWindowsPath,defaultDownloadDir,setDefaultDownloadDir});
     window.addEventListener('rhfiles-panes-changed',renderShell);
     window.addEventListener('rhfiles-clipboard',event=>{state.clipboard=event.detail;renderList();renderShell();});
     window.addEventListener('rhfiles-pane-task',event=>{peerTask=event.detail;renderShell();});
@@ -1296,6 +1314,9 @@
       if(which==='copy'||which==='cut') setClipboard(which,paths);
       if(which==='delete') remove(paths).catch(error);
       if(which==='rename'&&paths.length===1) rename(state.entries.find(item=>item.path===paths[0])).catch(error);
+      if(which==='rename'&&paths.length>1) {
+        try { mobileBatchRename.open(batchRenamePlan(paths),startBatchRename); } catch(err) { error(err); }
+      }
       if(which==='more') selectionMenu();
     },undefined,"android.web.js.app.boot.1a78ad95bf9a");
     on('copy-to-pane',()=>transferToPane('copy',[...state.selected]));on('move-to-pane',()=>transferToPane('cut',[...state.selected]));

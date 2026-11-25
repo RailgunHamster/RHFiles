@@ -120,7 +120,8 @@ object FileTasks {
   fun hasActive()=jobs.values.any { it.state in listOf("queued","running","paused","scanning") }
   @Synchronized fun start(context:Context,op:String,args:JSONObject):String {
     if(op in listOf("move","delete","trash","rename")){val sources=args.optJSONArray("sources");if(sources!=null){require(sources.length()<=1000){"每项任务最多 1000 个来源"};val remote=RemoteStorage(context);for(i in 0 until sources.length())require(!remote.isRhFilesRoot(sources.getString(i))){"不能移动、删除或重命名共享入口，请先打开共享目录再选择内容"}}}
-    load(context);require(op in listOf("copy","move","delete","zip","extract","trash","restore","trash-delete","backup","cache-open")) { "未知文件操作" }
+    load(context);require(op in listOf("copy","move","delete","zip","extract","trash","restore","trash-delete","backup","cache-open","batch-rename")) { "未知文件操作" }
+    if(op=="batch-rename") BatchRename.changes(args)
     if(op in listOf("restore","trash-delete")){
       require(args.toString().toByteArray().size<=6*1024*1024){"回收站任务过大，请分批处理"}
       Trash.ids(args)
@@ -141,7 +142,8 @@ object FileTasks {
         finally {
           job.finished=System.currentTimeMillis();try {persist(context,job)}catch(_:Exception){}
           try {
-            val local=job.outputs.filter{job.op!="cache-open"&&File(it).isAbsolute}.flatMap{path->File(path).walkTopDown().onEnter{!SafeFiles.isLink(it)}.filter{it.isFile}.take(5000).map{it.path}.toList()}
+            val local=if(job.op=="batch-rename") (job.completed+job.outputs).filter{File(it).isAbsolute}
+              else job.outputs.filter{job.op!="cache-open"&&File(it).isAbsolute}.flatMap{path->File(path).walkTopDown().onEnter{!SafeFiles.isLink(it)}.filter{it.isFile}.take(5000).map{it.path}.toList()}
             if(local.isNotEmpty())android.media.MediaScannerConnection.scanFile(context,local.toTypedArray(),null,null)
           }catch(_:Exception){}
           service?.finishIfIdle()
@@ -162,10 +164,30 @@ object FileTasks {
     synchronized(j){
       j.bytes+=amount
       val now=System.currentTimeMillis()
-      if(now-j.notified>750) {j.notified=now;service?.update("${j.current} · ${j.bytes/1024} KB · ${j.done}/${j.files} 项")}
+      if(now-j.notified>750) {j.notified=now;service?.update(if(j.op=="batch-rename") "批量重命名 · ${j.done}/${j.files} 项" else "${j.current} · ${j.bytes/1024} KB · ${j.done}/${j.files} 项")}
     }
   }
   internal fun execute(context:Context,j:Job,storage:NativeStorage=NativeStorage(context)) {
+    if(j.op=="batch-rename") {
+      val changes=BatchRename.changes(j.args)
+      j.files=changes.size.toLong()
+      BatchRename.check(storage,changes){checkpoint(j)}
+      j.state="running"
+      for(change in changes) {
+        j.current=change.path
+        checkpoint(j)
+        try {
+          val output=storage.rename(change.path,change.name,change.revision)
+          j.outputs.add(output);j.completed.add(change.path);j.done++
+        } catch(e:Exception) {
+          j.failures.add(change.path to (e.message?:"重命名失败"))
+          j.message="任务已停止，请核对当前项目。已完成 ${j.done} 项。"
+          break
+        }
+        persist(context,j)
+      }
+      return
+    }
     if(j.op=="cache-open") {
       val path=j.args.getString("path");val entry=storage.stat(path)
       j.files=1;j.total=entry.size;j.current=entry.name;j.state="running"

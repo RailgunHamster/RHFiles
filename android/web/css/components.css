@@ -215,4 +215,13 @@ body { background:var(--page); -webkit-font-smoothing:antialiased; }
   border-color:color-mix(in srgb, var(--symbol-teal) 32%, var(--line));
 }
 @container layout (min-width:720px) { .settings-nav { margin:0; align-self:start; touch-action:pan-y; } }
+.batch-rename-form { display:grid; gap:10px; padding:6px 18px 14px; }
+.batch-field { display:grid; gap:4px; font-size:.9rem; }
+.batch-field input { width:100%; min-height:40px; box-sizing:border-box; padding:6px 12px; border:1px solid var(--line); border-radius:10px; background:var(--surface); color:var(--text); font:inherit; user-select:text; }
+.batch-options { display:flex; flex-wrap:wrap; gap:16px; }
+.batch-toggle { display:inline-flex; align-items:center; gap:5px; min-height:36px; }
+.batch-preview { max-height:24dvh; overflow:auto; overscroll-behavior:contain; }
+.batch-preview:empty,.batch-summary:empty { display:none; }
+.batch-preview-row { display:grid; grid-template-columns:1fr 1fr; gap:10px; padding:6px 0; border-bottom:1px solid var(--line); overflow-wrap:anywhere; }
+.batch-rename-form .button-row { justify-content:flex-end; }
 @media(max-width:320px) { .home-grid { gap:6px; } .home-tile.bento-hero { padding:10px 12px; column-gap:8px; } .tool-page { padding:8px; } #tool-extra:not(.nearby-ui),#tool-server,#tool-usage,.settings-content>[data-settings-panel] { padding:14px; } }

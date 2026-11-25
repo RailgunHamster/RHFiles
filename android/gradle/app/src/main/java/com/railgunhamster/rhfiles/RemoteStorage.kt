@@ -462,13 +462,18 @@ class RemoteStorage(private val context: Context, private val credentialKey: (()
       }).close()
     }
   }
-  fun rename(path: String, name: String): String {
+  fun rename(path: String, name: String, revision:String?=null): String {
     require(!isRhFilesRoot(path)){"不能重命名共享入口，请打开共享后选择其中的文件夹"}
     val l=location(path); require(l.relative.isNotEmpty()) { "不能重命名网络根目录" }
-    require(list(parent(path)).none { it.name==name }) { "目标已存在，未覆盖" }
+    val type=l.c.getString("type")
+    // SMB and WebDAV enforce no-replace in the rename request itself.
+    // Checking their whole directory again for each batch item is redundant.
+    if(type=="ftp" || type=="ftps" || type=="rhfiles" && revision==null)
+      require(list(parent(path)).none { it.name==name }) { "目标已存在，未覆盖" }
     val target=child(parent(path),name); val to=location(target)
-    when(l.c.getString("type")) {
-      "rhfiles" -> RhFilesConnection(l.c).mutate("rename",l.relative,to.relative)
+    when(type) {
+      "rhfiles" -> if(revision==null) RhFilesConnection(l.c).mutate("rename",l.relative,to.relative)
+        else RhFilesConnection(l.c).renameChecked(l.relative,to.relative,revision)
       "smb" -> smb(l.c).use { s -> s.share.open(smbPath(l),EnumSet.of(AccessMask.DELETE,AccessMask.GENERIC_READ),null,SMB2ShareAccess.ALL,SMB2CreateDisposition.FILE_OPEN,null).use { it.rename(smbPath(to),false) } }
       "ftp", "ftps" -> withFtp(l.c) { require(it.rename(ftpPath(l),ftpPath(to))) { "FTP 重命名失败：${it.replyCode}" } }
       else -> request(l,"MOVE",null,mapOf("Destination" to url(to).toString(),"Overwrite" to "F")).close()

@@ -119,7 +119,7 @@
   <nav class="selection-bar" id="selection-bar" aria-label="已选文件操作" hidden>
     <button data-action="copy"><span data-icon="copy"></span>复制</button>
     <button data-action="cut"><span data-icon="cut"></span>移动</button>
-    <button data-action="rename"><span data-icon="rename"></span>重命名</button>
+    <button data-action="rename"><span data-icon="rename"></span><span id="selection-rename-label">重命名</span></button>
     <button data-action="delete" class="danger"><span data-icon="trash"></span>删除</button>
     <button data-action="more"><span data-icon="more"></span>更多</button>
   </nav>
@@ -149,6 +149,7 @@
 <div class="toast" id="toast" role="status" hidden></div>
 <script src="js/automation-core.js"></script>
 <script src="js/automation-android.js"></script>
+<script src="js/batch-rename.js"></script>
 <script src="js/rhvideo-entry.js"></script>
 <script src="js/settings-autosave.js"></script><script src="js/device-groups-ui.js"></script>
 <script src="js/trash.js"></script>

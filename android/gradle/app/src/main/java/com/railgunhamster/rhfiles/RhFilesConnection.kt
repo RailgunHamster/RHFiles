@@ -164,6 +164,9 @@ internal class RhFilesConnection(private var config:JSONObject) {
     return JSONObject().put("recycled",recycled).put("errors",errors)
   }
   fun mutate(action:String,relative:String,destination:String?=null){require(action in listOf("mkdir","rename","delete"));val v=JSONObject().put("path","/$relative");if(destination!=null)v.put("destination","/$destination");mutation("/api/v1/$action",v)}
+  fun renameChecked(relative:String,destination:String,revision:String) {
+    mutation("/api/v1/rename-checked",JSONObject().put("path","/$relative").put("destination","/$destination").put("revision",revision))
+  }
   /** Retain one bounded chunk until HEAD confirms its offset. Never replay a
    * non-idempotent whole-file PUT after a transport failure. */
   fun upload(relative:String,input:InputStream,length:Long,progress:(Int)->Unit) {

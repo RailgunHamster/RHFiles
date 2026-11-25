@@ -76,7 +76,7 @@ svg { width:24px; height:24px; fill:none; stroke:currentColor; stroke-width:1.7;
 .list-status { font-size:11px; color:var(--muted); padding:4px 16px; background:var(--bg); border-top:1px solid var(--line); }
 .browse-actions,.selection-bar { display:flex; flex:none; border-top:1px solid var(--line); background:var(--bg); }
 .browse-actions button,.selection-bar button { flex:1; min-width:0; display:flex; flex-direction:column; align-items:center; gap:4px; padding:9px 0; border:0; background:transparent; font-size:11px; }
-.browse-actions span,.selection-bar span { height:24px; } .selection-head { background:var(--selected); } .selection-head span { flex:1; font-size:18px; }
+.browse-actions span,.selection-bar [data-icon] { height:24px; } .selection-head { background:var(--selected); } .selection-head span { flex:1; font-size:18px; }
 .danger { color:var(--danger)!important; }
 .paste-bar { display:flex; align-items:center; padding:10px 8px 10px 16px; gap:8px; border-top:1px solid var(--line); background:var(--selected); }
 .paste-bar>div { flex:1; min-width:0; } .paste-bar strong { font-size:14px; font-weight:500; }

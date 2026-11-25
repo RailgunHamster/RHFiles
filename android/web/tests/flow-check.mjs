@@ -103,7 +103,7 @@ function fixture({denied=false,partial=false,nativeV2=false,nativeV3=false,nativ
   if(nativeV2 || nativeV3){
     m.nativeCalls=[];m.jobs=[];m.connections=[];m.text='hello 中文\r\n';m.revision='revision-1';m.shares=[];
     m.updates={state:'idle',message:'',bytes:0,currentCode:1003,release:null,config:{source:'cnb',cnb:'https://cnb.cool/railgunhamster/RHFiles',github:'https://github.com/RailgunHamster/RHFiles',autoCheck:false,proxyEnabled:false,proxy:''}};m.updateRequests=0;
-    m.fs['content://test/tree/root/document/root']=[{name:'云端.txt',path:'content://test/tree/root/document/file',isDir:false,kind:'document',size:12}];
+    m.fs['content://test/tree/root/document/root']=[{name:'云端.bin',path:'content://test/tree/root/document/file',isDir:false,kind:'document',size:12}];
     window.RHFilesNative={postMessage(message){const r=JSON.parse(message);m.nativeCalls.push(r);Promise.resolve().then(async()=>{
       const a=r.args;
       switch(r.command){
@@ -304,8 +304,10 @@ try{
   {
     const {context,page:p,errors}=await pageFor();await tile(p,'storage-0').waitFor();
     await p.evaluate(()=>{window.__nativeCalls=[];window.RHFilesNative={postMessage(message){const request=JSON.parse(message);window.__nativeCalls.push(request);queueMicrotask(()=>this.onmessage({data:JSON.stringify({id:request.id,result:true})}));}};});
-    await storage(p);await row(p,'Download').click();await row(p,'report.pdf').click();
-    check(await p.evaluate(()=>window.__nativeCalls.some(c=>c.command==='open'&&c.args.path.endsWith('/report.pdf'))),'PDF tap delegates to Android open-with instead of text preview');
+    // Use a format without an internal reader to exercise Android open-with.
+    await p.evaluate(()=>{const entries=window.__model.fs['/storage/emulated/0/Download'];entries.push({...entries[0],name:'sample.bin',path:'/storage/emulated/0/Download/sample.bin'});});
+    await storage(p);await row(p,'Download').click();await row(p,'sample.bin').click();
+    check(await p.evaluate(()=>window.__nativeCalls.some(c=>c.command==='open'&&c.args.path.endsWith('/sample.bin'))),'Unknown binary format delegates to Android open-with');
     await more(p,'report.pdf');await choose(p,'分享');
     check(await p.evaluate(()=>window.__nativeCalls.some(c=>c.command==='share'&&c.args.path.endsWith('/report.pdf'))),'Share delegates to native Android chooser bridge');
     await home(p);await tile(p,'settings').click();await p.click('#btn-theme');
@@ -332,9 +334,9 @@ try{
     const {context,page:p,errors}=await pageFor({nativeV2:true});await tile(p,'remote').waitFor();
     check(await p.locator('.home-tile').count()===19,'Native v2 exposes only wired feature pages including APK packages');await capture(p,'features-home');
     await tile(p,'image').click();await p.waitForSelector('#filelist .name');check(await p.evaluate(()=>window.__model.nativeCalls.some(c=>c.command==='media.library')),'Media categories use the live Android media query');
-    await home(p);await tile(p,'providers').click();await choose(p,'授权文件夹 / 外置存储');await row(p,'云端.txt').waitFor();
+    await home(p);await tile(p,'providers').click();await choose(p,'授权文件夹 / 外置存储');await row(p,'云端.bin').waitFor();
     check((await p.locator('#crumbs').innerText()).includes('授权文件夹') || (await p.locator('#crumbs').innerText()).includes('云端'),'Provider URI is not split into fake filesystem breadcrumbs');
-    await row(p,'云端.txt').click();check(await p.evaluate(()=>window.__model.nativeCalls.some(c=>c.command==='open'&&c.args.path.startsWith('content:'))),'Content URI opens through Android without a guessed path');
+    await row(p,'云端.bin').click();check(await p.evaluate(()=>window.__model.nativeCalls.some(c=>c.command==='open'&&c.args.path.startsWith('content:'))),'Content URI opens through Android without a guessed path');
     await home(p);await tile(p,'remote').click();await choose(p,'添加网络位置');
     await p.locator('[name=type]').selectOption('smb');await p.locator('[name=name]').fill('家庭服务器');await p.locator('[name=host]').fill('server-home');await p.locator('[name=share]').fill('Public');await p.locator('[name=password]').fill('fixture-secret');await choose(p,'保存连接');
     await p.getByRole('button',{name:'家庭服务器',exact:true}).waitFor();
@@ -470,7 +472,7 @@ try{
     check(await p.evaluate(()=>__model.nativeCalls.find(c=>c.command==='media.play').args.path.endsWith('/movie.mp4')),'Video taps use the native Media3 player when available');
     check(await p.locator('#sheet video').count()===0,'Native playback never stretches a WebView fallback play icon');
     await row(p,'photo.jpg').click();await p.locator('.image-viewer').waitFor();
-    check(await p.locator('.image-viewer .media-icon-btn svg').count()===8,'Image viewer provides accessible icon controls');
+    check(await p.locator('.image-viewer .media-icon-btn').evaluateAll(buttons=>buttons.length>0&&buttons.every(b=>b.querySelector('svg')&&b.getAttribute('aria-label'))),'Image viewer provides accessible icon controls');
     await p.getByRole('button',{name:'放大',exact:true}).click();
     check((await p.locator('.full-media').getAttribute('style')).includes('scale(1.4)'),'Photo zoom is independent of its toolbar');
     await p.getByRole('button',{name:'适应',exact:true}).click();
@@ -513,7 +515,10 @@ try{
     }
     await drag(-distance);check((await p.locator('.viewer-info').innerText()).startsWith('2 /'),'A short slow swipe advances on '+width+'px without a large screen-relative drag');
     await drag(distance);check((await p.locator('.viewer-info').innerText()).startsWith('1 /'),'The same short reverse swipe returns at '+width+'px');
-    await drag(distance);check((await p.locator('.viewer-info').innerText()).startsWith('1 /'),'Swiping beyond the first image only rebounds at '+width+'px');
+    await drag(distance);
+    const wrapped=await p.evaluate(()=>RHFilesAPI.invoke('gallery.state'));
+    check(wrapped.count>1&&wrapped.index===wrapped.count-1,'Swiping back from the first image wraps to the last at '+width+'px');
+    await drag(-distance);check((await p.locator('.viewer-info').innerText()).startsWith('1 /'),'Swiping forward from the last image wraps to the first at '+width+'px');
     await drag(-8);check((await p.locator('.viewer-info').innerText()).startsWith('1 /'),'Small tap jitter does not turn pages at '+width+'px');
     await drag(0,90);check((await p.locator('.viewer-info').innerText()).startsWith('1 /'),'Vertical movement does not turn pages at '+width+'px');
     await drag(-distance,0,{cancel:true});check((await p.locator('.viewer-info').innerText()).startsWith('1 /'),'A system-canceled gesture never turns a page at '+width+'px');
@@ -565,7 +570,7 @@ try{
     await p.locator('[data-action=more]').click();await p.evaluate(()=>localStorage.setItem('rhfiles.favorites',JSON.stringify(JSON.parse(localStorage.getItem('rhfiles.favorites')).filter(f=>f.name!=='photo.jpg'))));await choose(p,'取消收藏');check(await p.evaluate(()=>JSON.parse(localStorage.getItem('rhfiles.favorites')).every(f=>!['notes.txt','photo.jpg'].includes(f.name))),'Batch removal keeps its explicit intent if another pane changes favorites while the menu is open');await p.locator('#sel-close').click();
     const touch=await context.newCDPSession(p);
     async function drag(target,dx,{cancel=false,dy=0}={}){
-      if(!await target.getAttribute('data-swipe-open'))await target.scrollIntoViewIfNeeded();await p.waitForTimeout(180);const b=await target.boundingBox(),x=b.x+Math.min(dx>0?180:240,b.width-45),y=b.y+(b.height>100?70:25);
+      if(!await target.getAttribute('data-swipe-open'))await target.scrollIntoViewIfNeeded();await p.waitForTimeout(180);const b=await target.boundingBox(),x=b.x+Math.min(dx>0?90:240,b.width-45),y=b.y+(b.height>100?70:25);
       await touch.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x,y}]});
       for(let i=1;i<=8;i++){await touch.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:x+dx*i/8,y:y+dy*i/8}]});await p.waitForTimeout(18);}
       await touch.send('Input.dispatchTouchEvent',{type:cancel?'touchCancel':'touchEnd',touchPoints:[]});await p.waitForTimeout(220);

@@ -7,7 +7,7 @@ const androidFeatures = (() => {
   const $ = id => document.getElementById(id);
   const textFile = name => /\.(txt|md|csv|log|json|xml|ini|cfg|toml|ya?ml|js|ts|rs|py|java|kt|c|h|cpp|css|html|sh)$/i.test(name);
   const active = j => ['queued','scanning','running','paused'].includes(j.state);
-  const names = {copy:'复制',move:'移动',delete:'永久删除','trash-delete':'清理回收站',trash:'移入回收站',restore:'恢复',zip:'压缩',extract:'解压',backup:'备份应用','cache-open':'缓存安装包'};
+  const names = {copy:'复制',move:'移动',delete:'永久删除','batch-rename':'批量重命名','trash-delete':'清理回收站',trash:'移入回收站',restore:'恢复',zip:'压缩',extract:'解压',backup:'备份应用','cache-open':'缓存安装包'};
   const states = {queued:'排队',scanning:'计算大小',running:'进行中',paused:'已暂停',completed:'完成',failed:'失败',canceled:'已取消',interrupted:'上次运行中断'};
   const destinations = [
     ['remote','网络位置','network','SMB / FTP / WebDAV'], ['providers','外置存储与网盘','external','系统授权与文件提供者'],
@@ -49,13 +49,15 @@ const androidFeatures = (() => {
     const running=lastJobs.filter(active);
     const chip=$('native-task-chip');
     chip.hidden=!running.length;
-    chip.textContent=running.length?'文件任务 '+running.length+' · '+states[running[0].state]+' · '+fmt.size(running[0].bytes):'';
+    const first=running[0];
+    const progressText=first?.op==='batch-rename' ? first.done+'/'+first.files+' 项' : first && fmt.size(first.bytes);
+    chip.textContent=first?'文件任务 '+running.length+' · '+states[first.state]+' · '+progressText:'';
     if(app.state.route.tool==='tasks') paintJobs($('tool-extra'));
-    const completed=lastJobs.filter(j=>j.state==='completed' && !refreshedJobs.has(j.id));
+    const completed=lastJobs.filter(j=>(j.state==='completed' || j.op==='batch-rename' && !active(j) && j.done>0) && !refreshedJobs.has(j.id));
     completed.forEach(j=>refreshedJobs.add(j.id));
     const changedFiles=completed.filter(j=>j.op!=='cache-open');
     if(changedFiles.length) {
-      if(app.state.route.screen==='folder' && !app.state.task) await app.refresh();
+      if((app.state.route.screen==='folder' || changedFiles.some(j=>j.op==='batch-rename') && ['library','search'].includes(app.state.route.screen)) && !app.state.task) await app.refresh();
       const status=await api.indexStatus();
       if(!status.indexing && changedFiles.some(j=>j.finished>(status.lastFinishedMs || 0))) await api.indexStart({roots:app.state.roots.filter(r=>!api.isVirtual(r.path)).map(r=>r.path)});
     }
@@ -92,9 +94,11 @@ const androidFeatures = (() => {
     for(const j of lastJobs.slice(0,100)) {
       const card=ui.el('article','task-card');card.append(ui.el('strong','',(j.op==='delete'&&j.args?.permanent===false?'移入目标电脑回收站':names[j.op]||j.op)+' · '+states[j.state]));
       const seconds=Math.max(1,((j.finished || Date.now())-j.started)/1000);
-      card.append(ui.el('p','muted',fmt.displayPathText(j.current)),ui.el('p','',fmt.size(j.bytes)+(j.total?' / '+fmt.size(j.total):'')+' · '+(j.state==='paused'?'已暂停':fmt.size(j.bytes/seconds)+'/s（平均）')+' · '+j.done+'/'+j.files+' 项'));
+      const progressLabel=j.op==='batch-rename' ? j.done+'/'+j.files+' 项' : fmt.size(j.bytes)+(j.total?' / '+fmt.size(j.total):'')+' · '+(j.state==='paused'?'已暂停':fmt.size(j.bytes/seconds)+'/s（平均）')+' · '+j.done+'/'+j.files+' 项';
+      card.append(ui.el('p','muted',fmt.displayPathText(j.current)),ui.el('p','',progressLabel));
       const progress=document.createElement('progress');progress.max=Math.max(j.total,j.bytes,1);
-      if(j.total>0)progress.value=j.bytes;else if(!active(j))progress.value=j.state==='completed'?1:0;
+      if(j.op==='batch-rename'){progress.max=Math.max(1,j.files);progress.value=j.done;}
+      else if(j.total>0)progress.value=j.bytes;else if(!active(j))progress.value=j.state==='completed'?1:0;
       card.append(progress);
       if(j.message)notice(card,fmt.displayPathText(j.message));
       for(const failure of j.failures || [])notice(card,fmt.displayPath(failure.path)+'\n'+fmt.displayPathText(failure.message));

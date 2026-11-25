@@ -88,6 +88,10 @@ const androidAutomation=(()=>{
     register('files.paste',apiSchema(),()=>{fresh();return app.paste();},'write');
     register('files.delete',apiSchema({paths}),p=>{fresh();const chosen=p.paths??[...state.selected];chosen.forEach(entry);if(!chosen.length)reject('INVALID_SELECTION','No files selected');return app.remove(chosen);},'destructive','Open the normal deletion confirmation. No confirmation bypass.');
     register('files.rename',apiSchema({path:string},['path']),p=>{fresh();return app.rename(entry(p.path));},'write','Open the existing rename form; fill it through ui.set');
+    const renameRules=apiSchema({paths,find:string,replace:{type:'string',maxLength:8192},regex:bool,caseSensitive:bool},['find','replace']);
+    const renamePlan=p=>{fresh();return app.batchRenamePlan(p.paths??[...state.selected])(p);};
+    register('files.batchRename.preview',renameRules,renamePlan,'read','Preview replacements on files and folders in the current listing.');
+    register('files.batchRename.start',renameRules,p=>app.startBatchRename(renamePlan(p)),'write','Queue the validated renames and return the file task ID.');
     register('search.run',apiSchema({query:string,global:bool},['query']),async p=>{const path=app.currentDirectory()||state.root;await app.go({screen:'search',path,global:!!p.global});document.getElementById('search-input').value=p.query;await app.search(p.query);return snapshot();});
     register('settings.open',apiSchema({section:{type:'string'}}),async p=>{await app.go({screen:'tool',tool:'settings',...(p.section?{section:p.section}:{})});return snapshot();});
     if(!api.automationAvailable())return;
