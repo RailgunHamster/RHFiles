@@ -770,6 +770,35 @@ function newFileTemplateLabelKey(extension) {
   return Object.hasOwn(keyByExtension, ext) ? keyByExtension[ext] : null;
 }
 
+function allocateNewFileDialogStem(baseStem, ext, isRight) {
+  const pane = isRight ? G.rp : getTab();
+  const used = new Set((pane?.entries || []).map(entry => String(entry?.name || '').toLowerCase()));
+  const suffix = ext ? "." + ext : "";
+  let candidate = baseStem;
+  let index = 1;
+  while (used.has((candidate + suffix).toLowerCase())) {
+    candidate = `${baseStem} (${index++})`;
+  }
+  return candidate;
+}
+
+function syncNewFileDialogDefaultName() {
+  const dialogEl = document.getElementById("newfile-dialog");
+  const nameInput = document.getElementById("newfile-name");
+  if (!dialogEl || dialogEl.style.display !== "flex" || !nameInput) return;
+  const current = nameInput.value.trim();
+  const prevDefaultStem = nameInput.dataset.defaultStem;
+  if (!prevDefaultStem) return;
+  const dot = current.lastIndexOf(".");
+  const currentStem = dot > 0 ? current.slice(0, dot) : current;
+  const ext = dot > 0 ? current.slice(dot + 1) : "";
+  if (currentStem !== prevDefaultStem) return;
+  const baseStem = typeof defaultNewFileName === 'function' ? defaultNewFileName() : t('dialog.newFileDefault');
+  const nextStem = allocateNewFileDialogStem(baseStem, ext, _newFileIsRight);
+  nameInput.value = nextStem + (ext ? "." + ext : "");
+  nameInput.dataset.defaultStem = nextStem;
+}
+
 async function showNewFileDialog(isRight) {
   const dialogEl = document.getElementById("newfile-dialog");
   const container = document.getElementById("newfile-templates");
@@ -804,13 +833,19 @@ async function showNewFileDialog(isRight) {
       <span class="nft-extension">${ext ? "." + esc(ext) : ""}</span>
     </button>`;
   }).join("");
-  nameInput.value = t('dialog.newFileDefault') + (templates.length ? "." + newFileTemplateExt(templates[0]) : ".txt");
+  const defaultExt = templates.length ? newFileTemplateExt(templates[0]) : "txt";
+  const baseStem = typeof defaultNewFileName === 'function' ? defaultNewFileName() : t('dialog.newFileDefault');
+  const stem = allocateNewFileDialogStem(baseStem, defaultExt, _newFileIsRight);
+  nameInput.value = stem + (defaultExt ? "." + defaultExt : "");
+  nameInput.dataset.defaultStem = stem;
   RHFilesUI.assign(nameInput,"keydown",e => {
+    if (e.isComposing || e.keyCode === 229) return;
     if (e.key === "Enter") { e.preventDefault(); createNewFileFromDialog(); }
     else if (e.key === "Escape") { e.preventDefault(); closeNewFile(); }
   },"src.js.dialogs.showNewFileDialog.79e39b3377a3");
   dialogEl.style.display = "flex";
   nameInput.focus();
+  nameInput.setSelectionRange(0, stem.length);
 }
 
 function selectNewFileTemplate(idx) {
@@ -823,14 +858,21 @@ function selectNewFileTemplate(idx) {
   });
   const input = document.getElementById("newfile-name");
   if (!input) return;
+  const fallbackStem = typeof defaultNewFileName === 'function' ? defaultNewFileName() : t('dialog.newFileDefault');
   let base = input.value.trim();
-  if (!base) base = t('dialog.newFileDefault');
+  if (!base) base = fallbackStem;
   const dot = base.lastIndexOf(".");
-  const stem = dot > 0 ? base.slice(0, dot) : base;
+  const rawStem = dot > 0 ? base.slice(0, dot) : base;
   const ext = newFileTemplateExt(tpl);
+  const stem = input.dataset.defaultStem && rawStem === input.dataset.defaultStem
+    ? allocateNewFileDialogStem(fallbackStem, ext, _newFileIsRight)
+    : rawStem;
+  if (input.dataset.defaultStem && rawStem === input.dataset.defaultStem) {
+    input.dataset.defaultStem = stem;
+  }
   input.value = stem + (ext ? "." + ext : "");
-  input.selectionStart = input.selectionEnd = stem.length + 1;
   input.focus();
+  input.setSelectionRange(0, stem.length);
 }
 
 async function createNewFileFromDialog() {
@@ -848,7 +890,12 @@ async function createNewFileFromDialog() {
   try {
     await call("create_new_file", { parent: _newFileDest, template: newFileTemplateExt(tpl), name });
     closeNewFile();
+    G.lastActivePane = _newFileIsRight ? 'right' : 'left';
+    if (typeof updatePaneFocusUI === 'function') updatePaneFocusUI();
     await refresh(_newFileIsRight);
+    if (typeof selectNavigatedPath === 'function') {
+      selectNavigatedPath(joinFolderPath(_newFileDest, name), _newFileIsRight);
+    }
   } catch (e) { alert(t('alert.createFileFailed', {error: e})); }
 }
 

@@ -649,19 +649,26 @@ function moveFileSelectionByArrow(key, { extend = false, additive = false } = {}
   updatePreviewForSelection();
 }
 
-function scrollToVisible(index) {
-  const listId = G.lastActivePane === 'right' ? "right-file-list" : "file-list";
+function scrollToVisible(index, isRight) {
+  const right = typeof isRight === 'boolean' ? isRight : G.lastActivePane === 'right';
+  const listId = right ? "right-file-list" : "file-list";
   const list = document.getElementById(listId);
-  if (!list) return;
-  if (G.layout !== 'details'||(typeof isRecyclePath==='function'&&isRecyclePath(getActivePaneState()?.path))) {
+  if (!list) return null;
+  const pane = right ? G.rp : getTab();
+  const isRecycle = typeof isRecyclePath === 'function' && isRecyclePath(pane?.path);
+  if (G.layout === 'details' && !isRecycle && typeof list._revealFileIndex === 'function') {
+    return list._revealFileIndex(index);
+  }
+  if (G.layout !== 'details' || isRecycle) {
     const target = list.querySelector(`[data-index="${index}"]`);
     if (target) {
       const listRect = list.getBoundingClientRect();
       const targetRect = target.getBoundingClientRect();
-      if (targetRect.top < listRect.top || targetRect.bottom > listRect.bottom) {
+      if (targetRect.top < listRect.top || targetRect.bottom > listRect.bottom ||
+          targetRect.left < listRect.left || targetRect.right > listRect.right) {
         target.scrollIntoView({ block: 'nearest', inline: 'nearest' });
       }
-      return;
+      return target;
     }
   }
   let rowH = detailsRowHeight(list);
@@ -670,6 +677,7 @@ function scrollToVisible(index) {
   if (targetTop < list.scrollTop || targetTop > list.scrollTop + list.clientHeight - rowH) {
     list.scrollTop = Math.max(0, targetTop - list.clientHeight / 2);
   }
+  return list.querySelector(`[data-index="${index}"]`);
 }
 
 // --- command palette ---

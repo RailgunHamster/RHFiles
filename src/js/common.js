@@ -76,6 +76,7 @@ Object.assign(_builtinEn, {
   'dialog.newFileName': 'File name:',
   'dialog.newFileTitle': 'New File',
   'dialog.newFileDefault': 'New File',
+  'dialog.newFolderDefault': 'New Folder',
   'dialog.permLoading': 'Reading permissions...',
   'dialog.permLoadFailed': 'Unable to read permissions: {error}',
   'dialog.permTimedOut': 'Permission lookup timed out after 10 seconds.',
@@ -402,6 +403,47 @@ function t(key, params) {
   return val.replace(/\{(\w+)\}/g, (_, k) => params[k] !== undefined ? params[k] : '{' + k + '}');
 }
 
+const LOCALIZED_NEW_DEFAULTS = {
+  'zh-tw': { folder: '\u65b0\u589e\u8cc7\u6599\u593e', file: '\u65b0\u589e\u6a94\u6848' },
+  'zh-hk': { folder: '\u65b0\u589e\u8cc7\u6599\u593e', file: '\u65b0\u589e\u6a94\u6848' },
+  'zh-mo': { folder: '\u65b0\u589e\u8cc7\u6599\u593e', file: '\u65b0\u589e\u6a94\u6848' },
+  'zh-hant': { folder: '\u65b0\u589e\u8cc7\u6599\u593e', file: '\u65b0\u589e\u6a94\u6848' },
+  'zh': { folder: '\u65b0\u5efa\u6587\u4ef6\u5939', file: '\u65b0\u5efa\u6587\u4ef6' },
+  'en': { folder: 'New Folder', file: 'New File' },
+  'ja': { folder: '\u65b0\u3057\u3044\u30d5\u30a9\u30eb\u30c0\u30fc', file: '\u65b0\u3057\u3044\u30d5\u30a1\u30a4\u30eb' },
+  'ko': { folder: '\uc0c8 \ud3f4\ub354', file: '\uc0c8 \ud30c\uc77c' },
+  'de': { folder: 'Neuer Ordner', file: 'Neue Datei' },
+  'fr': { folder: 'Nouveau dossier', file: 'Nouveau fichier' },
+  'es': { folder: 'Nueva carpeta', file: 'Nuevo archivo' },
+  'pt': { folder: 'Nova pasta', file: 'Novo arquivo' },
+  'ru': { folder: '\u041d\u043e\u0432\u0430\u044f \u043f\u0430\u043f\u043a\u0430', file: '\u041d\u043e\u0432\u044b\u0439 \u0444\u0430\u0439\u043b' },
+  'it': { folder: 'Nuova cartella', file: 'Nuovo file' },
+  'nl': { folder: 'Nieuwe map', file: 'Nieuw bestand' },
+  'pl': { folder: 'Nowy folder', file: 'Nowy plik' },
+  'tr': { folder: 'Yeni Klas\u00f6r', file: 'Yeni Dosya' },
+  'vi': { folder: 'Th\u01b0 m\u1ee5c m\u1edbi', file: 'T\u1ec7p m\u1edbi' },
+  'th': { folder: '\u0e42\u0e1f\u0e25\u0e40\u0e14\u0e2d\u0e23\u0e4c\u0e43\u0e2b\u0e21\u0e48', file: '\u0e44\u0e1f\u0e25\u0e4c\u0e43\u0e2b\u0e21\u0e48' },
+  'ar': { folder: '\u0645\u062c\u0644\u062f \u062c\u062f\u064a\u062f', file: '\u0645\u0644\u0641 \u062c\u062f\u064a\u062f' },
+};
+
+function localizedNewItemDefault(kind, lang) {
+  const active = String(lang || _lang || 'en').trim();
+  const key = kind === 'folder' ? 'dialog.newFolderDefault' : 'dialog.newFileDefault';
+  const translated = I18N[active]?.[key];
+  if (translated) return translated;
+  const normalized = active.toLowerCase().replace(/_/g, '-');
+  const fallback = LOCALIZED_NEW_DEFAULTS[normalized]?.[kind]
+    || LOCALIZED_NEW_DEFAULTS[normalized.split('-')[0]]?.[kind];
+  return fallback || I18N.en[key] || (kind === 'folder' ? 'New Folder' : 'New File');
+}
+
+function defaultNewFolderName(lang) { return localizedNewItemDefault('folder', lang); }
+function defaultNewFileName(lang) { return localizedNewItemDefault('file', lang); }
+
+function _syncNewFileOnApply() {
+  if (typeof syncNewFileDialogDefaultName === 'function') syncNewFileDialogDefaultName();
+}
+
 function setLang(l) {
   _lang = I18N[l] ? l : 'en';
   localStorage.setItem('rhfiles-lang', _lang);
@@ -434,6 +476,7 @@ function applyI18n() {
     if (G.dualOn) renderFiles(G.rp, 'right-file-list', 'right-status-count', null, true);
   }
   if (document.getElementById('home-page')?.style.display !== 'none' && typeof showHomePage === 'function') showHomePage();
+  _syncNewFileOnApply();
 }
 function getAvailableLanguages() {
   const langs = [{ code: 'en', name: 'English' }];
@@ -996,6 +1039,7 @@ function fallbackCall(cmd, args) {
       { name:"Batch File", ext:".bat", content:"@echo off\n\n" },
     ];
     case "create_new_file": return null;
+    case "new_folder": return joinFolderPath(args?.parent || FS_ROOT, String(args?.baseName || '').trim() || defaultNewFolderName());
     case "delete_file": return null;
     case "delete_files": return { deleted:[...(args.paths || [])], errors:[] };
     case "delete_files_permanently": return { deleted:[...(args.paths || [])], errors:[] };

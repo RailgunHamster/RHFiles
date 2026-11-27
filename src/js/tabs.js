@@ -608,6 +608,15 @@ async function _refreshTabInBackground(tab, isRight = false) {
       refreshMeta();
       return;
     }
+    if (isActive()) {
+      const listEl = typeof document !== 'undefined' && typeof document.getElementById === 'function'
+        ? document.getElementById(listId)
+        : null;
+      if (listEl?.querySelector?.('input.rename-input')) {
+        listEl._pendingBackgroundRefresh = true;
+        return;
+      }
+    }
     const selPaths = [...(tab.sel || [])].map(i => tab.entries[i]?.path).filter(Boolean);
     tab.entries = entries;
     tab.sel = new Set();
@@ -1518,7 +1527,7 @@ function selectNavigatedPath(path, isRight) {
     isRight,
   );
   if (!isRight) updateStatus(pane, 'status-count', 'status-selection');
-  scrollToVisible(index);
+  scrollToVisible(index, isRight);
   updatePreviewForSelection();
   return true;
 }
@@ -2202,9 +2211,12 @@ async function goForward() {
   await navigateTo(tab.history[tab.historyIdx], false);
 }
 
-async function refresh() {
+async function refresh(isRight) {
   G.gitCache = {};
-  if (G.dualOn && G.lastActivePane === 'right') {
+  const targetRight = typeof isRight === 'boolean'
+    ? (G.dualOn && isRight)
+    : (G.dualOn && G.lastActivePane === 'right');
+  if (targetRight) {
     await rpNavigateTo(G.rp.path, false);
     return;
   }

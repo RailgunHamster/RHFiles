@@ -96,8 +96,13 @@ async function routeFtpCommand(cmd, args) {
     case 'new_folder': {
       const entries = await ftpEntries(args.parent);
       const used = new Set(entries.map(e => e.name));
-      let name = 'New Folder', index = 1;
-      while (used.has(name)) name = 'New Folder (' + index++ + ')';
+      const requested = String(args.baseName || '').trim();
+      if (requested && (['.', '..'].includes(requested) || /[\/\\\0]/.test(requested))) {
+        throw new Error('Invalid destination name');
+      }
+      const base = requested || 'New Folder';
+      let name = base, index = 1;
+      while (used.has(name)) name = base + ' (' + index++ + ')';
       value = joinFolderPath(args.parent, name);
       await protocolOperation('mkdir',value);
       break;

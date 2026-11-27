@@ -594,6 +594,7 @@
   "dialog.newFileName": "\u6587\u4ef6\u540d\uff1a",
   "dialog.newFileTitle": "\u65b0\u5efa\u6587\u4ef6",
   "dialog.newFileDefault": "\u65b0\u5efa\u6587\u4ef6",
+  "dialog.newFolderDefault": "\u65b0\u5efa\u6587\u4ef6\u5939",
   "dialog.conflictTitle": "\u6587\u4ef6\u51b2\u7a81",
   "dialog.folderConflictTitle": "文件夹冲突",
   "dialog.folderMergeMsg": "目标文件夹已存在。合并会保留两边独有的内容，内部同名文件将单独询问处理方式。",

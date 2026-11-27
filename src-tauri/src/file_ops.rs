@@ -1125,9 +1125,16 @@ pub fn inspect_rename_target(path: String, new_name: String) -> Result<RenameTar
 }
 
 #[tauri::command(async)]
-pub fn new_folder(parent: String) -> Result<String, String> {
+pub fn new_folder(parent: String, base_name: Option<String>) -> Result<String, String> {
+    let base = match base_name.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(name) => {
+            validate_target_name(name)?;
+            name.to_string()
+        }
+        None => "New Folder".to_string(),
+    };
     for index in 0u32.. {
-        let name = if index == 0 { "New Folder".to_string() } else { format!("New Folder ({index})") };
+        let name = if index == 0 { base.clone() } else { format!("{base} ({index})") };
         let path = PathBuf::from(&parent).join(name);
         match std::fs::create_dir(&path) {
             Ok(()) => return Ok(path.to_string_lossy().into_owned()),
@@ -2239,9 +2246,14 @@ mod tests {
         let root = std::env::temp_dir().join(format!("rhfiles-new-folder-{}-{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
         std::fs::create_dir_all(root.join("New Folder")).unwrap();
         std::fs::write(root.join("New Folder/user.txt"), b"keep").unwrap();
-        let created = new_folder(root.to_string_lossy().into()).unwrap();
+        let created = new_folder(root.to_string_lossy().into(), None).unwrap();
         assert_eq!(PathBuf::from(created), root.join("New Folder (1)"));
         assert_eq!(std::fs::read(root.join("New Folder/user.txt")).unwrap(), b"keep");
+        let localized = new_folder(root.to_string_lossy().into(), Some("新建文件夹".into())).unwrap();
+        assert_eq!(PathBuf::from(localized), root.join("新建文件夹"));
+        let localized_second = new_folder(root.to_string_lossy().into(), Some("新建文件夹".into())).unwrap();
+        assert_eq!(PathBuf::from(localized_second), root.join("新建文件夹 (1)"));
+        assert!(new_folder(root.to_string_lossy().into(), Some("../escape".into())).is_err());
         std::fs::remove_dir_all(root).unwrap();
     }
 

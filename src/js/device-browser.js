@@ -214,7 +214,7 @@ const deviceBrowser=(()=>{
     for(const [id,action,properties,required,risk] of [
       ['rename','rename',{path:string,newName:string,expectedSourceRevision:string},['path','newName'],'write'],
       ['inspectRename','inspect_rename',{path:string,newName:string},['path','newName'],'read'],
-      ['newFolder','new_folder',{parent:string},['parent'],'write'],
+      ['newFolder','new_folder',{parent:string,baseName:string},['parent'],'write'],
       ['create','create',{parent:string,name:string,template:{type:'string',maxLength:64}},['parent','name'],'write'],
       ['delete','delete',{paths:{type:'array',items:string,minItems:1,maxItems:10000},permanent:{type:'boolean'},operationId:string,revisions:{type:'object',additionalProperties:string}},['paths'],'destructive'],
       ['size','size',{path:string,operationId:string},['path'],'read'],

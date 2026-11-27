@@ -327,6 +327,7 @@ function detailsRowHeight(list) {
 
 function teardownVirtualList(list) {
   if (!list) return;
+  list._revealFileIndex = null;
   if (list._vlistScrollHandler) {
     list.removeEventListener('scroll', list._vlistScrollHandler);
     list._vlistScrollHandler = null;
@@ -603,6 +604,19 @@ function renderDetailsLayout(list, entries, sel, isRight, tabOrPane, listId) {
         if (list._vlistScrollHandler === _scrollHandler) renderVisible();
       });
     }
+  };
+  list._revealFileIndex = (fileIdx) => {
+    const itemIndex = items.findIndex(item => item.type === 'file' && item.fileIdx === fileIdx);
+    if (itemIndex < 0) return null;
+    const top = positions[itemIndex] || 0;
+    const height = itemHeight(items[itemIndex]);
+    const viewH = list.clientHeight || 600;
+    if (top < list.scrollTop || top + height > list.scrollTop + viewH) {
+      const maxScroll = Math.max(0, totalH - viewH);
+      list.scrollTop = Math.max(0, Math.min(maxScroll, Math.round(top - (viewH - height) / 2)));
+    }
+    renderVisible();
+    return renderedNodes.get(itemIndex) || null;
   };
   list._vlistScrollHandler = _scrollHandler;
   list.addEventListener('scroll', _scrollHandler);

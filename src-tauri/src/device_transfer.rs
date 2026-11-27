@@ -1226,7 +1226,11 @@ async fn mutations(
             let parent = Location::parse(field(args, "parent")?)?;
             hold(&parent, progress)?;
             let name = if action == "new_folder" {
-                "New Folder"
+                args["baseName"]
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("New Folder")
             } else {
                 field(args, "name")?
             };

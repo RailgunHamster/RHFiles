@@ -87,6 +87,7 @@ function initBoxSelection(listEl) {
   }, true,"src.js.selection.initBoxSelection.171b20ce488a");
 
   RHFilesUI.listen(listEl,'mousedown', e => {
+    if (e.target.closest('input.rename-input')) return;
     if (e.button === 0 || e.button === 2) {
       // Cancel pending type-search before mouseup/click: its asynchronous
       // completion must not replace the row while this gesture is in flight.

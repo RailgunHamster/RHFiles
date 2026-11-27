@@ -87,8 +87,12 @@
 .file-list.search-results .file-row .row-name { min-width:0; }
 .file-list.search-results .file-row .row-fname { flex:0 1 42%; min-width:64px; max-width:42%; }
 .file-list.search-results .file-row .row-path { flex:1 1 120px; direction:rtl; text-align:left; unicode-bidi:plaintext; }
-.file-row input.rename-input { border:1px solid var(--accent); outline:none; background:var(--bg-input); color:var(--text); font-size:12px; font-family:inherit; padding:0 4px; width:100%; border-radius:2px; box-sizing:border-box; }
-.file-row input.rename-input:focus { box-shadow:0 0 0 1px var(--accent); }
+.file-row input.rename-input,
+.column-item input.rename-input { border:1px solid var(--accent); outline:none; background:var(--bg-input); color:var(--text); font-size:12px; font-family:inherit; padding:0 4px; width:100%; border-radius:2px; box-sizing:border-box; }
+.file-row input.rename-input:focus,
+.column-item input.rename-input:focus { box-shadow:0 0 0 1px var(--accent); }
+.file-row.card-item input.rename-input,
+.file-row.thumb-item input.rename-input { margin-top:4px; text-align:center; padding:2px 4px; }
 .file-row.dir .row-fname { font-weight:500; }
 .file-row .row-date, .file-row .row-type, .file-row .row-size { font-size:12px; color:var(--text-3); white-space:nowrap; padding:0 6px; }
 .file-row:hover .row-date, .file-row:hover .row-type, .file-row:hover .row-size { color:var(--text-2); }

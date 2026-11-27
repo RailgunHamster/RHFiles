@@ -266,7 +266,7 @@ async function renameEntry(file, newName, isRight) {
         failOperationTask(taskId, error);
         throw error;
       } finally {
-        await refresh();
+        await refresh(isRight);
         selectNavigatedPath(target.path, isRight);
       }
     }
@@ -274,55 +274,90 @@ async function renameEntry(file, newName, isRight) {
   const renamed = await call('rename_file', {path:oldPath, newName:finalName,expectedSourceRevision:target.sourceRevision});
   const newPath = joinFolderPath(parent, finalName);
   trackRename(oldPath, newPath, renamed?.revision);
-  await refresh();
+  await refresh(isRight);
   selectNavigatedPath(newPath, isRight);
   return true;
 }
 
+function inlineRenameNameElement(rowEl) {
+  if (!rowEl || typeof rowEl.querySelector !== 'function') return null;
+  return rowEl.querySelector(".row-fname, .card-file-name, .tile-file-name, .thumb-name, .column-item-name");
+}
+
 function startInlineRename(rowEl, file, isRight, onCancel) {
-  const nameEl = rowEl.querySelector(".row-fname");
-  if (!nameEl) return;
+  const nameEl = inlineRenameNameElement(rowEl);
+  if (!nameEl) return false;
+  const listId = isRight ? "right-file-list" : "file-list";
+  const listEl = typeof document.getElementById === 'function' ? document.getElementById(listId) : null;
   const origName = file.name;
   const ext = file.is_dir ? "" : (file.extension ? "." + file.extension : "");
   const baseName = file.is_dir ? origName : (ext ? origName.slice(0, -ext.length) : origName);
 
   const input = document.createElement("input");
+  input.type = "text";
   input.className = "rename-input";
   input.value = origName;
   nameEl.replaceWith(input);
-  input.focus();
+  try {
+    input.focus({ preventScroll: true });
+  } catch (_) {
+    input.focus();
+  }
   if (!file.is_dir && ext) {
     input.setSelectionRange(0, baseName.length);
   } else {
     input.select();
   }
 
+  const flushDeferredRefresh = () => {
+    if (!listEl?._pendingBackgroundRefresh) return;
+    listEl._pendingBackgroundRefresh = false;
+    const pane = isRight ? G.rp : getTab();
+    if (pane && typeof _refreshTabInBackground === 'function') {
+      _refreshTabInBackground(pane, isRight);
+    }
+  };
+
   let done = false;
   const commit = async () => {
     if (done) return; done = true;
     const newName = input.value.trim();
-    if (!input.isConnected) return;
+    if (!input.isConnected) {
+      flushDeferredRefresh();
+      return;
+    }
     input.replaceWith(nameEl);
     nameEl.textContent = file.name;
-    if (!newName || newName === origName) return;
+    if (!newName || newName === origName) {
+      flushDeferredRefresh();
+      return;
+    }
+    if (listEl) listEl._pendingBackgroundRefresh = false;
     try {
       await renameEntry(file, newName, isRight);
     } catch (e) { alert(t('alert.renameFailed', { error: e })); }
   };
   const cancel = async () => {
     if (done) return; done = true;
-    input.replaceWith(nameEl);
+    if (input.isConnected) input.replaceWith(nameEl);
+    nameEl.textContent = file.name;
     // Cancelling restores the original row, so keep it selected instead of
     // dropping the selection the user had before starting the rename.
     selectNavigatedPath(file.path, isRight);
     if (onCancel) { try { await onCancel(); } catch(e) {} }
+    flushDeferredRefresh();
   };
 
+  RHFilesUI.listen(input,"mousedown", e => { e.stopPropagation(); },undefined,"src.js.ops.startInlineRename.e8f3c0a4d1b2");
+  RHFilesUI.listen(input,"click", e => { e.stopPropagation(); },undefined,"src.js.ops.startInlineRename.7a91c5d4e2f3");
+  RHFilesUI.listen(input,"dblclick", e => { e.stopPropagation(); },undefined,"src.js.ops.startInlineRename.4b62e8a1c9d0");
   RHFilesUI.listen(input,"keydown", e => {
-    if (e.key === "Enter") { e.preventDefault(); commit(); }
-    if (e.key === "Escape") { e.preventDefault(); cancel(); }
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); commit(); }
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); cancel(); }
   },undefined,"src.js.ops.startInlineRename.b139a679e52e");
   RHFilesUI.listen(input,"blur", () => commit(),undefined,"src.js.ops.startInlineRename.1a8f1cf4d832");
+  return true;
 }
 
 async function renamePrompt(isRight) {
@@ -330,15 +365,34 @@ async function renamePrompt(isRight) {
   const sel = getSelectedPaths(isRight);
   if (archiveSelectionIsReadOnly(sel)) return;
   if (sel.length !== 1) return;
-  const isR = isRight;
-  const listId = isR ? "right-file-list" : "file-list";
-  const rows = document.querySelectorAll(`#${listId} .file-row`);
-  for (const row of rows) {
-    if (row.dataset.path === sel[0].path) {
-      startInlineRename(row, sel[0], isRight);
-      return;
+  const target = sel[0];
+  const pane = isRight ? G.rp : getTab();
+  const listId = isRight ? "right-file-list" : "file-list";
+  const listEl = document.getElementById(listId);
+  const key = path => windowsPathKey(typeof normalizeWindowsPathInput === 'function' ? normalizeWindowsPathInput(path) : path);
+  const targetKey = key(target.path);
+  let row = null;
+  if (pane?.entries?.length && !(typeof activeColumnSelection === 'function' && activeColumnSelection(pane))) {
+    const idx = pane.entries.findIndex(entry => key(entry.path) === targetKey);
+    if (idx >= 0) {
+      if (typeof listEl?._revealFileIndex === 'function') row = listEl._revealFileIndex(idx);
+      else if (typeof scrollToVisible === 'function') row = scrollToVisible(idx, isRight);
     }
   }
+  if (!row) {
+    const rows = document.querySelectorAll(`#${listId} .file-row, #${listId} .column-item`);
+    for (const candidate of rows) {
+      if (key(candidate.dataset.path) === targetKey) {
+        row = candidate;
+        break;
+      }
+    }
+  }
+  if (!row) return;
+  if (G.layout !== 'details' && typeof row.scrollIntoView === 'function') {
+    row.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
+  startInlineRename(row, target, isRight);
 }
 
 async function newFolder(isRight) {
@@ -346,10 +400,15 @@ async function newFolder(isRight) {
   const destPath = isRight ? G.rp.path : getTab().path;
   if(typeof isRecyclePath==='function'&&isRecyclePath(destPath)){showNotice(recycleText('restoreFirst'));return;}
   try {
-    const createdPath = await call("new_folder", { parent: destPath });
-    await refresh();
+    const baseName = typeof defaultNewFolderName === 'function'
+      ? defaultNewFolderName()
+      : t('dialog.newFolderDefault');
+    const createdPath = await call("new_folder", { parent: destPath, baseName });
+    G.lastActivePane = isRight ? 'right' : 'left';
+    if (typeof updatePaneFocusUI === 'function') updatePaneFocusUI();
+    await refresh(isRight);
     _findAndRename(isRight, createdPath);
-  } catch (e) { alert(t('alert.newFolderFailed')); }
+  } catch (e) { alert(t('alert.newFolderFailed', { error: e })); }
 }
 
 async function copySelected(isRight) {
@@ -400,21 +459,80 @@ function renderClipboardSelection(isRight) {
 }
 
 function _findAndRename(isRight, createdPath) {
+  if (!createdPath) return false;
   const listId = isRight ? "right-file-list" : "file-list";
-  const rows = document.querySelectorAll(`#${listId} .file-row`);
-  for (const row of rows) {
-    const nameEl = row.querySelector(".row-fname");
-    if (!nameEl) continue;
-    if (createdPath && windowsPathKey(row.dataset.path) === windowsPathKey(createdPath)) {
-      const fname = pathLeaf(row.dataset.path);
-      if (fname) {
-        const file = { name: fname, path: row.dataset.path, is_dir: row.classList.contains("dir") ? 1 : 0, extension: fname.includes(".") ? fname.split(".").pop() : "" };
+  const key = p => windowsPathKey(typeof normalizeWindowsPathInput === 'function' ? normalizeWindowsPathInput(p) : p);
+  const targetKey = key(createdPath);
+  const nameSelector = ".row-fname, .card-file-name, .tile-file-name, .thumb-name, .column-item-name";
+  const pane = isRight
+    ? (typeof G !== 'undefined' ? G.rp : null)
+    : (typeof getTab === 'function' ? getTab() : null);
+
+  if (pane && Array.isArray(pane.entries) && pane.entries.length) {
+    const idx = pane.entries.findIndex(entry => entry && key(entry.path) === targetKey);
+    if (idx >= 0) {
+      if (pane.sel && typeof pane.sel.clear === 'function') {
+        pane.sel.clear();
+        pane.sel.add(idx);
+      } else {
+        pane.sel = new Set([idx]);
+      }
+      pane.lastIdx = idx;
+      if (typeof G !== 'undefined') G.lastActivePane = isRight ? 'right' : 'left';
+      if (typeof updatePaneFocusUI === 'function') updatePaneFocusUI();
+      if (typeof renderFiles === 'function') {
+        renderFiles(
+          pane,
+          listId,
+          isRight ? 'right-status-count' : 'status-count',
+          isRight ? null : 'status-selection',
+          isRight,
+        );
+      }
+      const listEl = typeof document.getElementById === 'function' ? document.getElementById(listId) : null;
+      let row = null;
+      if (typeof listEl?._revealFileIndex === 'function') {
+        row = listEl._revealFileIndex(idx);
+      } else if (typeof scrollToVisible === 'function') {
+        row = scrollToVisible(idx, isRight);
+      }
+      if (typeof updatePreviewForSelection === 'function') updatePreviewForSelection();
+      if (!row) {
+        const candidates = document.querySelectorAll(`#${listId} .file-row, #${listId} .column-item`);
+        for (const candidate of candidates) {
+          if (key(candidate.dataset.path) === targetKey) {
+            row = candidate;
+            break;
+          }
+        }
+      }
+      if (row) {
+        if ((typeof G === 'undefined' || G.layout !== 'details') && typeof row.scrollIntoView === 'function') {
+          row.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+        }
         // Escape cancels the rename, not the creation (and never deletes data).
-        startInlineRename(row, file, isRight);
-        return;
+        startInlineRename(row, pane.entries[idx], isRight);
+        return true;
       }
     }
   }
+
+  const rows = document.querySelectorAll(`#${listId} .file-row, #${listId} .column-item`);
+  for (const row of rows) {
+    const nameEl = row.querySelector(nameSelector);
+    if (!nameEl) continue;
+    if (key(row.dataset.path) === targetKey) {
+      const fname = pathLeaf(row.dataset.path);
+      if (fname) {
+        const file = { name: fname, path: row.dataset.path, is_dir: row.classList.contains("dir") || row.dataset.isDir === 'true' ? 1 : 0, extension: fname.includes(".") ? fname.split(".").pop() : "" };
+        if (typeof row.scrollIntoView === 'function') row.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+        // Escape cancels the rename, not the creation (and never deletes data).
+        startInlineRename(row, file, isRight);
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 async function refreshPastedFolder(destPath, isRight, tabId) {

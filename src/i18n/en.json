@@ -594,6 +594,7 @@
   "dialog.newFileName": "File name:",
   "dialog.newFileTitle": "New File",
   "dialog.newFileDefault": "New File",
+  "dialog.newFolderDefault": "New Folder",
   "dialog.conflictTitle": "File Conflict",
   "dialog.folderConflictTitle": "Folder conflict",
   "dialog.folderMergeMsg": "This folder already exists. Merge their contents and keep files unique to either folder. Duplicate files will be handled separately.",
